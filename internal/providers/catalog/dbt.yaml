@@ -20,11 +20,7 @@ identity:
 verify:
   args: ["debug"]
   logged_out_when: 'profiles\.yml file \[ERROR not found\]'
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
-# A generic tool: its command talks to whatever the project configures, so it is
-# never matched by name.
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   env: [DBT_CLOUD_API_KEY]
-  hosts: [cloud.getdbt.com]
-  mcp_packages: ["dbt-mcp"]

@@ -1,4 +1,0 @@
-$ go test ./internal/policy ./internal/envplan -count=1
-ok  	github.com/tentaqles/tentaqles/internal/policy	2.683s
-ok  	github.com/tentaqles/tentaqles/internal/envplan	6.741s
-exit code: 0

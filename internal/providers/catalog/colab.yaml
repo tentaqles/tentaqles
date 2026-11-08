@@ -4,9 +4,4 @@ category: other
 docs: https://colab.research.google.com/
 # No official command-line client; notebooks are reached in the browser or through an MCP connector.
 cli: null
-notes: "No CLI to install or log in. A Claude session reaches Colab through an MCP connector added to claude.bundle.mcp, authenticated with /mcp."
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
-match:
-  hosts: [colab.googleapis.com]
-  mcp: [colab]
+notes: "No CLI to install or log in. A Claude session reaches Colab through an MCP server added in that client's Claude config, signed in with /mcp."

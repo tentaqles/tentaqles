@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +11,8 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/shell"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
-	"github.com/zalando/go-keyring"
 )
 
 // Round 2 of the §6.1 scenario at layer 2 (ADR-0008): through a folder shared with other
@@ -116,15 +111,6 @@ func TestEnv_ScopeReferenceScenario_CmdExe(t *testing.T) {
 	fakeIn(t, shared, "aws.exe", "node.exe")
 	fakeIn(t, azure, "az.cmd")
 	runEnv(t, "settings", "render", "company-x")
-	// The child tq (this test binary, TQ_TEST_BE_TQ=1) has its own in-memory keychain: it
-	// verifies with the same key through the fallback file.
-	key, err := keyring.Get(trust.Service, trust.KeyAccount)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(trust.KeyFile(), []byte(key), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -216,109 +202,4 @@ func envWithout(keys ...string) []string {
 		}
 	}
 	return out
-}
-
-// TestPreToolUse_MCPJudgedByConfigEntry: layer 4 reads the server's entry in the identity's
-// .claude.json: a server named cloud that runs awslabs' package, and one named gh running the
-// GitHub server, are denied; a database server is not.
-func TestPreToolUse_MCPJudgedByConfigEntry(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", companyXBody)
-	claudeDir := paths.IdentityDir("company-x", "claude")
-	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cj := `{"mcpServers":{"cloud":{"command":"uvx","args":["awslabs.aws-api-mcp-server"],"env":{"AWS_PROFILE":"prod"}},` +
-		`"helper":{"command":"npx","args":["-y","@modelcontextprotocol/server-github"]},"mydb":{"command":"uvx","args":["postgres-mcp"]}}}`
-	if err := os.WriteFile(filepath.Join(claudeDir, ".claude.json"), []byte(cj), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Round 3: a benign user-scope memory and a project .mcp.json memory that runs AWS Labs'
-	// server: the name is denied whichever the harness picks. A plugin's vercel server too.
-	if err := os.WriteFile(filepath.Join(claudeDir, ".claude.json"), []byte(strings.Replace(cj, `"mydb":`,
-		`"memory":{"command":"npx","args":["-y","@modelcontextprotocol/server-memory"]},"mydb":`, 1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(`{"mcpServers":{"memory":{"command":"uvx","args":["awslabs.core-mcp-server"]}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	plug := filepath.Join(testutil.TempDir(t), "deployer")
-	if err := os.MkdirAll(filepath.Join(claudeDir, "plugins"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(plug, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ij := `{"version":2,"plugins":{"deployer@mkt":[{"installPath":` + jsonPath(t, plug) + `}]}}`
-	if err := os.WriteFile(filepath.Join(claudeDir, "plugins", "installed_plugins.json"), []byte(ij), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(plug, ".mcp.json"), []byte(`{"mcpServers":{"site":{"type":"http","url":"https://mcp.vercel.com"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []struct {
-		tool string
-		deny bool
-	}{{"mcp__cloud__call_aws", true}, {"mcp__helper__create_issue", true}, {"mcp__mydb__query", false},
-		{"mcp__memory__call_aws", true}, {"mcp__plugin_deployer_site__deploy", true}} {
-		code, category, rule, errOut := hookDecision(t, root, c.tool, `{}`)
-		if c.deny && (code != 2 || category != policy.CategoryIdentity || rule != policy.OutOfScopeMCPID) {
-			t.Errorf("%s: code=%d %s/%s %s", c.tool, code, category, rule, errOut)
-		}
-		if !c.deny && code != 0 {
-			t.Errorf("%s denied: %s", c.tool, errOut)
-		}
-	}
-}
-
-// TestSettingsRender_HybridMCP: the owner's hybrid list end to end. An unknown vendor's server
-// under a neutral name is moved to the backup and denied; playwright, context7, memory, the
-// in-scope Azure server and a name in the manifest's mcp.allow stay and pass.
-func TestSettingsRender_HybridMCP(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", "mcp: { allow: [team-tool] }\n"+companyXBody)
-	claudeDir := paths.IdentityDir("company-x", "claude")
-	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cj := `{"mcpServers":{` +
-		`"helper":{"command":"npx","args":["-y","@acmecloud/mcp-server"]},` +
-		`"playwright":{"command":"npx","args":["@playwright/mcp@latest"]},` +
-		`"context7":{"type":"http","url":"https://mcp.context7.com/mcp"},` +
-		`"memory":{"command":"npx","args":["-y","@modelcontextprotocol/server-memory"]},` +
-		`"azure":{"command":"npx","args":["-y","@azure/mcp@latest","server","start"]},` +
-		`"team-tool":{"command":"node","args":["C:/work/tools/team.js"]}}}`
-	if err := os.WriteFile(filepath.Join(claudeDir, ".claude.json"), []byte(cj), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out := runEnv(t, "settings", "render", "company-x")
-	if !strings.Contains(out, "removed MCP server helper") {
-		t.Fatalf("render output:\n%s", out)
-	}
-	raw, _ := os.ReadFile(filepath.Join(claudeDir, ".claude.json"))
-	var got struct {
-		MCP map[string]any `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range []string{"playwright", "context7", "memory", "azure", "team-tool"} {
-		if got.MCP[n] == nil {
-			t.Errorf("%s removed", n)
-		}
-	}
-	if got.MCP["helper"] != nil {
-		t.Error("helper kept")
-	}
-	for _, c := range []struct {
-		tool string
-		deny bool
-	}{{"mcp__helper__x", true}, {"mcp__playwright__browser_click", false}, {"mcp__context7__resolve", false},
-		{"mcp__memory__read_graph", false}, {"mcp__azure__list", false}, {"mcp__team-tool__run", false}} {
-		code, _, rule, errOut := hookDecision(t, root, c.tool, `{}`)
-		if c.deny && (code != 2 || rule != policy.OutOfScopeMCPID) {
-			t.Errorf("%s: code=%d rule=%s %s", c.tool, code, rule, errOut)
-		}
-		if !c.deny && code != 0 {
-			t.Errorf("%s denied: %s", c.tool, errOut)
-		}
-	}
 }

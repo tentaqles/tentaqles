@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestRunOtherClient_NoLeak$ -count=1 -v
-=== RUN   TestRunOtherClient_NoLeak
---- PASS: TestRunOtherClient_NoLeak (0.17s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.295s
-exit code: 0

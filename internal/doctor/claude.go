@@ -11,9 +11,9 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/claudesettings"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // unpinnedRe matches an npx/bunx/uvx invocation of a package with no version
@@ -50,14 +50,14 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 // tentaqles guard (ADR-0018): the check tq run makes before it starts claude, on the same
 // CLAUDE_CONFIG_DIR and the folder's own project settings, with the same fix line.
 func guardHookCheck(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
-	g := trust.CheckSessionGuard(envplan.Desired(w)["CLAUDE_CONFIG_DIR"], w.Root, w.Root)
+	g := guardplugin.CheckSessionGuard(envplan.Desired(w)["CLAUDE_CONFIG_DIR"], w.Root, w.Root)
 	if g.OK || g.NoConfig {
 		// A client with no claude identity has no Claude config for tq to guard, so there is nothing
 		// for doctor to report; tq run still refuses a session in it.
 		return
 	}
 	add("error", "guard-hook-missing", w.Name, "no session starts without the tentaqles guard: "+g.Why,
-		strings.Join(trust.GuardHookFix(w.Name, g), "\n    "))
+		strings.Join(guardplugin.GuardHookFix(w.Name, g), "\n    "))
 }
 
 // commandStrings returns "command + args" for every statusLine, hook and
@@ -265,7 +265,7 @@ func pluginForeignPath(names []string, add func(level, code, ws, msg, fix string
 			}
 			add("warn", "plugins-dir-linked", d.name,
 				"plugins dir is a link to "+linkDest(d.path)+with+": every plugin install from any identity using it rewrites the same installed_plugins.json and cache",
-				"give the identity its own plugins dir (replace the link with a real directory), then tq bundle sync "+d.name)
+				"give the identity its own plugins dir (replace the link with a real directory)")
 		}
 		raw, err := os.ReadFile(filepath.Join(d.path, "installed_plugins.json"))
 		if err != nil {

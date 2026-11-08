@@ -197,8 +197,8 @@ def test_hooks_json_pretooluse_matcher_covers_shell_file_and_mcp_tools():
         assert not rx.search(tool), tool
 
 
-def test_the_plugin_holds_only_the_onboarding_skill_and_the_guard_hook():
-    assert sorted(p.name for p in (ROOT / "skills").iterdir()) == ["onboard"]
+def test_the_plugin_holds_only_the_guard_hook():
+    assert not (ROOT / "skills").exists()
     hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
     assert sorted(hooks) == ["PreToolUse", "SessionStart"]
     for group in hooks.values():

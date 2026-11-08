@@ -1,5 +1,0 @@
-$ go test ./internal/guard ./internal/policy ./internal/resolve -count=1
-ok  	github.com/tentaqles/tentaqles/internal/guard	0.062s
-ok  	github.com/tentaqles/tentaqles/internal/policy	2.001s
-ok  	github.com/tentaqles/tentaqles/internal/resolve	0.481s
-exit code: 0

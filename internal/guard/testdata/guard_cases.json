@@ -19,7 +19,6 @@
     {"name":"gh user match","command":"gh pr list","client":"acme","expected_gh_user":"acme-bot","actual_gh_user":"ACME-BOT","expect":{"tq":{"block":false},"fallback":{"block":true}}},
     {"name":"neutral cwd blocks push","command":"git push origin main","neutral":true,"neutral_reason":"outside any base","expect":{"tq":{"block":true,"rule":"neutral-remote"},"fallback":{"block":true}}},
     {"name":"neutral cwd allows local git","command":"git status","neutral":true,"neutral_reason":"outside any base","expect":{"tq":{"block":false},"fallback":{"block":false}}},
-    {"name":"env drift blocks git","command":"git commit -m x","client":"acme","findings":["env-drift"],"expect":{"tq":{"block":true,"rule":"env-drift"},"fallback":{"block":false}}},
-    {"name":"untrusted blocks git but not ls","command":"git commit -m x","client":"acme","findings":["untrusted"],"expect":{"tq":{"block":true,"rule":"untrusted"},"fallback":{"block":false}}}
+    {"name":"env drift blocks git","command":"git commit -m x","client":"acme","findings":["env-drift"],"expect":{"tq":{"block":true,"rule":"env-drift"},"fallback":{"block":false}}}
   ]
 }

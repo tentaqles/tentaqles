@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestReach_Handover$ -count=1 -v
-=== RUN   TestReach_Handover
---- PASS: TestReach_Handover (0.58s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.671s
-exit code: 0

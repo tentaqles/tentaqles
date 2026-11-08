@@ -6,14 +6,12 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/tentaqles/tentaqles/internal/audit"
 )
 
 // RunMain is the tq binary's entry point and returns its exit code.
 //
 // For `tq claude-hook pre-tool-use` it guarantees an answer of 0 (allow) or
-// 2 (deny) and nothing else (PRD v2 §6.3, ADR-0006), whatever goes wrong
+// 2 (deny) and nothing else, whatever goes wrong
 // outside the decision itself: Claude Code runs a call whose hook
 // exits with any other status, or that they kill at their own hook timeout.
 // So a flag tq does not know, an error from the command, and a process that
@@ -68,13 +66,8 @@ func hookInvocation(args []string) bool {
 }
 
 // hookStartupDeny is the deny of a pre-tool-use run that never reached a decision: the reason on
-// stderr, one line in the denial log, exit code 2. A flag tq does not know lands here too: an old
-// Codex hook file's --agent codex is denied, not run.
+// stderr, exit code 2.
 func hookStartupDeny(stderr io.Writer, why string) int {
-	reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tq doctor` shows what is wrong"
-	fmt.Fprintln(stderr, reason)
-	cwd, _ := os.Getwd()
-	_ = audit.AppendDenial(audit.Denial{Category: guardErrorID, Layer: audit.LayerHook, Caller: audit.CallerHarness,
-		Harness: hookAgentClaude, Rule: guardErrorID, Reason: reason, PID: os.Getpid(), Cwd: cwd})
+	fmt.Fprintln(stderr, "BLOCKED ["+guardErrorID+"]: "+why+"; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tq doctor` shows what is wrong")
 	return 2
 }

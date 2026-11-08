@@ -1,4 +1,0 @@
-$ PYTHONPATH=plugin python -m pytest plugin/tests/test_onboard_skill.py -q -k stops_when_not_a_client
-.                                                                        [100%]
-1 passed, 32 deselected in 0.14s
-exit code: 0

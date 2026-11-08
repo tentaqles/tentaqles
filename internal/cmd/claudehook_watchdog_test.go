@@ -81,7 +81,7 @@ func TestHookStall_SpinningDecisionIsDenied(t *testing.T) {
 		return
 	}
 	code, stderr, took := runSpinChild(t, "TestHookStall_SpinningDecisionIsDenied", "decision")
-	if code != 2 || !strings.Contains(stderr, "BLOCKED [tq/guard-error]") || !strings.Contains(stderr, "did not decide within") {
+	if code != 2 || !strings.Contains(stderr, "BLOCKED [tq/guard-error]") || !strings.Contains(stderr, "did not finish within") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
 	if took > 5*time.Second {

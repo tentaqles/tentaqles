@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestProtectedPaths_PluginRegistration$ -count=1 -v
-=== RUN   TestProtectedPaths_PluginRegistration
---- PASS: TestProtectedPaths_PluginRegistration (0.78s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.867s
-exit code: 0

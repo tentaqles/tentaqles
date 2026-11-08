@@ -1,8 +1,0 @@
-tq writes the powershell block into: "C:\\Users\\renato\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1"
-  probe output "C:\\Users\\renato\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1\r\nRemoteSigned\r\n" err=<nil>
-tq writes the pwsh block into: "C:\\Users\\renato\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"
-  pwsh not on PATH
-"a & calc" => cwd "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\a & calc\r\n" err=<nil> (want "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\a & calc")
-"a;b" => cwd "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\a;b\r\n" err=<nil> (want "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\a;b")
-"%PATH%" => cwd "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\%PATH%\r\n" err=<nil> (want "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\%PATH%")
-"it's quoted" => cwd "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\it's quoted\r\n" err=<nil> (want "C:\\Users\\renato\\AppData\\Local\\Temp\\tqh13382184\\it's quoted")

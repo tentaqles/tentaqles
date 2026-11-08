@@ -39,33 +39,3 @@ func TestAmbiguousExecutable(t *testing.T) {
 		}
 	}
 }
-
-func TestMCPPackagesValidateAndUnion(t *testing.T) {
-	good := Match{MCPPackages: []string{"awslabs.", "@aws/", "public.ecr.aws/", "ghcr.io/github/github-mcp-server", "@modelcontextprotocol/server-github"}}
-	if err := good.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	for _, bad := range []string{"", "a b", "-x", "../x", "npm:", "git+", "docker.io/"} {
-		if err := (Match{MCPPackages: []string{bad}}).Validate(); err == nil {
-			t.Errorf("%q validates", bad)
-		}
-	}
-	u := Match{MCPPackages: []string{"a/"}}.Union(Match{MCPPackages: []string{"b/", "a/"}})
-	if !slices.Equal(u.MCPPackages, []string{"a/", "b/"}) {
-		t.Fatalf("union = %v", u.MCPPackages)
-	}
-	if (Match{MCPPackages: []string{"x"}}).Empty() {
-		t.Fatal("a package list is not empty")
-	}
-	c, _ := Embedded()
-	for id, pkg := range map[string]string{"aws": "awslabs.", "gh": "@modelcontextprotocol/server-github", "gcloud": "@google-cloud/"} {
-		p, _ := c.Get(id)
-		if !slices.Contains(p.Match.MCPPackages, pkg) {
-			t.Errorf("%s: mcp_packages %v lacks %q", id, p.Match.MCPPackages, pkg)
-		}
-	}
-	gh, _ := c.Get("gh")
-	if !slices.Contains(gh.Match.MCP, "gh") {
-		t.Errorf("gh: mcp %v lacks gh", gh.Match.MCP)
-	}
-}

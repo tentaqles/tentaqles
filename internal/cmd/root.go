@@ -9,11 +9,12 @@ var Version = "dev"
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "tentaqles",
-		Short:         "Tentaqles: one terminal identity per workspace folder",
+		Short:         "Tentaqles: one terminal identity per client folder",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd(), newEnvCmd(), newActivateCmd(), newAllowCmd(), newDenyCmd(), newListCmd(), newRunCmd(), newLoginCmd(), newDoctorCmd(), newStatusCmd(), newBundleCmd(), newProvidersCmd(), newHooksCmd(), newClaudeHookCmd(), newSecretsCmd(), newSecretCmd(), newSettingsCmd(), newStatuslineCmd(), newDotenvCmd(), newMigrateCmd(), newUninstallCmd())
-	root.AddCommand(newReachCmd(), newOpenCmd(), newInstallCmd(), newConnectCmd())
+	root.AddCommand(newReachCmd(), newEnvCmd(), newActivateCmd(), newListCmd(), newRunCmd(), newLoginCmd(),
+		newOpenCmd(), newDoctorCmd(), newProvidersCmd(), newHooksCmd(), newClaudeHookCmd(), newSettingsCmd(),
+		newStatuslineCmd(), newVersionCmd())
 	return root
 }

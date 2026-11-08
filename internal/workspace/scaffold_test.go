@@ -7,13 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func fakeGit(...string) (string, error) { return "", nil }
@@ -28,12 +26,12 @@ func TestAdd_CreatesMarkerAndProtectedManifest(t *testing.T) {
 	cfg.AddBase(base)
 	cfg.Save()
 
-	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", RunGit: fakeGit, Trust: true})
+	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", RunGit: fakeGit})
 	if err != nil {
 		t.Fatal(err)
 	}
 	pp := paths.ManifestPath("acme")
-	if !ws.Protected || !registry.SamePath(ws.ManifestPath, pp) {
+	if !registry.SamePath(ws.ManifestPath, pp) {
 		t.Fatalf("%+v", ws)
 	}
 	marker, err := os.ReadFile(filepath.Join(base, "acme", manifest.FileName))
@@ -50,13 +48,6 @@ func TestAdd_CreatesMarkerAndProtectedManifest(t *testing.T) {
 	if !strings.Contains(string(raw), "schema: tentaqles-client-v2") || !strings.Contains(string(raw), "email: m@acme.com") || !strings.HasPrefix(string(raw), "# tentaqles workspace manifest") {
 		t.Fatalf("protected manifest:\n%s", raw)
 	}
-	h, _ := trust.HashFile(pp)
-	if ws.Hash != h || !trust.IsTrusted("acme", h) {
-		t.Fatal("trust is the hash of the protected manifest, keyed by the workspace name")
-	}
-	if trust.IsTrusted("other", h) {
-		t.Fatal("the record belongs to acme alone")
-	}
 	if runtime.GOOS != "windows" {
 		for p, want := range map[string]os.FileMode{pp: 0o600, filepath.Dir(pp): 0o700, paths.IdentitiesRoot(): 0o700, paths.Home(): 0o700} {
 			fi, err := os.Stat(p)
@@ -70,7 +61,7 @@ func TestAdd_CreatesMarkerAndProtectedManifest(t *testing.T) {
 	}
 	cfg2, _ := registry.Load()
 	r := resolve.Resolve(filepath.Join(base, "acme", "deep"), cfg2)
-	if r.Workspace == nil || !r.Workspace.Protected || r.Workspace.Manifest.Git.Email != "m@acme.com" {
+	if r.Workspace == nil || r.Workspace.Manifest.Git.Email != "m@acme.com" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -81,7 +72,7 @@ func TestAdd_RefusesALeftoverProtectedManifest(t *testing.T) {
 	pp := paths.ManifestPath("acme")
 	os.MkdirAll(filepath.Dir(pp), 0o700)
 	os.WriteFile(pp, []byte("schema: tentaqles-client-v2\nclient: acme\n"), 0o600)
-	if _, err := Add(AddOptions{Base: base, Name: "acme", GitEmail: "x@y", RunGit: fakeGit, Trust: true}); err == nil || !strings.Contains(err.Error(), pp) {
+	if _, err := Add(AddOptions{Base: base, Name: "acme", GitEmail: "x@y", RunGit: fakeGit}); err == nil || !strings.Contains(err.Error(), pp) {
 		t.Fatalf("a leftover protected manifest must not be overwritten: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(base, "acme")); err == nil {
@@ -111,7 +102,7 @@ func TestAdd_ScaffoldsEverything(t *testing.T) {
 	cfg.AddBase(base)
 	cfg.Save()
 
-	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", Identities: []string{"claude", "gh"}, RunGit: fakeGit, Trust: true})
+	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", Identities: []string{"claude", "gh"}, RunGit: fakeGit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,13 +130,13 @@ func TestAdd_ScaffoldsEverything(t *testing.T) {
 func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
 	isolateHome(t)
 	base := testutil.TempDir(t)
-	if _, err := Add(AddOptions{Base: base, Name: "Bad Name", GitEmail: "x@y", RunGit: fakeGit, Trust: true}); err == nil {
+	if _, err := Add(AddOptions{Base: base, Name: "Bad Name", GitEmail: "x@y", RunGit: fakeGit}); err == nil {
 		t.Fatal("bad name accepted")
 	}
-	if _, err := Add(AddOptions{Base: base, Name: "ok", GitEmail: "x@y", RunGit: fakeGit, Trust: true}); err != nil {
+	if _, err := Add(AddOptions{Base: base, Name: "ok", GitEmail: "x@y", RunGit: fakeGit}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(AddOptions{Base: base, Name: "ok", GitEmail: "x@y", RunGit: fakeGit, Trust: true}); err == nil {
+	if _, err := Add(AddOptions{Base: base, Name: "ok", GitEmail: "x@y", RunGit: fakeGit}); err == nil {
 		t.Fatal("duplicate accepted")
 	}
 }
@@ -153,46 +144,16 @@ func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
 func TestAdd_RejectsControlCharsInGitFields(t *testing.T) {
 	isolateHome(t)
 	base := testutil.TempDir(t)
-	if _, err := Add(AddOptions{Base: base, Name: "evil", GitEmail: "a@b\n[core]\n\tsshCommand = evil", RunGit: fakeGit, Trust: true}); err == nil {
+	if _, err := Add(AddOptions{Base: base, Name: "evil", GitEmail: "a@b\n[core]\n\tsshCommand = evil", RunGit: fakeGit}); err == nil {
 		t.Fatal("expected error for control chars in git-email")
 	}
 	if _, statErr := os.Stat(filepath.Join(base, "evil")); statErr == nil {
 		t.Fatal("workspace dir must not be created when git fields are invalid")
 	}
-	if _, err := Add(AddOptions{Base: base, Name: "evil2", GitEmail: "a@b", GitName: "Bad\nName", RunGit: fakeGit, Trust: true}); err == nil {
+	if _, err := Add(AddOptions{Base: base, Name: "evil2", GitEmail: "a@b", GitName: "Bad\nName", RunGit: fakeGit}); err == nil {
 		t.Fatal("expected error for control chars in git-name")
 	}
 	if _, statErr := os.Stat(filepath.Join(base, "evil2")); statErr == nil {
 		t.Fatal("workspace dir must not be created when git fields are invalid")
-	}
-}
-
-// TestAdd_TrustFalseLeavesUntrusted checks that Trust:false still scaffolds
-// the workspace on disk but leaves it untrusted and out of git's include
-// chain.
-func TestAdd_TrustFalseLeavesUntrusted(t *testing.T) {
-	isolateHome(t)
-	base := testutil.TempDir(t)
-	cfg := &registry.Config{}
-	cfg.AddBase(base)
-	cfg.Save()
-
-	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", RunGit: fakeGit, Trust: false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ws == nil || ws.Root == "" || ws.Manifest == nil {
-		t.Fatalf("expected a workspace value, got %+v", ws)
-	}
-	if trust.IsTrusted(ws.Name, ws.Hash) {
-		t.Fatal("workspace should not be trusted when Trust is false")
-	}
-	inc, err := os.ReadFile(gitcfg.IncludeFile())
-	if err == nil && strings.Contains(string(inc), ws.Root) {
-		t.Fatalf("untrusted root leaked into include file:\n%s", inc)
-	}
-	// Everything else should still be on disk.
-	if _, err := os.Stat(gitcfg.WorkspaceFile(ws.Root)); err != nil {
-		t.Fatalf("missing workspace git identity file: %v", err)
 	}
 }

@@ -4,22 +4,15 @@ import (
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-// SyncGit rewrites ~/.gitconfig-tentaqles so that ONLY trusted workspaces are
-// wired into the git include chain. An untrusted workspace's
-// .gitconfig-tentaqles is attacker-controllable content that git would
-// otherwise execute-as-config for any repo under that root, so it must never
-// be included. Call this after any change to trust (allow/deny) or to the set
-// of workspaces (add), so the include set always tracks trust.
+// SyncGit rewrites ~/.gitconfig-tentaqles so that every client folder is wired into git's
+// include chain: each one's own name and email apply to every repository under it. Call it
+// after the set of clients changes.
 func SyncGit(cfg *registry.Config) error {
 	all, _ := resolve.ListWorkspaces(cfg)
 	roots := make([]string, 0, len(all))
 	for _, w := range all {
-		if !trust.IsTrusted(w.Name, w.Hash) {
-			continue
-		}
 		roots = append(roots, w.Root)
 	}
 	return gitcfg.Sync(roots)

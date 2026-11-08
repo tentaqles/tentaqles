@@ -8,7 +8,7 @@ import (
 
 // TestScope: the provider scope is derived from what an existing manifest already declares
 // (the identities block, or claude+gh for a v1 manifest, the cloud block, the git provider,
-// the company services, the agents, the bundle's MCP servers) plus the optional scope: list;
+// the email provider) plus the optional scope: list;
 // sorted, each id once.
 func TestScope(t *testing.T) {
 	cases := []struct {
@@ -20,8 +20,7 @@ func TestScope(t *testing.T) {
 		{"git provider", "schema: tentaqles-client-v2\nclient: x\ngit: { provider: azure-devops }\nidentities: { az: {}, claude: {} }\n", []string{"az", "azure-devops", "claude"}},
 		{"git provider gitlab", "schema: tentaqles-client-v2\nclient: x\ngit: { provider: gitlab }\nidentities: { claude: {} }\n", []string{"claude", "glab"}},
 		{"git provider github", "schema: tentaqles-client-v2\nclient: x\ngit: { provider: github }\nidentities: { claude: {}, gh: {} }\n", []string{"claude", "gh"}},
-		{"services and agents", "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {} }\nchat: { provider: slack }\nemail: { provider: none }\ndata_platform: { provider: databricks }\nagents: [codex]\n", []string{"claude", "codex", "databricks", "slack"}},
-		{"bundle mcp", "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {} }\nclaude: { bundle: { mcp: [atlassian, linear, my-own-server] } }\n", []string{"claude", "jira", "linear"}},
+		{"email provider", "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {} }\nemail: { provider: gmail }\n", []string{"claude", "gmail"}},
 		{"explicit scope", "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {} }\nscope: [vercel, terraform, claude]\n", []string{"claude", "terraform", "vercel"}},
 	}
 	for _, c := range cases {
@@ -43,28 +42,6 @@ func TestScopeRejectsUnknownIDs(t *testing.T) {
 	}
 }
 
-// TestOldGuardKeyStillLoads: there is one guard, always on. A manifest that still carries the
-// old scalar flag loads and means nothing; the block tq 0.9.0 dropped (a mapping) still loads
-// and is listed in Ignored.
-func TestOldGuardKeyStillLoads(t *testing.T) {
-	for _, body := range []string{"guard: v1\n", "guard: v2\n", "guard: V2\n", "guard: \"\"\n", "guard: strict\n"} {
-		m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"+body))
-		if err != nil {
-			t.Fatalf("%q: %v", body, err)
-		}
-		if len(m.Ignored) != 0 {
-			t.Errorf("%q: Ignored = %v, a scalar guard key is not a dropped block", body, m.Ignored)
-		}
-	}
-	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nguard:\n  unattended: { workspace: true }\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(m.Ignored, []string{"guard"}) {
-		t.Fatalf("legacy guard block: Ignored=%v", m.Ignored)
-	}
-}
-
 // TestDeclaredCloudIsInScope: a client's own cloud is in its scope and isolated, also when the
 // identities block leaves it out.
 func TestDeclaredCloudIsInScope(t *testing.T) {
@@ -77,26 +54,5 @@ func TestDeclaredCloudIsInScope(t *testing.T) {
 	}
 	if got, want := m.Scope(), []string{"az", "claude", "gcloud"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Scope() = %v, want %v", got, want)
-	}
-}
-
-// TestMCPAllow: mcp.allow is a list of exact MCP server names a human keeps
-// (the owner's hybrid list, ADR-0008); names only, each once.
-func TestMCPAllow(t *testing.T) {
-	m, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\nmcp: { allow: [my-db, plugin_tools_srv, docs.v2] }\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := m.MCPAllow(); !reflect.DeepEqual(got, []string{"my-db", "plugin_tools_srv", "docs.v2"}) {
-		t.Fatalf("MCPAllow = %v", got)
-	}
-	none, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"))
-	if err != nil || none.MCPAllow() != nil {
-		t.Fatalf("no mcp block: %v %v", none.MCPAllow(), err)
-	}
-	for _, body := range []string{"mcp: { allow: [\"npx -y x\"] }\n", "mcp: { allow: [\"a/b\"] }\n", "mcp: { allow: [x, x] }\n", "mcp: { allow: [\"\"] }\n", "mcp: { allow: [\"$(x)\"] }\n"} {
-		if _, err := Load(write(t, "schema: tentaqles-client-v2\nclient: x\n"+body)); err == nil || !strings.Contains(err.Error(), "mcp.allow") {
-			t.Errorf("%q loaded: %v", body, err)
-		}
 	}
 }

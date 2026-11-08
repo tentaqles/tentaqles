@@ -15,12 +15,9 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/browser"
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/mcpscope"
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // The browser profile (ADR-0016) end to end, with a fake browser: the test binary copied as
@@ -237,7 +234,7 @@ func TestBrowserShims(t *testing.T) {
 	fake := installFakeBrowsers(t)
 	ws := workspaceNamed(t, "company-x")
 
-	// tq settings render writes the shims, signs them, and a second render finds nothing to do
+	// tq settings render writes the shims, and a second render finds nothing to do
 	out := runSettingsRender(t, "company-x")
 	if !strings.Contains(out, "browser shims written") {
 		t.Fatalf("render did not write the shims:\n%s", out)
@@ -249,9 +246,6 @@ func TestBrowserShims(t *testing.T) {
 		t.Fatalf("a second render wrote them again:\n%s", out)
 	}
 	ws = workspaceNamed(t, "company-x")
-	if v := trust.Check("company-x", ws.Hash); !v.OK {
-		t.Fatalf("the client is not trusted after the render signed the shims: %s", v.Reason)
-	}
 
 	// the environment of a launch names the shim and puts the folder first on PATH
 	t.Setenv("PATH", filepath.Dir(os.Args[0]))
@@ -372,233 +366,6 @@ func runSettingsRender(t *testing.T, names ...string) string {
 		t.Fatalf("settings render: %v\n%s", err, out.String())
 	}
 	return out.String()
-}
-
-func TestSettingsRender_PlaywrightUserDataDir(t *testing.T) {
-	setupScoped(t, "company-x", browserBody+"mcp:\n  allow: [acme-tool]\n")
-	claudeDir := paths.IdentityDir("company-x", "claude")
-	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cfgFile := filepath.Join(claudeDir, ".claude.json")
-	orig := `{
-  "numStartups": 12,
-  "mcpServers": {
-    "playwright": { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@0.0.40", "--headless", "--user-data-dir", "C:\\somewhere"] },
-    "acme-tool": { "command": "acme-tool", "args": ["serve"] }
-  },
-  "projects": {
-    "C:/work/app": {
-      "mcpServers": { "pw": { "command": "npx", "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium"] } }
-    }
-  }
-}
-`
-	if err := os.WriteFile(cfgFile, []byte(orig), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out := runSettingsRender(t, "company-x")
-	dir := paths.BrowserDir("company-x")
-	if !strings.Contains(out, "--user-data-dir") {
-		t.Fatalf("render did not report the Playwright change:\n%s", out)
-	}
-	raw, _ := os.ReadFile(cfgFile)
-	var doc struct {
-		NumStartups int                       `json:"numStartups"`
-		MCPServers  map[string]map[string]any `json:"mcpServers"`
-		Projects    map[string]struct {
-			MCPServers map[string]map[string]any `json:"mcpServers"`
-		} `json:"projects"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("the config is not JSON: %v\n%s", err, raw)
-	}
-	pw := mcpscope.DataDirOf(doc.MCPServers["playwright"])
-	pw2 := mcpscope.DataDirOf(doc.Projects["C:/work/app"].MCPServers["pw"])
-	if pw != dir || pw2 != dir {
-		t.Fatalf("--user-data-dir = %q, %q; want %q", pw, pw2, dir)
-	}
-	args := fmt.Sprint(doc.MCPServers["playwright"]["args"])
-	if !strings.Contains(args, "@playwright/mcp@0.0.40") || !strings.Contains(args, "--headless") || strings.Contains(args, "somewhere") {
-		t.Fatalf("the user server's arguments: %s", args)
-	}
-	args2 := fmt.Sprint(doc.Projects["C:/work/app"].MCPServers["pw"]["args"])
-	if !strings.Contains(args2, "-y @playwright/mcp@latest --browser chromium") {
-		t.Fatalf("the project server's arguments: %s", args2)
-	}
-	if fmt.Sprint(doc.MCPServers["acme-tool"]["args"]) != "[serve]" || doc.NumStartups != 12 {
-		t.Fatalf("an entry that is not Playwright changed: %s", raw)
-	}
-	// a second render changes nothing
-	before := string(raw)
-	out = runSettingsRender(t, "company-x")
-	if !strings.Contains(out, "up to date") || strings.Contains(out, "--user-data-dir") {
-		t.Fatalf("the second render:\n%s", out)
-	}
-	if after, _ := os.ReadFile(cfgFile); string(after) != before {
-		t.Fatal("the second render rewrote the config")
-	}
-	// a client with no browsers: its Playwright entry is left as it is
-	setupScoped(t, "company-z", companyXBody)
-	zdir := paths.IdentityDir("company-z", "claude")
-	if err := os.MkdirAll(zdir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	zorig := `{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest"]}}}`
-	if err := os.WriteFile(filepath.Join(zdir, ".claude.json"), []byte(zorig), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runSettingsRender(t, "company-z")
-	if b, _ := os.ReadFile(filepath.Join(zdir, ".claude.json")); string(b) != zorig {
-		t.Fatalf("a client with no browsers had its Playwright entry changed: %s", b)
-	}
-}
-
-// The hook: another profile is denied, with the rule's name, and the denial is logged (REQ-8, REQ-15).
-func TestPreToolUse_OtherBrowserProfileDenied(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", chromeOnlyBody)
-	for _, c := range []string{
-		`chrome --profile-directory=Default`,
-		`"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir=C:\other`,
-		`msedge https://x`,
-	} {
-		code, category, rule, errOut := hookDecision(t, root, "Bash", cmdIn(c))
-		if code != 2 || category != policy.CategoryIdentity || rule != policy.OtherBrowserProfileID || !strings.Contains(errOut, "BLOCKED [identity/other-browser-profile]") {
-			t.Errorf("%s: code=%d category=%q rule=%q: %s", c, code, category, rule, errOut)
-		}
-	}
-	if code, _, _, errOut := hookDecision(t, root, "Bash", cmdIn(`chrome --profile-directory="Profile 2" https://x`)); code != 0 {
-		t.Errorf("the client's own profile was denied: %s", errOut)
-	}
-	raw, err := os.ReadFile(filepath.Join(paths.Home(), "denials.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("%d denial lines, want one per deny: %s", len(lines), raw)
-	}
-	for _, l := range lines {
-		if !strings.Contains(l, `"category":"identity"`) || !strings.Contains(l, `"rule":"other-browser-profile"`) {
-			t.Errorf("the denial line: %s", l)
-		}
-	}
-}
-
-func TestPreToolUse_OsUrlOpenDenied(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", chromeOnlyBody)
-	for _, c := range []struct{ tool, cmd string }{
-		{"Bash", `start https://x`},
-		{"PowerShell", `Start-Process https://x`},
-		{"Bash", `explorer https://x`},
-		{"Bash", `cmd /c start https://x`},
-		{"Bash", `rundll32 url.dll,OpenURL https://x`},
-	} {
-		code, _, rule, errOut := hookDecision(t, root, c.tool, cmdIn(c.cmd))
-		if code != 2 || rule != policy.OtherBrowserProfileID || !strings.Contains(errOut, "tentaqles open") {
-			t.Errorf("%s: code=%d rule=%q: %s", c.cmd, code, rule, errOut)
-		}
-	}
-}
-
-func TestPreToolUse_ClaudeInChromeNeedsChrome(t *testing.T) {
-	call := `{"url":"https://x"}`
-	edge, _ := setupScoped(t, "company-x", edgeOnlyBody)
-	code, category, rule, errOut := hookDecision(t, edge, "mcp__claude-in-chrome__navigate", call)
-	if code != 2 || category != policy.CategoryIdentity || rule != policy.OtherBrowserProfileID {
-		t.Fatalf("an Edge client: code=%d %q %q: %s", code, category, rule, errOut)
-	}
-	chrome, _ := setupScoped(t, "company-y", chromeOnlyBody)
-	if code, _, _, errOut := hookDecision(t, chrome, "mcp__claude-in-chrome__navigate", call); code != 0 {
-		t.Fatalf("a Chrome client was denied: %s", errOut)
-	}
-	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "COMMANDS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := strings.ToLower(string(b))
-	if !strings.Contains(doc, "claude in chrome") || !strings.Contains(doc, "already running") || !strings.Contains(doc, "cannot verify") {
-		t.Fatal("docs/COMMANDS.md does not state that Claude in Chrome attaches to a running browser whose profile tq cannot verify")
-	}
-}
-
-// A client with no browsers: block: the hook, the environment and the shims are as before (REQ-13).
-func TestBrowser_NoBlockNoChange(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", companyXBody)
-	for _, c := range []string{`chrome --profile-directory=Default`, `chrome https://x`, `msedge`, `start https://x`, `explorer https://x`, `cmd /c start https://x`} {
-		if code, _, _, errOut := hookDecision(t, root, "Bash", cmdIn(c)); code != 0 {
-			t.Errorf("%s was denied for a client with no browsers: %s", c, errOut)
-		}
-	}
-	if code, _, _, errOut := hookDecision(t, root, "mcp__claude-in-chrome__navigate", `{}`); code != 0 {
-		t.Errorf("Claude in Chrome was denied for a client with no browsers: %s", errOut)
-	}
-	out := runSettingsRender(t, "company-x")
-	if strings.Contains(out, "shims") || strings.Contains(out, "--user-data-dir") {
-		t.Fatalf("a render for a client with no browsers did something browser-shaped:\n%s", out)
-	}
-	if _, err := os.Stat(paths.ShimsDir("company-x")); err == nil {
-		t.Fatal("a shims folder was written for a client with no browsers")
-	}
-	ws := workspaceNamed(t, "company-x")
-	for _, kv := range envplan.Environ(ws, os.Environ()) {
-		if strings.HasPrefix(kv, "BROWSER=") && strings.Contains(kv, "shims") {
-			t.Fatalf("BROWSER names a shim: %s", kv)
-		}
-		if strings.EqualFold(strings.SplitN(kv, "=", 2)[0], "PATH") && strings.Contains(kv, paths.ShimsRoot()) {
-			t.Fatalf("PATH holds a shims folder: %s", kv)
-		}
-	}
-	// tentaqles open says so
-	if code, out := openIn(t, root, "https://example.com"); code != 1 || !strings.Contains(out, "no browser is set for this client") {
-		t.Fatalf("open: %d %s", code, out)
-	}
-}
-
-// The shims folder is in the protected path set, and the integrity record covers it (REQ-7).
-func TestBrowserShims_ProtectedAndSigned(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", browserBody)
-	installFakeBrowsers(t)
-	runSettingsRender(t, "company-x")
-	shim := filepath.Join(paths.ShimsDir("company-x"), "xdg-open"+exeSuffix())
-	if _, err := os.Stat(shim); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []struct{ tool, input string }{
-		{"Write", `{"file_path":` + jsonPathLit(shim) + `,"content":"x"}`},
-		{"Edit", `{"file_path":` + jsonPathLit(shim) + `,"old_string":"a","new_string":"b"}`},
-		{"Bash", cmdIn(`echo evil > "` + shim + `"`)},
-		{"Bash", cmdIn(`cp /tmp/x "` + shim + `"`)},
-	} {
-		code, category, rule, errOut := hookDecision(t, root, c.tool, c.input)
-		if code != 2 || category != policy.CategorySelfProtection || !strings.Contains(errOut, "BLOCKED [self-protection/tq/protected-path]") {
-			t.Errorf("%s: code=%d %q %q: %s", c.tool, code, category, rule, errOut)
-		}
-	}
-
-	// a changed shim makes the client untrusted
-	ws := workspaceNamed(t, "company-x")
-	if v := trust.Check("company-x", ws.Hash); !v.OK {
-		t.Fatalf("not trusted after the render: %s", v.Reason)
-	}
-	f, err := os.OpenFile(shim, os.O_APPEND|os.O_WRONLY, 0o700)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.WriteString("tampered")
-	f.Close()
-	if v := trust.Check("company-x", ws.Hash); v.OK || !strings.Contains(strings.ToLower(filepath.ToSlash(v.Reason)), "shims/company-x/") {
-		t.Fatalf("a changed shim left the client trusted: %+v", v)
-	}
-	cfg, _ := registry.Load()
-	if res := resolve.Resolve(root, cfg); res.Workspace != nil || res.Untrusted == nil || !res.Mismatch {
-		t.Fatalf("the client still resolves after its shim changed: %+v", res)
-	}
-	// and the shim itself refuses to open anything
-	var stderr bytes.Buffer
-	if ok, code := runShim(shim, []string{"https://example.com"}, &stderr); !ok || code == 0 {
-		t.Fatalf("a shim of an untrusted client opened a page: ok=%v code=%d", ok, code)
-	}
 }
 
 // An http or https URL never reaches the real xdg-open or open (round 1, L-01): it opens in the

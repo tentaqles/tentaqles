@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestReach_PauseClosedInput$ -count=1 -v
-=== RUN   TestReach_PauseClosedInput
---- PASS: TestReach_PauseClosedInput (0.64s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.728s
-exit code: 0

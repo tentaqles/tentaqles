@@ -1,8 +1,0 @@
-$ go test ./internal/doctor -count=1 -v -run Guard
-=== RUN   TestDoctor_GuardHookNotForAClientWithoutClaude
---- PASS: TestDoctor_GuardHookNotForAClientWithoutClaude (0.03s)
-=== RUN   TestDoctor_GuardHookMissing
---- PASS: TestDoctor_GuardHookMissing (0.08s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/doctor	0.174s
-exit code: 0

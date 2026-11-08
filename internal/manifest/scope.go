@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -18,8 +17,7 @@ var gitProviderIDs = map[string]string{"github": "gh", "gitlab": "glab", "azure-
 
 // Scope returns the sorted catalog ids this identity may touch: IdentityNames (the
 // identities block, or claude and gh for a v1 manifest, plus every cloud of the cloud
-// block), the git provider, the chat, email and data_platform providers, the agents, the
-// providers whose MCP server the bundle lists, and the optional `scope:` list (providers the
+// block), the git provider, the email provider, and the optional `scope:` list (providers the
 // identity uses without a private config home, such as vercel or terraform). An existing
 // manifest needs no new field: its scope is what it already declares.
 func (m *Manifest) Scope() []string {
@@ -38,20 +36,8 @@ func (m *Manifest) Scope() []string {
 	} else if _, ok := providers.MustLoad().Get(gp); ok {
 		add(gp)
 	}
-	for _, s := range []*Service{m.Chat, m.Email, m.DataPlatform} {
-		if s.Enabled() {
-			add(s.Provider)
-		}
-	}
-	for _, a := range m.Agents {
-		add(a)
-	}
-	if m.Claude.Bundle != nil && len(m.Claude.Bundle.MCP) > 0 {
-		for _, p := range providers.MustLoad().All() {
-			if contains(m.Claude.Bundle.MCP, p.MCPName()) {
-				add(p.ID)
-			}
-		}
+	if m.Email.Enabled() {
+		add(m.Email.Provider)
 	}
 	for _, id := range m.ExtraScope {
 		add(id)
@@ -72,46 +58,6 @@ func unknownProviderHint(id string) string {
 		return ": the user provider file " + fe.Error()
 	}
 	return ""
-}
-
-// BundleMCP is claude.bundle.mcp: the identity's own MCP servers by exact name (ADR-0006
-// round 2), nil without a bundle.
-func (m *Manifest) BundleMCP() []string {
-	if m == nil || m.Claude.Bundle == nil {
-		return nil
-	}
-	return m.Claude.Bundle.MCP
-}
-
-// MCPBlock is the manifest's mcp: block.
-type MCPBlock struct {
-	Allow []string `yaml:"allow,omitempty"`
-}
-
-// MCPAllow is mcp.allow: the exact MCP server names a human keeps (ADR-0008), nil when none.
-// The manifest is the protected copy, so only a human edits it.
-func (m *Manifest) MCPAllow() []string {
-	if m == nil || len(m.MCP.Allow) == 0 {
-		return nil
-	}
-	return append([]string{}, m.MCP.Allow...)
-}
-
-var mcpNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-
-// validateMCP checks mcp.allow: server names only (letters, digits, . _ -), each once.
-func (m *Manifest) validateMCP() error {
-	seen := map[string]bool{}
-	for _, n := range m.MCP.Allow {
-		if !mcpNameRe.MatchString(n) {
-			return fmt.Errorf("mcp.allow: %q is not an MCP server name (letters, digits, . _ -)", n)
-		}
-		if seen[n] {
-			return fmt.Errorf("mcp.allow: %q is listed twice", n)
-		}
-		seen[n] = true
-	}
-	return nil
 }
 
 // validateScope checks the scope: list: catalog ids, each once.

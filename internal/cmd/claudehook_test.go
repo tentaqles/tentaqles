@@ -10,10 +10,8 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/doctor"
 	"github.com/tentaqles/tentaqles/internal/manifest"
-	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 type hookExitSentinel struct{}
@@ -48,54 +46,12 @@ func runHook(t *testing.T, args []string, stdin string) (code int, out, errOut s
 	return code, stdoutBuf.String(), stderrBuf.String()
 }
 
-func jsonPath(t *testing.T, p string) string {
-	t.Helper()
-	b, err := json.Marshal(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
-
-func hookPayloadFor(t *testing.T, cwd, command string) string {
-	t.Helper()
-	return `{"tool_name":"Bash","cwd":` + jsonPath(t, cwd) + `,"tool_input":{"command":` + jsonPath(t, command) + `}}`
-}
-
-// setupTrustedWorkspaceWithManifest registers a base under an isolated home,
-// writes the manifest body under a v2 header and trusts it. Returns the root.
+// setupTrustedWorkspaceWithManifest writes client name (the manifest body after the schema and
+// client lines) in a fresh clients folder. It returns the folder.
 func setupTrustedWorkspaceWithManifest(t *testing.T, name, body string) string {
 	t.Helper()
-	isolateHome(t)
-	base := testutil.TempDir(t)
-	cfg := &registry.Config{}
-	if _, err := cfg.AddBase(base); err != nil {
-		t.Fatal(err)
-	}
-	if err := cfg.Save(); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(base, name)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mp := filepath.Join(root, manifest.FileName)
-	raw := "schema: tentaqles-client-v2\nclient: " + name + "\nidentities: { gh: {} }\n" + body
-	if err := os.WriteFile(mp, []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, err := trust.HashFile(mp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := trust.Allow(name, h); err != nil {
-		t.Fatal(err)
-	}
-	// TQ_WS matches so the env-drift finding does not mask the rule under test.
-	t.Setenv("TQ_WS", name)
-	return root
+	return writeClient(t, newBase(t), name, body)
 }
-
 func TestPreToolUse_NoWorkspace_AllowsLs(t *testing.T) {
 	isolateHome(t)
 	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, testutil.TempDir(t), "ls"))
@@ -200,14 +156,14 @@ func TestPreToolUse_JSONAllowStillExitsZero(t *testing.T) {
 }
 
 func TestSessionStart_Workspace(t *testing.T) {
-	ws := setupTrustedWorkspaceWithManifest(t, "acme", "display_name: Acme\ngit:\n  host: github.com\n  user: acme-bot\n  email: dev@acme.com\n")
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "git:\n  provider: github\n  user: acme-bot\n  email: dev@acme.com\n")
 	code, out, errOut := runHook(t, []string{"claude-hook", "session-start"}, hookPayloadFor(t, ws, ""))
 	if code != 0 {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 	lines := strings.SplitN(out, "\n", 2)
-	if lines[0] != "Client: Acme (en)" {
-		t.Fatalf("first line = %q, want %q", lines[0], "Client: Acme (en)")
+	if lines[0] != "Client: acme" {
+		t.Fatalf("first line = %q, want %q", lines[0], "Client: acme")
 	}
 	if !strings.Contains(out, "Identity: acme") {
 		t.Fatalf("missing Identity: acme in %q", out)
@@ -224,7 +180,7 @@ func TestSessionStart_Neutral(t *testing.T) {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 	lines := strings.SplitN(out, "\n", 2)
-	want := "Client: none (neutral cwd: outside any base)"
+	want := "Client: none (neutral folder: outside any base)"
 	if lines[0] != want {
 		t.Fatalf("first line = %q, want %q", lines[0], want)
 	}
@@ -280,7 +236,7 @@ func TestGHEnv_NoWorkspaceDirKeepsBase(t *testing.T) {
 func TestRenderSessionStart_Neutral(t *testing.T) {
 	rep := doctor.CwdReport{Result: resolve.Result{Reason: "outside any base"}}
 	got := renderSessionStart(rep, "")
-	want := "Client: none (neutral cwd: outside any base)\n\nRules: remote git, gh and cloud CLI commands are blocked here until you cd into a trusted workspace (tq allow <name>).\n"
+	want := "Client: none (neutral folder: outside any base)\n\nRules: remote git, gh and cloud CLI commands are blocked here; cd into a client folder first.\n"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -288,45 +244,25 @@ func TestRenderSessionStart_Neutral(t *testing.T) {
 
 func TestRenderSessionStart_Workspace(t *testing.T) {
 	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{
-		Client:      "acme",
-		DisplayName: "Acme",
-		Git:         manifest.Git{Host: "github.com", User: "acme-bot", Email: "dev@acme.com"},
-		Cloud:       map[string]any{"provider": "azure", "subscription_name": "acme-prod"},
+		Client:     "acme",
+		Git:        manifest.Git{Provider: "github", User: "acme-bot", Email: "dev@acme.com"},
+		Identities: map[string]manifest.Identity{"claude": {}, "az": {}},
+		Cloud:      map[string]any{"provider": "azure", "also": []any{"aws"}},
 	}}
 	rep := doctor.CwdReport{Result: resolve.Result{Workspace: ws}}
 	got := renderSessionStart(rep, "/home/acme/.tentaqles/identities/acme/claude")
-	want := "Client: Acme (en)\n" +
-		"Git: github.com as acme-bot (dev@acme.com)\n" +
-		"Cloud: azure (acme-prod subscription)\n" +
+	want := "Client: acme\n" +
+		"Git: github as acme-bot (dev@acme.com)\n" +
+		"Cloud: azure, aws\n" +
 		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude\n" +
-		scopeLine(ws) +
+		"Tools: aws, az, claude, gh. Other providers' CLIs are not on this terminal's PATH.\n" +
 		"\ntq doctor:\n" +
 		"- [ok] all checks passed\n" +
-		"\nRules: tq blocks git/gh/cloud commands on identity drift (exit 2). Run `tq doctor` for details.\n"
-	if !strings.HasPrefix(got, want) {
-		t.Fatalf("got:\n%q\nwant prefix:\n%q", got, want)
-	}
-	// The secrets line teaches the agent the .env-safe verbs.
-	if rest := got[len(want):]; !strings.HasPrefix(rest, "Secrets: ") || !strings.Contains(rest, "tq dotenv run") {
-		t.Fatalf("missing secrets guidance: %q", rest)
+		"\nRules: tq blocks git, gh and cloud commands that would run under another identity (exit 2). Run `tq doctor` for details.\n"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
 	}
 }
-
-func TestRenderSessionStart_UntrustedWithFindings(t *testing.T) {
-	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{Client: "acme"}}
-	rep := doctor.CwdReport{
-		Result:   resolve.Result{Untrusted: ws},
-		Findings: []doctor.Finding{{Level: "warn", Code: "untrusted", Workspace: "acme", Msg: "manifest not trusted", Fix: "tq allow acme"}},
-	}
-	got := renderSessionStart(rep, "")
-	if !strings.Contains(got, "- [warn] untrusted: manifest not trusted (→ tq allow acme)") {
-		t.Fatalf("missing untrusted bullet: %q", got)
-	}
-	if !strings.HasPrefix(got, "Client: acme (en)\n") {
-		t.Fatalf("first line wrong: %q", got)
-	}
-}
-
 func containsStr(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
@@ -334,45 +270,6 @@ func containsStr(xs []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func TestPreToolUse_UntrustedWorkspaceSkipsGHLookup(t *testing.T) {
-	ws := mkUntrustedWithManifest(t, "acme", "git:\n  user: acme-bot\n")
-	prev := lookupGHUser
-	called := false
-	lookupGHUser = func(map[string]string) string { called = true; return "someone" }
-	t.Cleanup(func() { lookupGHUser = prev })
-
-	code, _, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "gh pr list"))
-	if called {
-		t.Fatal("lookupGHUser called for an untrusted workspace")
-	}
-	if code != 0 {
-		t.Fatalf("code=%d (gh in an untrusted ws is judged by untrusted/neutral rules only)", code)
-	}
-}
-
-// mkUntrustedWithManifest is setupTrustedWorkspaceWithManifest without the trust step.
-func mkUntrustedWithManifest(t *testing.T, name, body string) string {
-	t.Helper()
-	isolateHome(t)
-	base := testutil.TempDir(t)
-	cfg := &registry.Config{}
-	if _, err := cfg.AddBase(base); err != nil {
-		t.Fatal(err)
-	}
-	if err := cfg.Save(); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(base, name)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw := "schema: tentaqles-client-v2\nclient: " + name + "\nidentities: { gh: {} }\n" + body
-	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return root
 }
 
 // Fix round 2, finding 1: an oversized payload is a protocol violation.
@@ -413,7 +310,7 @@ func TestSessionStart_OversizedPayloadExitsZero(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d", code)
 	}
-	if !strings.Contains(out, "could not resolve this workspace") {
+	if !strings.Contains(out, "could not resolve this folder") {
 		t.Fatalf("stdout=%q", out)
 	}
 }
@@ -446,19 +343,5 @@ func TestPreToolUse_CloudAlsoAliasAndPrimaryAlias(t *testing.T) {
 		if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, cmd)); code != want {
 			t.Fatalf("%q: code=%d want %d out=%s", cmd, code, want, out)
 		}
-	}
-}
-
-// cloud.also only counts from a trusted manifest: edit it (so the hash no
-// longer matches) and the extra cloud is blocked again.
-func TestPreToolUse_UntrustedManifestCannotAddClouds(t *testing.T) {
-	trusted := setupTrustedWorkspaceWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [aws]\n")
-	if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, trusted, "aws s3 ls")); code != 0 {
-		t.Fatalf("trusted also: code=%d out=%s", code, out)
-	}
-	untrusted := mkUntrustedWithManifest(t, "acme", "cloud:\n  provider: azure\n  also: [aws]\n")
-	code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, untrusted, "aws s3 ls"))
-	if code != 2 || !strings.Contains(out, `"rule":"wrong-cloud"`) {
-		t.Fatalf("untrusted also: code=%d out=%s", code, out)
 	}
 }

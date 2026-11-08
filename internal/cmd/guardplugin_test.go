@@ -8,17 +8,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // The guard of a session is the tentaqles plugin's PreToolUse hook (ADR-0018): tq run refuses
 // to start claude in an identity's folder when the client's Claude config has no enabled
 // plugin that runs it. These tests write the plugin the way claude plugin install leaves it.
 
-// guardOpts is the client's Claude config as a test writes it, before the trust is signed. The
+// guardOpts is the client's Claude config as a test writes it. The
 // zero value is a real install: the plugin enabled, its hooks as the release ships them.
 type guardOpts struct {
 	// Absent writes no plugin, no installed_plugins.json and no settings.json.
@@ -29,7 +28,7 @@ type guardOpts struct {
 	DisableAllHooks bool
 	// Hooks is the plugin's hooks/hooks.json; "" is the release's (plugin/hooks/hooks.json).
 	Hooks string
-	// Identities is the manifest's identities: flow map; "" is claude and codex.
+	// Identities is the manifest's identities: flow map; "" is claude.
 	Identities string
 	// NoRegistration writes no installed_plugins.json: claude loads the highest cached version
 	// instead (PluginRoot's second source), as the integrity tests of a new plugin version need.
@@ -38,7 +37,7 @@ type guardOpts struct {
 
 func (g guardOpts) identities() string {
 	if g.Identities == "" {
-		return "{ claude: {}, codex: {} }"
+		return "{ claude: {} }"
 	}
 	return g.Identities
 }
@@ -58,7 +57,7 @@ func shippedHooks(tb testing.TB) string {
 
 // writeGuard writes name's Claude config as g says: the plugin folder in the plugin cache, with
 // its manifest, hooks and script; installed_plugins.json naming it; and settings.json with
-// enabledPlugins. It writes nothing signed; callers sign after.
+// enabledPlugins.
 func writeGuard(tb testing.TB, name string, g guardOpts) {
 	tb.Helper()
 	if g.Absent {
@@ -105,7 +104,7 @@ const guardFix = "tq run acme -- claude plugin install tentaqles@tentaqles"
 // guardInstallFix is what a refusal for a missing plugin prints, in this order: the marketplace (it
 // may be there already), REQ-5's install line, and the re-sign, since the install changes what the
 // record covers.
-var guardInstallFix = []string{"tq run acme -- claude plugin marketplace add tentaqles/tentaqles", guardFix, "tq hooks verify --accept acme"}
+var guardInstallFix = []string{"tq run acme -- claude plugin marketplace add tentaqles/tentaqles", guardFix}
 
 // fixBlockOf is the refusal's fix section for lines: the form fixBlock prints.
 func fixBlockOf(lines []string) string {
@@ -148,9 +147,9 @@ func guardCopies(t *testing.T, name string) []testutil.FakeCopy {
 }
 
 func TestRun_StartsWithTheHook(t *testing.T) {
-	mkLaunchWS(t, "acme", "")
+	mkLaunchWS(t, "acme")
 	clearAgentMarkers(t)
-	if g := trust.CheckGuardHook(paths.IdentityDir("acme", "claude")); !g.OK {
+	if g := guardplugin.CheckGuardHook(paths.IdentityDir("acme", "claude")); !g.OK {
 		t.Fatalf("the fixture is not a guard: %s", g.Why)
 	}
 	calls := fakeExec(t)
@@ -165,7 +164,7 @@ func TestRun_StartsWithTheHook(t *testing.T) {
 // No plugin, no session: tq run <ws> and tq run . refuse with the fix line, and nothing launches.
 // The fix line itself runs (TestRun_RefusalOnlyForASession).
 func TestRun_RefusesWithNoGuardHook(t *testing.T) {
-	root, _ := mkLaunchWSGuard(t, "acme", "", false, guardOpts{Absent: true})
+	root, _ := mkGuardWS(t, "acme", guardOpts{Absent: true})
 	clearAgentMarkers(t)
 	calls := fakeExec(t)
 	for _, args := range [][]string{{"run", "acme", "--", "claude"}, {"run", "acme", "--", "claude", "-p", "hi"}} {
@@ -188,7 +187,7 @@ func TestRun_RefusesWithNoGuardHook(t *testing.T) {
 // config: a client without a claude identity has no CLAUDE_CONFIG_DIR, so claude would read the
 // user's own config, which holds no guard of tq's.
 func TestRun_NoClaudeIdentityIsNoGuard(t *testing.T) {
-	mkLaunchWSGuard(t, "acme", "", false, guardOpts{Identities: "{ gh: {} }"})
+	mkGuardWS(t, "acme", guardOpts{Identities: "{ gh: {} }"})
 	clearAgentMarkers(t)
 	calls := fakeExec(t)
 	_, err := runTq(t, "run", "acme", "--", "claude")
@@ -208,15 +207,15 @@ func TestRun_DisabledPluginIsNoHook(t *testing.T) {
 		fix string
 	}{
 		{"enabledPlugins false", guardOpts{Disabled: true}, []string{"not enabled", "enabledPlugins"},
-			"fix, in this order:\n    tq run acme -- claude plugin enable tentaqles@tentaqles\n    tq hooks verify --accept acme"},
+			"fix: tq run acme -- claude plugin enable tentaqles@tentaqles"},
 		{"disableAllHooks", guardOpts{DisableAllHooks: true}, []string{"disableAllHooks", "settings.json", "turns off every hook"},
 			`fix: remove "disableAllHooks" (or set it to false) in `},
 		{"no PreToolUse", guardOpts{Hooks: `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" session-start"}]}]}}`},
-			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tq run acme -- claude plugin uninstall tentaqles@tentaqles\n    tq hooks verify --accept acme\n    tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles\n    tq hooks verify --accept acme"},
+			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tq run acme -- claude plugin uninstall tentaqles@tentaqles\n    tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			mkLaunchWSGuard(t, "acme", "", false, c.g)
+			mkGuardWS(t, "acme", c.g)
 			clearAgentMarkers(t)
 			calls := fakeExec(t)
 			_, err := runTq(t, "run", "acme", "--", "claude")
@@ -239,7 +238,7 @@ func TestRun_DisabledPluginIsNoHook(t *testing.T) {
 }
 
 // A plugin's PreToolUse is the guard only when it runs tq_hook.sh pre-tool-use with a matcher that
-// covers Bash and MCP tools; anything else is no hook.
+// covers Bash and PowerShell; anything else is no hook.
 func TestRun_ForeignHookIsNoHook(t *testing.T) {
 	hooks := func(matcher, command string) string {
 		return fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":%q,"hooks":[{"type":"command","command":%q}]}]}}`, matcher, command)
@@ -253,14 +252,14 @@ func TestRun_ForeignHookIsNoHook(t *testing.T) {
 		{"the release", "", true},
 		{"another script", hooks("^(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Agent)$|^mcp__", `bash "${CLAUDE_PLUGIN_ROOT}/scripts/other.sh" pre-tool-use`), false},
 		{"a script run by name", hooks("^(Bash|PowerShell)$|^mcp__", `node "${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.js" pre-tool-use`), false},
-		{"the matcher leaves out Bash", hooks("^(Read|Edit|Write)$|^mcp__", guard), false},
-		{"the matcher leaves out MCP", hooks("^(Bash|PowerShell|Read)$", guard), false},
+		{"the matcher leaves out Bash", hooks("^(PowerShell|Read|Edit|Write)$|^mcp__", guard), false},
+		{"the matcher leaves out PowerShell", hooks("^(Bash|Read)$", guard), false},
 		{"an invalid matcher", hooks("(Bash", guard), false},
-		{"the hook is not a command", `{"hooks":{"PreToolUse":[{"matcher":"^(Bash|mcp__.*)$","hooks":[{"type":"prompt","command":"` + guard + `"}]}]}}`, false},
+		{"the hook is not a command", `{"hooks":{"PreToolUse":[{"matcher":"^(Bash|PowerShell)$","hooks":[{"type":"prompt","command":"` + guard + `"}]}]}}`, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			mkLaunchWSGuard(t, "acme", "", false, guardOpts{Hooks: c.hooks})
+			mkGuardWS(t, "acme", guardOpts{Hooks: c.hooks})
 			clearAgentMarkers(t)
 			calls := fakeExec(t)
 			_, err := runTq(t, "run", "acme", "--", "claude")
@@ -278,7 +277,7 @@ func TestRun_ForeignHookIsNoHook(t *testing.T) {
 // so the fix line runs. Other commands through tq run are not refused for it, and a neutral
 // folder's claude is unchanged.
 func TestRun_RefusalOnlyForASession(t *testing.T) {
-	mkLaunchWSGuard(t, "acme", "", false, guardOpts{Absent: true, Identities: "{ claude: {}, gh: {} }"})
+	mkGuardWS(t, "acme", guardOpts{Absent: true, Identities: "{ claude: {}, gh: {} }"})
 	clearAgentMarkers(t)
 	calls := fakeExec(t)
 	for _, args := range [][]string{
@@ -310,7 +309,7 @@ func TestRun_RefusalOnlyForASession(t *testing.T) {
 // starts in refuses it, with the file named (REQ-8, ADR-0018). A file above the client folder is not
 // read, and a project file with neither switch starts.
 func TestRun_ProjectSettingsCountToo(t *testing.T) {
-	root, _ := mkLaunchWSGuard(t, "acme", "", false, guardOpts{})
+	root, _ := mkGuardWS(t, "acme", guardOpts{})
 	clearAgentMarkers(t)
 	calls := fakeExec(t)
 	chdir(t, root)
@@ -355,64 +354,29 @@ func TestRun_ProjectSettingsCountToo(t *testing.T) {
 	}
 }
 
-// The plugin's registration and its hooks are the guard: a session cannot write the settings,
-// the installed_plugins.json or the plugin's hooks.json to remove it (REQ-11).
-func TestProtectedPaths_PluginRegistration(t *testing.T) {
-	f := setupProtected(t, "")
-	installed := filepath.Join(paths.IdentityDir("acme", "claude"), "plugins", "installed_plugins.json")
-	for _, p := range []string{f.settings, installed, f.pluginHooks} {
-		for _, tool := range []string{"Write", "Edit"} {
-			input := pathIn("file_path", p)
-			if tool == "Edit" {
-				input = `{"file_path":` + jsonPathLit(p) + `,"old_string":"a","new_string":"b"}`
-			}
-			code, category, rule, errOut := hookDecision(t, f.root, tool, input)
-			if code != 2 || rule != policy.ProtectedPathID || category != policy.CategorySelfProtection ||
-				!strings.HasPrefix(errOut, "BLOCKED [self-protection/tq/protected-path]: ") {
-				t.Fatalf("%s %s: want the protected-path deny, got code=%d rule=%q stderr=%q", tool, p, code, rule, errOut)
-			}
-		}
-	}
-}
-
-// R-1: the lines a refusal prints get a developer a guarded session when run in order, each against
-// the state the line before it leaves. The fake claude installs the plugin on `install` only; the
-// marketplace add changes no covered file, so the install line still runs after it; the install
-// changes covered files, so tq run refuses until the re-sign; the re-sign lets the session start.
-// The lines run through the real launcher (no execCommand fake), so the session really starts.
+// The lines a refusal prints get a developer a guarded session when run in order: the marketplace
+// add leaves the plugin missing, the install brings it, and then the session starts. The lines run
+// through the real launcher (no execCommand fake), so the session really starts.
 func TestRun_FixLinesRunInOrder(t *testing.T) {
-	mkLaunchWSGuard(t, "acme", "", false, guardOpts{Absent: true})
+	mkGuardWS(t, "acme", guardOpts{Absent: true})
 	clearAgentMarkers(t)
 	bin := fakeClaude(t, testutil.FakeSpec{CopyArg: "install", Copy: guardCopies(t, "acme")})
 	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "\n  "+fixBlockOf(guardInstallFix)) {
-		t.Fatalf("before any line: want the refusal with the three lines, got %v", err)
+		t.Fatalf("before any line: want the refusal with the two lines, got %v", err)
 	}
-	argv := filepath.Join(bin, "claude.argv.log")
-
-	// Line 1: the marketplace. The plugin is still missing, so the refusal is about that, not the record.
 	if out, err := runTq(t, strings.Fields(guardInstallFix[0])[1:]...); err != nil {
 		t.Fatalf("line 1 %q: %v %s", guardInstallFix[0], err, out)
 	}
-	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "not installed") || strings.Contains(err.Error(), "integrity mismatch") {
-		t.Fatalf("after line 1 the plugin is still missing (and the record still holds): %v", err)
+	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("after line 1 the plugin is still missing: %v", err)
 	}
-
-	// Line 2: the install, REQ-5's line. It changes covered files, so the next tq run refuses on the record.
 	if out, err := runTq(t, strings.Fields(guardInstallFix[1])[1:]...); err != nil {
 		t.Fatalf("line 2 %q: %v %s", guardFix, err, out)
 	}
-	if _, err := runTq(t, "run", "acme", "--", "claude"); err == nil || !strings.Contains(err.Error(), "integrity mismatch") || !strings.Contains(err.Error(), "tq hooks verify acme") {
-		t.Fatalf("after line 2 the record names the change and tq hooks verify: %v", err)
-	}
-
-	// Line 3: the re-sign by a human (the confirmation is the test's yes). The session starts.
-	if out, err := runTq(t, strings.Fields(guardInstallFix[2])[1:]...); err != nil {
-		t.Fatalf("line 3 %q: %v %s", guardInstallFix[2], err, out)
-	}
 	if _, err := runTq(t, "run", "acme", "--", "claude"); err != nil {
-		t.Fatalf("after line 3 the session starts: %v", err)
+		t.Fatalf("after line 2 the session starts: %v", err)
 	}
-	got := testutil.ReadFakeLog(t, argv)
+	got := testutil.ReadFakeLog(t, filepath.Join(bin, "claude.argv.log"))
 	if n := len(got); n < 3 || strings.Join(got[0], " ") != "plugin marketplace add tentaqles/tentaqles" ||
 		strings.Join(got[1], " ") != "plugin install tentaqles@tentaqles" || strings.Join(got[n-1], " ") != "--dangerously-skip-permissions" {
 		t.Fatalf("claude calls in order: %v", got)
@@ -430,8 +394,23 @@ func BenchmarkGuardHookPresent(b *testing.B) {
 	dir := paths.IdentityDir("acme", "claude")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if g := trust.CheckGuardHook(dir); !g.OK {
+		if g := guardplugin.CheckGuardHook(dir); !g.OK {
 			b.Fatal(g.Why)
 		}
 	}
+}
+
+// mkGuardWS writes client name with a claude identity (or g.Identities) and its Claude config as
+// g says. It returns the folder and the manifest path.
+func mkGuardWS(t *testing.T, name string, g guardOpts) (string, string) {
+	t.Helper()
+	root := writeClient(t, newBase(t), name, "git: { email: tester@example.com }\nidentities: "+g.identities()+"\n")
+	writeGuard(t, name, g)
+	return root, paths.ManifestPath(name)
+}
+
+// jsonPathLit is p as a JSON string literal.
+func jsonPathLit(p string) string {
+	b, _ := json.Marshal(p)
+	return string(b)
 }

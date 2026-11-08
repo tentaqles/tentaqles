@@ -3,15 +3,12 @@ package doctor
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func contains(ss []string, s string) bool {
@@ -46,16 +43,9 @@ func setupTrustedWorkspace(t *testing.T, name, email string) (*registry.Config, 
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mp := filepath.Join(root, manifest.FileName)
+	mp := markerFor(t, root)
 	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: " + email + " }\nidentities: { claude: {} }\n"
 	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, err := trust.HashFile(mp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := trust.Allow(name, h); err != nil {
 		t.Fatal(err)
 	}
 	return cfg, root
@@ -216,52 +206,6 @@ func TestRunForCwd_ClaudeConfigUnsetWithTQWS(t *testing.T) {
 	}
 	if contains(r.Codes(), "hook-missing") {
 		t.Fatalf("hook-missing must not double-report: %v", r.Codes())
-	}
-}
-
-func TestRunForCwd_UntrustedIsStructural(t *testing.T) {
-	cfg, ws := setupTrustedWorkspace(t, "acme", "dev@acme.com")
-	// Rewrite the manifest so its hash no longer matches the trusted one.
-	mp := filepath.Join(ws, manifest.FileName)
-	if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: dev@acme.com }\nidentities: { claude: {} }\n# edited after tq allow\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	d := Deps{Cwd: ws, Env: func(string) (string, bool) { return "", false },
-		RunGitIn: func(string, ...string) (string, error) { return "", nil },
-		LookPath: func(string) (string, error) { return "/usr/bin/git", nil }}
-	r := RunForCwd(cfg, d)
-	if r.Result.Workspace != nil || r.Result.Untrusted == nil || r.Result.Untrusted.Name != "acme" || !r.Result.Mismatch {
-		t.Fatalf("expected structural Untrusted with Mismatch, got %+v", r.Result)
-	}
-	// An edit after tq allow is an integrity mismatch (the signed record
-	// exists and names the manifest), and untrusted as well: every consumer
-	// of the codes (the guard refuses mutating git on untrusted) treats it
-	// at least as strictly as a workspace never allowed. The fix of both is
-	// tq hooks verify.
-	if !contains(r.Codes(), "integrity") || !contains(r.Codes(), "untrusted") {
-		t.Fatalf("codes %v", r.Codes())
-	}
-	for _, f := range r.Findings {
-		if f.Code == "integrity" && (!strings.Contains(f.Msg, "changed "+trust.Key(mp)) || !strings.Contains(f.Fix, "tq hooks verify acme")) {
-			t.Fatalf("the finding names the manifest and tq hooks verify: %+v", f)
-		}
-		if f.Code == "untrusted" && f.Fix != "tq hooks verify acme" {
-			t.Fatalf("untrusted after a mismatch points at tq hooks verify: %+v", f)
-		}
-	}
-	// Revoked: plain untrusted, fix tq allow.
-	h, _ := trust.HashFile(mp)
-	if err := trust.Deny("acme", h); err != nil {
-		t.Fatal(err)
-	}
-	r = RunForCwd(cfg, d)
-	if r.Result.Mismatch || !contains(r.Codes(), "untrusted") || contains(r.Codes(), "integrity") {
-		t.Fatalf("%+v %v", r.Result, r.Codes())
-	}
-	for _, f := range r.Findings {
-		if f.Code == "untrusted" && f.Fix != "tq allow acme" {
-			t.Fatalf("%+v", f)
-		}
 	}
 }
 

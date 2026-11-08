@@ -62,7 +62,7 @@ func TestEnv_NeutralCwd_UnsetsTrackedVars(t *testing.T) {
 
 // TQ_ENABLED=0 is the shell-activation kill switch: tq env prints nothing.
 func TestEnv_PrintsNothingUnderKillSwitch(t *testing.T) {
-	root := mkLaunchWS(t, "acme", "")
+	root := mkLaunchWS(t, "acme")
 	chdir(t, root)
 	t.Setenv("TQ_ENABLED", "0")
 	if got := runEnv(t, "env", "--shell", "bash"); got != "" {

@@ -122,22 +122,6 @@ func TestCatalog_JiraUsesAcli(t *testing.T) {
 	}
 }
 
-func TestCatalog_LinearAsanaEnvNotes(t *testing.T) {
-	c, err := loadEmbedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"linear", "asana"} {
-		p, _ := c.Get(id)
-		if !strings.Contains(p.Notes, "tq secret set") || !strings.Contains(p.Notes, "tracker.env") {
-			t.Errorf("%s notes should name tq secret set and tracker.env: %q", id, p.Notes)
-		}
-		if p.MCPName() == "" {
-			t.Errorf("%s: mcp name", id)
-		}
-	}
-}
-
 // az and azure-devops are two catalog entries for one CLI: the variable belongs to az itself, so
 // both may declare it. Two different CLIs on one variable stay refused.
 func TestCatalog_SameCLISameVariableIsAllowed(t *testing.T) {

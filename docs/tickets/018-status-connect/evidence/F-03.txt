@@ -1,6 +1,0 @@
-$ go test ./internal/identitystatus -run ^TestStatusJSON_VerifyBounded$ -count=1 -v
-=== RUN   TestStatusJSON_VerifyBounded
---- PASS: TestStatusJSON_VerifyBounded (0.32s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/identitystatus	0.376s
-exit code: 0

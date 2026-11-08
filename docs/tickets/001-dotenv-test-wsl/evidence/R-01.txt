@@ -1,3 +1,0 @@
-$ go test ./internal/cmd -count=1
-ok  	github.com/tentaqles/tentaqles/internal/cmd	43.847s
-exit code: 0

@@ -5,23 +5,8 @@ category: pm
 docs: https://developers.notion.com/
 cli:
   command: ntn
-# NOT isolatable by an environment variable, deliberately:
-# NOTION_HOME plus NOTION_KEYRING=0 reportedly isolates credentials, but that pairing was reported by a research agent and never executed. Left unisolated until someone runs it.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# connect: the hosted MCP server `tentaqles connect notion` registers (ADR-0017); OAuth sign-in through /mcp.
-# Vendor docs: https://developers.notion.com/guides/mcp/get-started-with-mcp
-connect:
-  name: notion
-  transport: http
-  url: https://mcp.notion.com/mcp
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [ntn]
   env: [NOTION_TOKEN, NOTION_API_KEY]
-  hosts: [api.notion.com]
-  mcp: [notion]
-  mcp_packages: ["@notionhq/notion-mcp-server", "mcp/notion"]
-  mcp_hosts: [mcp.notion.com]

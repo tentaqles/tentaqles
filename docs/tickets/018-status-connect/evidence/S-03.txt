@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestStatusJSON_NoSecrets$ -count=1 -v
-=== RUN   TestStatusJSON_NoSecrets
---- PASS: TestStatusJSON_NoSecrets (0.14s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.238s
-exit code: 0

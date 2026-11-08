@@ -1,8 +1,0 @@
-$ git diff bfb568c HEAD --stat -- internal/mcpscope internal/policy/mcpentry.go
- internal/mcpscope/home_override_test.go | 18 ++++++++++++++++++
- 1 file changed, 18 insertions(+)
-
-The only file under internal/mcpscope/ that differs from the ticket base (bfb568c) is the new
-home_override_test.go: package mcpscope, imports os, testing, paths, testutil; `init()` sets
-paths.AllowHomeOverride = true and TestMain calls testutil.HomeRun. No rule code in
-internal/mcpscope/ changed; internal/policy/mcpentry.go is untouched (absent from the diff).

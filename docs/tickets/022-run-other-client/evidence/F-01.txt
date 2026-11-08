@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestRunOtherClient_UnknownName$ -count=1 -v
-=== RUN   TestRunOtherClient_UnknownName
---- PASS: TestRunOtherClient_UnknownName (0.36s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.514s
-exit code: 0

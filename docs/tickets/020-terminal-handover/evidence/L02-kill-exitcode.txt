@@ -1,3 +1,0 @@
-killing pid 177716
-Wait err=<nil> exit code=0
-Kill(of a gone pid): The parameter is incorrect.

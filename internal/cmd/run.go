@@ -10,13 +10,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/humanonly"
-	"github.com/tentaqles/tentaqles/internal/policy"
+	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // claudeSubcommands are claude's subcommands (claude --help, "Commands:").
@@ -68,9 +65,9 @@ func claudeIsSession(args []string) bool {
 // guardRefusal is the refusal of a session that would start with no tentaqles guard (ADR-0018):
 // the reason in one line, then the fix to run, one copyable line each, in order. It is the error of
 // tq run, not of claude.
-func guardRefusal(ws string, g trust.GuardHook) error {
+func guardRefusal(ws string, g guardplugin.GuardHook) error {
 	return fmt.Errorf("claude won't start a session for %s without the tentaqles guard: %s\n  %s",
-		ws, g.Why, fixBlock(trust.GuardHookFix(ws, g)))
+		ws, g.Why, fixBlock(guardplugin.GuardHookFix(ws, g)))
 }
 
 // fixBlock is the fix of a refusal: one line after "fix:", or the lines after "fix, in this order:".
@@ -118,7 +115,7 @@ type launch struct {
 // run starts the launch with ws's environment (envplan.Environ), claude
 // through launchClaudeArgs.
 func (l launch) run() error {
-	_, agent := agentSession()
+	agent := insideAgent()
 	args := l.args
 	switch agentProg(l.name) {
 	case "claude":
@@ -129,7 +126,7 @@ func (l launch) run() error {
 		if l.ws != nil && claudeIsSession(args) {
 			// A working folder that cannot be read (Getwd fails: cwd is "") is refused by the check itself.
 			cwd, _ := os.Getwd()
-			if g := trust.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], cwd, l.ws.Root); !g.OK {
+			if g := guardplugin.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], cwd, l.ws.Root); !g.OK {
 				return guardRefusal(l.ws.Name, g)
 			}
 		}
@@ -164,63 +161,41 @@ func execIn(ws *resolve.Workspace, name string, args []string, applyClaudeArgs b
 	return execCommand(name, args, envplan.Environ(ws, os.Environ()))
 }
 
-// cwdWorkspace resolves `.`: the current folder's trusted workspace, or nil
-// when the folder is neutral. A folder that is a workspace but untrusted
-// is refused (PRD v2 §8.3): the reason names the first changed file and
-// the command that fixes it (tq hooks verify after a mismatch, tq allow
-// for a never-trusted one). Nothing launches without the identity.
+// cwdWorkspace resolves `.`: the current folder's client, or nil when the folder is neutral.
 func cwdWorkspace() (*resolve.Workspace, error) {
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, err
 	}
 	cwd, _ := os.Getwd()
-	res := resolve.Resolve(cwd, cfg)
-	if res.Workspace == nil && res.Untrusted != nil {
-		return nil, fmt.Errorf("workspace %s is %s", res.Untrusted.Name, res.Reason)
-	}
-	return res.Workspace, nil
+	return resolve.Resolve(cwd, cfg).Workspace, nil
 }
 
-// refuseOtherWorkspace refuses an agent session's tq run <name> unless name is
-// the workspace of the folder the command runs in (FR-13, ADR-0020). A nested
-// agent runs the identity it is in, never another client's. Any agent detector
-// counts (humanonly.DetectAgent: a marker or the process tree, and a tree that
-// cannot be followed to a terminal); a human passes from any folder. The folder
-// decides, not an inherited TQ_WS. The name is compared before any workspace is
-// looked up, and this runs before the environment is built, so an agent learns
-// nothing about a workspace it may not run. The refusal is one identity denial
-// in the log; a log that cannot be written still refuses.
+// findWorkspace is the client named name.
+func findWorkspace(name string) (*resolve.Workspace, error) {
+	cfg, err := registry.Load()
+	if err != nil {
+		return nil, err
+	}
+	return resolve.Find(cfg, name)
+}
+
+// insideAgent reports whether tq runs inside a Claude Code session (Claude Code sets CLAUDECODE
+// for the commands it runs). It is a convenience check, not a boundary: a session can unset it.
+func insideAgent() bool { return os.Getenv("CLAUDECODE") != "" }
+
+// refuseOtherWorkspace refuses tq run <name> from inside a Claude Code session unless name is the
+// client of the folder the command runs in: a session runs the identity of its own folder, never
+// another client's. A developer's own terminal runs any client.
 func refuseOtherWorkspace(name string) error {
-	agent := humanonly.DetectAgent()
-	if agent == nil {
+	if !insideAgent() {
 		return nil
 	}
-	cw, err := cwdWorkspace()
-	if err == nil && cw != nil && cw.Name == name {
+	if cw, err := cwdWorkspace(); err == nil && cw != nil && cw.Name == name {
 		return nil
 	}
-	here, identity := "a neutral folder", ""
-	switch {
-	case err != nil:
-		here = "a folder that is not a trusted workspace"
-	case cw != nil:
-		here, identity = cw.Name+"'s folder", cw.Name
-	}
-	reason := fmt.Sprintf("agent session (%s) runs only the identity of its own folder; this is %s, not %s", agent, here, name)
-	cwd, _ := os.Getwd()
-	d := audit.Denial{
-		Category: "identity", Layer: audit.LayerHumanOnly, Caller: audit.CallerHarness,
-		Command: "tq run " + name, Rule: policy.OtherIdentityID, Subject: name, Reason: reason,
-		Identity: identity, PID: os.Getpid(), Cwd: cwd,
-	}
-	msg := "tq run: " + name + " is another client. An agent session can only run under the client of its own folder."
-	if lerr := audit.AppendDenial(d); lerr != nil {
-		return fmt.Errorf("%s (the refusal could not be logged: %v)", msg, lerr)
-	}
-	return errors.New(msg)
+	return errors.New("tq run: " + name + " is another client. A Claude Code session can only run under the client of its own folder.")
 }
-
 func newRunCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run <workspace>|. -- <command> [args...]",
@@ -230,7 +205,6 @@ func newRunCmd() *cobra.Command {
 		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			defer trust.MemoScope()()
 			// Flags are not interspersed: after <workspace> only an optional
 			// -- may come before the command word, and everything after it
 			// is the command's own.
@@ -256,9 +230,6 @@ func newRunCmd() *cobra.Command {
 				w, err := findWorkspace(args[0])
 				if err != nil {
 					return err
-				}
-				if v := trust.Check(w.Name, w.Hash); !v.OK {
-					return fmt.Errorf("workspace %s is %s", w.Name, v.Reason)
 				}
 				ws = w
 			}

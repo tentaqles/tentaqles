@@ -21,12 +21,8 @@ login:
   args: ["login"]
 verify:
   args: ["profiles:list", "-o", "json"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [twilio]
   env: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_CONFIG_DIR]
-  paths: ["~/.twilio-cli"]
-  hosts: [api.twilio.com]
-  mcp: [twilio]
-  mcp_packages: ["@twilio-alpha/mcp"]

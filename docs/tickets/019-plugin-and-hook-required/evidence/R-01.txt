@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestRun_RefusalOnlyForASession$ -count=1 -v
-=== RUN   TestRun_RefusalOnlyForASession
---- PASS: TestRun_RefusalOnlyForASession (0.66s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.749s
-exit code: 0

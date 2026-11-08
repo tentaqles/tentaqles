@@ -94,14 +94,6 @@ type Notice struct {
 
 // The kinds of Notice.
 const (
-	// NoticeUntrusted: never allowed, or revoked; the fix is tq allow.
-	NoticeUntrusted = "untrusted"
-	// NoticeMismatch: the integrity record does not verify or a covered
-	// file changed; the fix is tq hooks verify.
-	NoticeMismatch = "mismatch"
-	// NoticeLegacy: trusted through a marker of an older tq; tq allow signs
-	// the hooks and the manifest.
-	NoticeLegacy = "legacy"
 	// NoticeMask: an identity's PATH needs its mask folder (a folder
 	// shared with other tools holds an out-of-scope CLI) and the folder is
 	// missing or changed; the fix is tq settings render (ADR-0008).
@@ -126,12 +118,6 @@ type Want struct {
 	PathOrig *string
 	// MaskWanted: the PATH holds a shared folder with an out-of-scope CLI (State.MaskWanted).
 	MaskWanted bool
-}
-
-// Diff computes the shell operations to move from the current env to desired,
-// restoring anything tq previously changed that is no longer desired.
-func Diff(desired map[string]string, current func(string) (string, bool), prev State, wsName string) (Ops, State) {
-	return DiffWant(Want{Set: desired}, current, prev, wsName)
 }
 
 // DiffWant is Diff for a Want: every variable tq sets or unsets is recorded with its value

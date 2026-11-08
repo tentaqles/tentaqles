@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run TestConnect_UnknownProviderNamesTheCatalog -count=1 -v
-=== RUN   TestConnect_UnknownProviderNamesTheCatalog
---- PASS: TestConnect_UnknownProviderNamesTheCatalog (0.12s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.211s
-exit code: 0

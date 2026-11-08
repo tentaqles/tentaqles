@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestConnect_WritesCatalogEntry$ -count=1 -v
-=== RUN   TestConnect_WritesCatalogEntry
---- PASS: TestConnect_WritesCatalogEntry (0.12s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.204s
-exit code: 0

@@ -5,16 +5,8 @@ category: cloud
 docs: https://www.alibabacloud.com/help/en/cli
 cli:
   command: aliyun
-# NOT isolatable by an environment variable, deliberately:
-# GetConfigPath is hardcoded to $HOME/.aliyun; --config-path is flag-only. ALIBABA_CLOUD_PROFILE selects a profile inside the shared file.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [aliyun]
   env: [ALIBABA_CLOUD_ACCESS_KEY_ID, ALIBABA_CLOUD_ACCESS_KEY_SECRET, ALIBABA_CLOUD_SECURITY_TOKEN, ALIBABA_CLOUD_PROFILE, ALICLOUD_ACCESS_KEY, ALICLOUD_SECRET_KEY]
-  paths: ["~/.aliyun"]
-  hosts: [aliyuncs.com]
-  mcp: [aliyun, alibaba, alibabacloud]

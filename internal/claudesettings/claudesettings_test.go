@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -130,78 +129,6 @@ func readJSON(t *testing.T, p string) map[string]any {
 	return got
 }
 
-// TestRenderCleansWhatTheOldRenderWrote: the first render takes back the
-// permission entries the state file records as tq's, the defaultMode and the
-// skip flag, keeps the user's own entries, and records no permission entry.
-// The dry run names every removal and writes nothing.
-func TestRenderCleansWhatTheOldRenderWrote(t *testing.T) {
-	dir := writeOld(t, oldSettings, oldState)
-	m := man()
-	m.OldPermissionMode = "bypass" // what the old render wrote bypassPermissions for
-	want := Desired(m, "")
-
-	res, err := Render(dir, want, true)
-	if err != nil || !res.Changed {
-		t.Fatalf("dry run: %+v %v", res, err)
-	}
-	summary := strings.Join(res.Changes, "; ")
-	for _, s := range []string{
-		"permissions.defaultMode: removed (was bypassPermissions)",
-		"permissions.allow: removed 2 tq entries (Bash(git status:*), Bash(ls:*))",
-		"permissions.deny: removed 1 tq entries (Bash(printenv))",
-		"permissions.ask: removed 1 tq entries (Bash(az webapp deploy:*))",
-		"skipDangerousModePermissionPrompt: removed",
-	} {
-		if !strings.Contains(summary, s) {
-			t.Errorf("dry-run summary lacks %q: %s", s, summary)
-		}
-	}
-	if raw, _ := os.ReadFile(filepath.Join(dir, "settings.json")); string(raw) != oldSettings {
-		t.Fatal("dry run wrote settings.json")
-	}
-	if raw, _ := os.ReadFile(filepath.Join(dir, stateFile)); string(raw) != oldState {
-		t.Fatal("dry run wrote the state file")
-	}
-
-	if _, err := Render(dir, want, false); err != nil {
-		t.Fatal(err)
-	}
-	got := readJSON(t, filepath.Join(dir, "settings.json"))
-	wantPerms := map[string]any{
-		"allow": []any{"Bash(my-tool:*)"},
-		"deny":  []any{"Read(~/secret-of-mine)"},
-	}
-	if !reflect.DeepEqual(got["permissions"], wantPerms) {
-		t.Errorf("permissions = %v, want %v", got["permissions"], wantPerms)
-	}
-	if _, ok := got["skipDangerousModePermissionPrompt"]; ok {
-		t.Error("skipDangerousModePermissionPrompt kept")
-	}
-	if got["model"] != "opus" || got["env"].(map[string]any)["USER_VAR"] != "x" {
-		t.Errorf("unrelated keys lost: %v", got)
-	}
-	st := readJSON(t, filepath.Join(dir, stateFile))
-	for _, k := range []string{"allow", "deny", "ask"} {
-		if _, ok := st[k]; ok {
-			t.Errorf("new state records permission entries: %v", st)
-		}
-	}
-	if st["schema"] != float64(stateSchema) {
-		t.Errorf("state schema = %v", st["schema"])
-	}
-
-	// A defaultMode the user sets by hand afterwards stays.
-	got["permissions"].(map[string]any)["defaultMode"] = "plan"
-	raw, _ := json.Marshal(got)
-	os.WriteFile(filepath.Join(dir, "settings.json"), raw, 0o600)
-	if res, err := Render(dir, want, false); err != nil || res.Changed {
-		t.Fatalf("render after cleaning should be a no-op: %+v %v", res, err)
-	}
-	if readJSON(t, filepath.Join(dir, "settings.json"))["permissions"].(map[string]any)["defaultMode"] != "plan" {
-		t.Error("the user's defaultMode was removed")
-	}
-}
-
 // TestRenderRemovesAnEmptiedPermissionsObject: with no user entries left the
 // permissions object goes.
 func TestRenderRemovesAnEmptiedPermissionsObject(t *testing.T) {
@@ -235,47 +162,6 @@ func TestRenderWithoutStateLeavesPermissionSettings(t *testing.T) {
 	}
 	if got["skipDangerousModePermissionPrompt"] != true {
 		t.Error("the user's skip flag was removed")
-	}
-}
-
-// The defaultMode is tq's only when it is what the old render wrote for
-// this manifest's old permission_mode; another value is the user's, even
-// one an older render could have written for some other manifest.
-func TestRenderKeepsADefaultModeTheEvidenceDoesNotName(t *testing.T) {
-	for oldMode, value := range map[string]string{
-		"":       "bypassPermissions", // the old render wrote auto
-		"bypass": "plan",              // the user changed it after
-		"plan":   "auto",
-	} {
-		dir := writeOld(t, `{"permissions":{"defaultMode":"`+value+`"}}`, `{"allow":["Bash(ls:*)"]}`)
-		editedAfter(t, dir)
-		m := man()
-		m.OldPermissionMode = oldMode
-		if _, err := Render(dir, Desired(m, ""), false); err != nil {
-			t.Fatal(err)
-		}
-		got := readJSON(t, filepath.Join(dir, "settings.json"))
-		if p, _ := got["permissions"].(map[string]any); p == nil || p["defaultMode"] != value {
-			t.Errorf("old mode %q: the user's %q was removed: %v", oldMode, value, got)
-		}
-	}
-}
-
-// A state file that is corrupt or does not parse claims nothing: no entry
-// is tq's and it is no evidence of an older render.
-func TestRenderCorruptStateClaimsNothing(t *testing.T) {
-	for _, state := range []string{`{"allow":["Bash(git status:*)"`, `not json`, `[]`} {
-		dir := writeOld(t, oldSettings, state)
-		m := man()
-		m.OldPermissionMode = "bypass"
-		if _, err := Render(dir, Desired(m, ""), false); err != nil {
-			t.Fatal(err)
-		}
-		got := readJSON(t, filepath.Join(dir, "settings.json"))
-		p := got["permissions"].(map[string]any)
-		if p["defaultMode"] != "bypassPermissions" || len(toStrings(p["allow"])) != 3 || got["skipDangerousModePermissionPrompt"] != true {
-			t.Errorf("state %q claimed something: %v", state, got)
-		}
 	}
 }
 

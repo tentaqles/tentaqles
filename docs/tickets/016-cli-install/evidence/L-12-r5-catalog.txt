@@ -1,4 +1,0 @@
-$ grep -rn -i -B1 -A6 'winget' internal/providers/catalog/postgres.yaml
-9:  # No macOS and no Windows method. Homebrew's libpq is keg-only, so psql is never linked onto the
-10:  # PATH. The winget package is the EDB server installer: it sets up a service and does not put psql
-exit code: 0

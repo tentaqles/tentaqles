@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/testutil"
@@ -105,56 +104,6 @@ func TestListIncludeIf_SkipsTqManagedIncludeFile(t *testing.T) {
 	}
 }
 
-func TestRemoveIncludeIf_RemovesKeyAndEmptySection(t *testing.T) {
-	gc := gitGlobal(t, twoIncludeIf)
-	inc := IncludeIf{Cond: "gitdir:C:/repos/alpha/", Path: "C:/repos/alpha/.gitconfig-tentaqles"}
-	if err := RemoveIncludeIf(RunGit, inc); err != nil {
-		t.Fatal(err)
-	}
-	body := readFile(t, gc)
-	if strings.Contains(body, "alpha") {
-		t.Fatalf("alpha block survived:\n%s", body)
-	}
-	if !strings.Contains(body, "beta with space") {
-		t.Fatalf("sibling includeIf was removed:\n%s", body)
-	}
-	if !strings.Contains(body, "me@corp.com") {
-		t.Fatalf("unrelated section was removed:\n%s", body)
-	}
-	got, err := ListIncludeIf(RunGit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("%+v", got)
-	}
-}
-
-func TestRemoveIncludeIf_KeepsSectionWithOtherKeys(t *testing.T) {
-	body := "[includeIf \"gitdir:C:/repos/alpha/\"]\n" +
-		"\tpath = C:/repos/alpha/.gitconfig-tentaqles\n" +
-		"\tnote = keep me\n"
-	gc := gitGlobal(t, body)
-	inc := IncludeIf{Cond: "gitdir:C:/repos/alpha/", Path: "C:/repos/alpha/.gitconfig-tentaqles"}
-	if err := RemoveIncludeIf(RunGit, inc); err != nil {
-		t.Fatal(err)
-	}
-	got := readFile(t, gc)
-	if !strings.Contains(got, "keep me") {
-		t.Fatalf("a section with remaining keys must not be removed:\n%s", got)
-	}
-	if strings.Contains(got, ".gitconfig-tentaqles") {
-		t.Fatalf("path key survived:\n%s", got)
-	}
-}
-
-func TestRemoveIncludeIf_MissingIsNotAnError(t *testing.T) {
-	gitGlobal(t, "")
-	if err := RemoveIncludeIf(RunGit, IncludeIf{Cond: "gitdir:C:/repos/nope/", Path: "C:/x"}); err != nil {
-		t.Fatalf("removing an absent includeIf must be a no-op: %v", err)
-	}
-}
-
 func TestListIncludes(t *testing.T) {
 	gitGlobal(t, twoIncludeIf)
 	got, err := ListIncludes(RunGit)
@@ -169,86 +118,5 @@ func TestListIncludes(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("include %d = %q, want %q", i, got[i], want[i])
 		}
-	}
-}
-
-// The value handed to git --unset is a regex; an unanchored, unescaped path
-// would take neighbouring includes with it.
-func TestRemoveInclude_ExactMatchOnly(t *testing.T) {
-	gitGlobal(t, "[include]\n\tpath = /a/.gitconfig-tentaqles\n\tpath = /a/.gitconfig-tentaqles.bak\n")
-	if err := RemoveInclude(RunGit, "/a/.gitconfig-tentaqles"); err != nil {
-		t.Fatal(err)
-	}
-	got, err := ListIncludes(RunGit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0] != "/a/.gitconfig-tentaqles.bak" {
-		t.Fatalf("%+v", got)
-	}
-}
-
-func TestGetGlobalAndUnsetGlobal(t *testing.T) {
-	gitGlobal(t, "")
-	if _, present, err := GetGlobal(RunGit, "user.email"); err != nil || present {
-		t.Fatalf("present=%v err=%v", present, err)
-	}
-	if _, err := RunGit("config", "--global", "user.email", "me@corp.com"); err != nil {
-		t.Fatal(err)
-	}
-	v, present, err := GetGlobal(RunGit, "user.email")
-	if err != nil || !present || v != "me@corp.com" {
-		t.Fatalf("v=%q present=%v err=%v", v, present, err)
-	}
-	if err := UnsetGlobal(RunGit, "user.email"); err != nil {
-		t.Fatal(err)
-	}
-	if _, present, _ := GetGlobal(RunGit, "user.email"); present {
-		t.Fatal("user.email still present after UnsetGlobal")
-	}
-}
-
-func TestUnsetGlobal_MissingIsNotAnError(t *testing.T) {
-	gitGlobal(t, "")
-	if err := UnsetGlobal(RunGit, "user.email"); err != nil {
-		t.Fatalf("unsetting an absent key must be a no-op: %v", err)
-	}
-}
-
-func TestParseUserSection(t *testing.T) {
-	dir := t.TempDir()
-	cases := []struct {
-		name, body, wantName, wantEmail string
-	}{
-		{"plain", "# managed by tq\n[user]\n\tname = Renato\n\temail = me@corp.com\n", "Renato", "me@corp.com"},
-		{"quoted", "[user]\n\tname = \"Renato D\"\n\temail = \"me@corp.com\"\n", "Renato D", "me@corp.com"},
-		{"comment", "[user]\n\temail = me@corp.com # work\n", "", "me@corp.com"},
-		{"crlf", "[user]\r\n\tname = Renato\r\n\temail = me@corp.com\r\n", "Renato", "me@corp.com"},
-		{"other-sections", "[core]\n\tsshCommand = ssh -i k\n[user]\n\temail = me@corp.com\n[alias]\n\tname = nope\n", "", "me@corp.com"},
-		{"no-user", "[core]\n\tautocrlf = true\n", "", ""},
-		{"case-insensitive", "[USER]\n\tEmail = me@corp.com\n", "", "me@corp.com"},
-		{"subsection-ignored", "[user \"alt\"]\n\temail = other@corp.com\n[user]\n\temail = me@corp.com\n", "", "me@corp.com"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			p := filepath.Join(dir, c.name)
-			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			name, email, err := ParseUserSection(p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if name != c.wantName || email != c.wantEmail {
-				t.Fatalf("name=%q email=%q, want %q / %q", name, email, c.wantName, c.wantEmail)
-			}
-		})
-	}
-}
-
-func TestParseUserSection_MissingFile(t *testing.T) {
-	_, _, err := ParseUserSection(filepath.Join(t.TempDir(), "nope"))
-	if err == nil {
-		t.Fatal("expected an error for a missing file")
 	}
 }

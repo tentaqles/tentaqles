@@ -13,7 +13,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Agent)$|^mcp__",
+        "matcher": "^(Bash|PowerShell)$",
         "hooks": [
           {
             "type": "command",

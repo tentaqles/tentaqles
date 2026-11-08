@@ -19,13 +19,8 @@ identity:
     SNOWFLAKE_HOME: "{dir}"
 login:
   args: ["connection", "add"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [snow, snowsql]
-  modules: [snowflake.cli]
   env: [SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD, SNOWFLAKE_PRIVATE_KEY_PATH, SNOWFLAKE_HOME, SNOWSQL_PWD]
-  paths: ["~/.snowflake", "~/.snowsql"]
-  hosts: [snowflakecomputing.com]
-  mcp: [snowflake]
-  mcp_packages: ["snowflake-labs-mcp"]

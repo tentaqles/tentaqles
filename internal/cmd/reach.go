@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,48 +19,47 @@ import (
 	"github.com/tentaqles/tentaqles/internal/banner"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
+	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/hooks"
-	"github.com/tentaqles/tentaqles/internal/humanonly"
-	"github.com/tentaqles/tentaqles/internal/install"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/reach"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/termopen"
-	"github.com/tentaqles/tentaqles/internal/trust"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
-// Seams for tests: the interactive form and the git global setup.
+// Seams for tests: the interactive form, the menu of an existing client, the part of the form it
+// asks, the git global setup, and the plugin install.
 var (
-	reachForm   = runReachForm
-	reachRunGit = gitcfg.RunGit
+	reachForm        = runReachForm
+	reachMenu        = runReachMenu
+	reachEditForm    = runReachEditForm
+	reachRunGit      = gitcfg.RunGit
+	reachGuardPlugin = installGuardPlugin
 )
 
 func newReachCmd() *cobra.Command {
-	var noBanner, noInstall, noPlugin, noTerminal bool
+	var noBanner, noPlugin bool
 	c := &cobra.Command{
 		Use:   "reach [<path>]",
-		Short: "Make a folder a client identity, or show the one it already is (human only)",
+		Short: "Make a folder a client identity, or change the one it already is",
 		Long: "tentaqles reach makes the current folder, or <path>, an isolated client identity. The folder's\n" +
-			"name is the identity's name, and its parent folder is where your clients live. In a folder that\n" +
-			"already is a trusted client, it shows that client and offers to change its providers, its browser\n" +
-			"and profile, or its email through the same questions; the change is confirmed, written and signed\n" +
-			"again like tq allow (an untrusted client is only shown). Once a new client is trusted it\n" +
-			"installs the tentaqles plugin into the client's Claude config (--no-plugin skips this): the plugin\n" +
-			"holds the guard, and claude won't start a session for the client without it. Then it installs the\n" +
-			"CLI of each provider the client can use (--no-install skips this).\n\n" +
-			"For a new client it also writes tq's activation block into the shell profile of each shell tq\n" +
-			"detects and of the shell it runs in, after your yes (the confirmation says so). Then it opens a new\n" +
-			"terminal in the client's folder and ends the terminal it ran in, after you press Enter. It ends\n" +
-			"only that terminal, and only when it is an interactive shell; otherwise it leaves it open and says\n" +
-			"so. --no-terminal skips both.\n\n" +
-			"Human-only: a session is refused, and you confirm before anything is written.",
+			"name is the client's name, and its parent folder is where your clients live. It asks for the\n" +
+			"client's email, its git host, its clouds, team, data and task tools, its email provider and its\n" +
+			"browser profile, and writes them to the client's manifest. A terminal opened in the folder, or in\n" +
+			"any subfolder, then carries that client's identity: its own Claude Code config home (and so its own\n" +
+			"subscription), its git name and email, its own login for each CLI, its browser profile, and a PATH\n" +
+			"without the CLIs of providers the client does not use.\n\n" +
+			"For a new client it writes tq's activation block into the profile of each shell tq detects, and\n" +
+			"installs the tentaqles plugin into the client's Claude config (--no-plugin skips this): the plugin's\n" +
+			"hook blocks a git, gh or cloud command that would run under another identity.\n\n" +
+			"In a folder that already is a client, it shows the client and offers to change its providers, its\n" +
+			"browser and profile, or its email, through the same questions.\n\n" +
+			"Nothing is written before you type yes.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := refuseAgent("tentaqles reach"); err != nil {
-				return err
+			if insideAgent() {
+				return errors.New("tentaqles reach: run it in your own terminal, not from a Claude Code session")
 			}
 			dir, err := reachDir(args)
 			if err != nil {
@@ -77,7 +74,7 @@ func newReachCmd() *cobra.Command {
 			}
 			if _, err := os.Stat(filepath.Join(dir, manifest.FileName)); err == nil {
 				show()
-				return reachShowExisting(c, dir, name, noInstall)
+				return reachShowExisting(c, name)
 			}
 			if !workspace.NameRe.MatchString(name) {
 				return fmt.Errorf("the folder name %q can't name a client: use lowercase letters, digits, dots, dashes and underscores, starting with a letter or digit", name)
@@ -97,58 +94,55 @@ func newReachCmd() *cobra.Command {
 			}
 			o.RunGit = reachRunGit
 			profiles := hooks.ProfilesFn()
-			parentShell := reachParentShell()
-			shells := reachShells(profiles, parentShell)
-			about := fmt.Sprintf("tentaqles reach: about to make %s the client %s (%s), and trust it", dir, name, strings.Join(o.Identities, ", "))
+			shells := reachShells(profiles)
+			about := fmt.Sprintf("tentaqles reach: about to make %s the client %s (%s)", dir, name, strings.Join(o.Identities, ", "))
 			if missing := reachMissing(shells, profiles); len(missing) > 0 {
-				about += "; and write the tq activation block into " + profilesOf(missing, profiles)
+				about += ", and write the tq activation block into " + profilesOf(missing, profiles)
 			}
-			if err := humanGate(c, "tentaqles reach", about); err != nil {
-				return err
-			}
-			if err := ensureProtectedHome(); err != nil {
+			if err := confirm(c, about); err != nil {
 				return err
 			}
 			ws, err := workspace.Add(o)
 			if err != nil {
 				return err
 			}
-			if err := signWorkspace(c, ws); err != nil {
-				return fmt.Errorf("%s was created but not trusted: %w. Run tq allow %s to finish", dir, err, name)
-			}
+			renderIdentityFiles(c, ws)
 			w := c.OutOrStdout()
 			if noPlugin {
 				fmt.Fprintf(w, "The tentaqles plugin was not installed (--no-plugin). Claude won't start a session for %s until it is. Run these, in this order:\n  %s\n",
-					name, strings.Join(trust.GuardInstallLines(name), "\n  "))
+					name, strings.Join(guardplugin.GuardInstallLines(name), "\n  "))
 			} else {
 				reachGuardPlugin(c, ws)
 			}
-			if !noInstall {
-				reachInstall(c, ws)
-			}
-			hs := reachHooks(c, shells, profiles, parentShell)
-			reachFinish(c, ws, dir, noTerminal, hs)
+			reachHooks(c, shells, profiles)
+			fmt.Fprintf(w, "\n%s is ready. It can use: %s\n", ws.Name, strings.Join(ws.Manifest.Scope(), ", "))
+			reachWarnOther(c, ws.Manifest)
+			fmt.Fprintf(w, "Open a new terminal in %s, then start claude and log in with this client's account.\n", dir)
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&noBanner, "no-banner", false, "print no banner (TQ_NO_BANNER=1 does the same)")
-	c.Flags().BoolVar(&noInstall, "no-install", false, "do not install the CLIs of the client's providers")
-	c.Flags().BoolVar(&noPlugin, "no-plugin", false, "do not install the tentaqles plugin (the guard) into the client's Claude config")
-	c.Flags().BoolVar(&noTerminal, "no-terminal", false, "do not open a terminal in the client's folder, nor end the one reach runs in")
+	c.Flags().BoolVar(&noPlugin, "no-plugin", false, "do not install the tentaqles plugin into the client's Claude config")
 	return c
 }
 
-// reachInstall installs the CLI of each provider in the new client's scope, one line each (the
-// lines of tentaqles install), and goes on past a failure: the client is trusted either way,
-// and tentaqles install <provider> retries one. A seam for tests.
-var reachInstall = installScope
+// confirm prints about and asks for a typed yes on the command's input; anything else aborts with
+// errAborted.
+func confirm(c *cobra.Command, about string) error {
+	fmt.Fprintln(c.OutOrStdout(), about)
+	fmt.Fprint(c.OutOrStdout(), "Type yes to continue: ")
+	line, _ := bufio.NewReader(c.InOrStdin()).ReadString('\n')
+	if strings.TrimSpace(strings.ToLower(line)) != "yes" {
+		fmt.Fprintln(c.OutOrStdout())
+		return errAborted
+	}
+	return nil
+}
 
-// reachGuardPlugin installs the tentaqles plugin into the client's Claude config once the trust is
-// signed (REQ-1), and says why and what to run when it cannot (REQ-2). It never fails reach: the
-// refusal of tq run is what keeps a session unguarded in the meantime (ADR-0018). A seam for tests.
-var reachGuardPlugin = installGuardPlugin
+// errAborted is a declined confirmation: nothing was written.
+var errAborted = errors.New("aborted: nothing was written")
 
-// reachPluginTimeout bounds each `claude plugin` command of reach (REQ-1). A seam for tests.
+// reachPluginTimeout bounds each `claude plugin` command of reach. A seam for tests.
 var reachPluginTimeout = 2 * time.Minute
 
 // reachPluginRun runs one claude command with env and returns its stdout and stderr, apart. A seam
@@ -163,28 +157,29 @@ var reachPluginRun = func(ctx context.Context, name string, args, env []string) 
 	return out.Bytes(), errOut.Bytes(), err
 }
 
-// The two commands that install the guard. Their arguments are constants: nothing from the
-// manifest, the environment or the folder reaches them (S-04).
+// The two commands that install the plugin. Their arguments are constants: nothing from the
+// manifest, the environment or the folder reaches them.
 var (
-	guardMarketplaceArgs = []string{"plugin", "marketplace", "add", trust.GuardMarketplace}
-	guardInstallArgs     = []string{"plugin", "install", trust.GuardPlugin}
+	guardMarketplaceArgs = []string{"plugin", "marketplace", "add", guardplugin.GuardMarketplace}
+	guardInstallArgs     = []string{"plugin", "install", guardplugin.GuardPlugin}
 )
 
+// installGuardPlugin installs the tentaqles plugin into the client's Claude config, and says why
+// and what to run when it cannot. It never fails reach: tq run refuses a session without the
+// plugin in the meantime.
 func installGuardPlugin(c *cobra.Command, ws *resolve.Workspace) {
 	w := c.OutOrStdout()
 	if err := runGuardPluginInstall(ws); err != nil {
 		fmt.Fprintf(w, "The tentaqles plugin was not installed: %v\n", err)
 		fmt.Fprintf(w, "Claude won't start a session for %s until it is. Run these, in this order:\n  %s\n",
-			ws.Name, strings.Join(trust.GuardInstallLines(ws.Name), "\n  "))
+			ws.Name, strings.Join(guardplugin.GuardInstallLines(ws.Name), "\n  "))
 		return
 	}
-	resignCovered(c, ws)
-	fmt.Fprintf(w, "The tentaqles plugin is installed: every session of %s runs the guard.\n", ws.Name)
+	fmt.Fprintf(w, "The tentaqles plugin is installed: every session of %s runs its identity check.\n", ws.Name)
 }
 
-// runGuardPluginInstall adds the marketplace and installs the plugin with ws's Claude config dir
-// (CLAUDE_CONFIG_DIR, through envplan.Environ). A failed marketplace add does not stop the install:
-// the marketplace may be there already, and the install says whether the plugin is.
+// runGuardPluginInstall adds the marketplace and installs the plugin with ws's Claude config dir. A
+// failed marketplace add does not stop the install: the marketplace may be there already.
 func runGuardPluginInstall(ws *resolve.Workspace) error {
 	env := envplan.Environ(ws, os.Environ())
 	claude, err := envplan.LookPath("claude", env)
@@ -201,9 +196,8 @@ func runGuardPluginInstall(ws *resolve.Workspace) error {
 	return nil
 }
 
-// runClaudePlugin runs one claude plugin command under reachPluginTimeout and names it in the error:
-// the command, and the reason install.ErrorLine finds in its stderr and stdout (the first error line,
-// not the last line, which is often a tip or a progress frame).
+// runClaudePlugin runs one claude plugin command under reachPluginTimeout and names it in the
+// error, with the first line of its error output.
 func runClaudePlugin(claude string, args, env []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), reachPluginTimeout)
 	defer cancel()
@@ -213,35 +207,21 @@ func runClaudePlugin(claude string, args, env []string) error {
 		return fmt.Errorf("%s did not finish within %s", what, reachPluginTimeout)
 	}
 	if err != nil {
-		return fmt.Errorf("%s failed: %s", what, install.ErrorLine(string(stderr), string(stdout), err))
+		return fmt.Errorf("%s failed: %s", what, firstLine(string(stderr), string(stdout), err))
 	}
 	return nil
 }
 
-func installScope(c *cobra.Command, ws *resolve.Workspace) {
-	w := c.OutOrStdout()
-	cat, err := providers.Embedded()
-	if err != nil {
-		fmt.Fprintf(w, "No CLI was installed: %v\n", err)
-		return
+// firstLine is the first non-empty line of the error output, else of the output, else err.
+func firstLine(stderr, stdout string, err error) string {
+	for _, s := range []string{stderr, stdout} {
+		for _, l := range strings.Split(s, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				return l
+			}
+		}
 	}
-	first := true
-	for _, id := range ws.Manifest.Scope() {
-		p, ok := cat.Get(id)
-		if !ok || p.CLI == nil {
-			continue
-		}
-		if first {
-			fmt.Fprintf(w, "\nInstalling the CLIs this client can use (tentaqles install <provider> retries one):\n")
-			first = false
-		}
-		res, err := installProvider(ws, p)
-		if err != nil {
-			fmt.Fprintln(w, strings.TrimSpace(err.Error()))
-			continue
-		}
-		fmt.Fprintln(w, strings.TrimSpace(res.Output()))
-	}
+	return err.Error()
 }
 
 // reachDir is the absolute folder a reach acts on: the argument, or the current folder.
@@ -260,53 +240,18 @@ func reachDir(args []string) (string, error) {
 	return abs, nil
 }
 
-// Seams for tests: the menu of an existing client and the part of the form it asks.
-var (
-	reachMenu     = runReachMenu
-	reachEditForm = runReachEditForm
-)
-
-// reachShowExisting reports a folder that already is a client and, for a trusted client whose manifest
-// is in the protected location, offers to change its setup through the same form (IDEATION: the menu
-// differs for an existing client). An untrusted client is only shown: an edit re-signs, and re-signing
-// a client whose trust or integrity record fails is tq allow's decision, made knowingly, not a side
-// effect of an edit.
-func reachShowExisting(c *cobra.Command, dir, name string, noInstall bool) error {
+// reachShowExisting reports a folder that already is a client and offers to change its setup
+// through the same form (IDEATION: the menu differs for an existing client).
+func reachShowExisting(c *cobra.Command, name string) error {
 	w := c.OutOrStdout()
 	fmt.Fprintln(w, "This folder is already a client.")
-	path := paths.ManifestPath(name)
-	protected := true
-	if _, err := os.Stat(path); err != nil {
-		path = filepath.Join(dir, manifest.FileName) // an identity not yet migrated keeps it in the root
-		protected = false
-	}
-	m, err := manifest.Load(path)
+	ws, err := findWorkspace(name)
 	if err != nil {
 		fmt.Fprintf(w, "Its manifest can't be read: %v\n", err)
 		return nil
 	}
-	fmt.Fprintf(w, "It can use: %s\n", strings.Join(m.Scope(), ", "))
-	reachWarnOther(c, m)
-	h, err := trust.HashFile(path)
-	if err != nil {
-		return err
-	}
-	if v := trust.Check(name, h); !v.OK {
-		fmt.Fprintf(w, "It isn't trusted right now: %s\n", v.Reason)
-		return nil
-	}
-	if !protected {
-		fmt.Fprintf(w, "Its manifest is still in the folder; run tq migrate manifests to change its setup with reach.\n")
-		return nil
-	}
-	ws, err := findWorkspace(name)
-	if err != nil {
-		return err
-	}
-	if rep, err := trust.Verify(name); err != nil || !rep.Trusted(ws.Hash) {
-		fmt.Fprintf(w, "Its integrity record does not match (tq hooks verify %s says why); reach changes nothing until it does.\n", name)
-		return nil
-	}
+	fmt.Fprintf(w, "It can use: %s\n", strings.Join(ws.Manifest.Scope(), ", "))
+	reachWarnOther(c, ws.Manifest)
 	part, err := reachMenu()
 	if err != nil {
 		return err
@@ -314,14 +259,14 @@ func reachShowExisting(c *cobra.Command, dir, name string, noInstall bool) error
 	if part == reachPartNothing {
 		return nil
 	}
-	return reachEdit(c, ws, part, noInstall)
+	return reachEdit(c, ws, part)
 }
 
 // reachEdit changes one part of an existing client's setup: it asks the part, shows what changes,
-// asks the typed yes, rewrites the manifest, makes the new identities' folders, points the folder's
-// git at a new email, and signs the client again (the path of tq allow). Then it installs the CLIs of
-// the providers it added. Nothing is written before the yes.
-func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string, noInstall bool) error {
+// asks for the typed yes, rewrites the manifest, makes the new identities' folders, points the
+// folder's git at a new email, and renders the client's files again. Nothing is written before the
+// yes.
+func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string) error {
 	w := c.OutOrStdout()
 	cur := reach.AnswersFrom(ws.Manifest)
 	next, err := reachEditForm(part, cur)
@@ -340,9 +285,9 @@ func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string, noInstall b
 		fmt.Fprintln(w, "Nothing changed.")
 		return nil
 	}
-	about := fmt.Sprintf("tentaqles reach: about to change the client %s (%s), rewrite its manifest %s, and sign it again",
+	about := fmt.Sprintf("tentaqles reach: about to change the client %s (%s) and rewrite its manifest %s",
 		ws.Name, strings.Join(changes, "; "), ws.ManifestPath)
-	if err := humanGate(c, "tentaqles reach", about); err != nil {
+	if err := confirm(c, about); err != nil {
 		return err
 	}
 	if err := writeFileAtomic(ws.ManifestPath, out, 0o600); err != nil {
@@ -362,12 +307,7 @@ func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string, noInstall b
 	if err != nil {
 		return err
 	}
-	if err := signWorkspace(c, updated); err != nil {
-		return fmt.Errorf("the manifest of %s was changed but not signed: %w. Run tq allow %s to finish", ws.Name, err, ws.Name)
-	}
-	if len(added) > 0 && !noInstall {
-		reachInstall(c, updated)
-	}
+	renderIdentityFiles(c, updated)
 	for _, id := range removed {
 		fmt.Fprintf(w, "%s is no longer in this client's scope. Its folder %s stays, with any login in it; delete it if you no longer need it.\n",
 			id, paths.IdentityDir(ws.Name, id))
@@ -410,129 +350,28 @@ func reachWarnOther(c *cobra.Command, m *manifest.Manifest) {
 	if len(m.OtherProviders) == 0 {
 		return
 	}
-	fmt.Fprintf(c.OutOrStdout(), "Not managed by tentaqles: %s. The onboarding skill can help with these, but their logins aren't isolated per client, and the guard can't check them.\n",
+	fmt.Fprintf(c.OutOrStdout(), "Not managed by tentaqles: %s. Their logins aren't isolated per client.\n",
 		strings.Join(m.OtherProviders, ", "))
 }
 
-// The terminal seams of the handover (ADR-0019): the launcher, the killer, the PowerShell probe, and the
-// shells beyond the one reach runs in whose profile reach checks (every shell tq hooks install detects).
-// Tests replace them.
-var (
-	reachOpenTerminal = termopen.Open
-	reachKill         = termopen.Kill
-	reachProbe        = powershellLoads
-	reachDetectShells = func(p hooks.Profiles) []hooks.Shell { return hooks.Detect(p, hooks.LookPath) }
-)
+// reachDetectShells are the shells whose profile reach checks (every shell tq hooks install
+// detects). Tests replace it.
+var reachDetectShells = func(p hooks.Profiles) []hooks.Shell { return hooks.Detect(p, hooks.LookPath) }
 
-// reachProbeTimeout bounds the PowerShell probe, a run of reach and not a hook.
-var reachProbeTimeout = 20 * time.Second
-
-// powershellProbe is the one script the probe runs. It is a constant: nothing from the folder, the
-// manifest or the environment reaches it. The profile path goes out as base64 of its UTF-8 bytes, so the
-// console's code page cannot change a non-ASCII character on the way (a João folder, L-10).
-const powershellProbe = `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($PROFILE.CurrentUserCurrentHost)); Get-ExecutionPolicy`
-
-// powershellLoads asks the PowerShell exe on the PATH where it reads its profile and under what execution
-// policy it runs. The profile tq wrote is loaded only at that path, and only under a policy that runs an
-// unsigned local script: Restricted and AllSigned do not (ADR-0019). It runs PowerShell with no profile.
-func powershellLoads(exe, profile string) error {
-	path, err := exec.LookPath(exe)
-	if err != nil {
-		return fmt.Errorf("%s was not found on the PATH", exe)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), reachProbeTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-Command", powershellProbe).Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("%s did not answer within %s", exe, reachProbeTimeout)
-	}
-	if err != nil {
-		return fmt.Errorf("%s did not run: %v", exe, err)
-	}
-	return checkPowerShellProbe(exe, out, profile)
-}
-
-// checkPowerShellProbe reads the probe's output: the first line is the profile path (base64 of its UTF-8
-// bytes), and the last line is the execution policy. The path must be the file tq wrote, and the policy
-// must run an unsigned local script. CRLF line ends and blank lines are ignored.
-func checkPowerShellProbe(exe string, out []byte, profile string) error {
-	var lines []string
-	for _, l := range strings.Split(string(out), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
-		}
-	}
-	if len(lines) < 2 {
-		return fmt.Errorf("%s did not say where it reads its profile", exe)
-	}
-	raw, err := base64.StdEncoding.DecodeString(lines[0])
-	if err != nil {
-		return fmt.Errorf("%s said where it reads its profile in a form tq cannot read", exe)
-	}
-	read, policy := string(raw), lines[len(lines)-1]
-	if !strings.EqualFold(filepath.Clean(read), filepath.Clean(profile)) {
-		return fmt.Errorf("%s reads its profile from %s, not from %s", exe, read, profile)
-	}
-	if policy == "Restricted" || policy == "AllSigned" {
-		return fmt.Errorf("%s's execution policy is %s, which does not run its profile (Set-ExecutionPolicy RemoteSigned -Scope CurrentUser allows it)", exe, policy)
-	}
-	return nil
-}
-
-// reachLoads says whether sh runs the profile tq wrote for it. A shell tq does not probe (bash, zsh, fish)
-// is taken to; PowerShell is taken to only when the probe confirms it.
-func reachLoads(sh hooks.Shell, p hooks.Profiles) error {
-	if sh != "powershell" && sh != "pwsh" {
-		return nil
-	}
-	return reachProbe(string(sh), p[sh])
-}
-
-// identityFreeEnv is this process's environment without tq's identity: what the tq shell hook set is
-// restored, and every catalog provider's config variable and the workspace markers are dropped. A new
-// terminal starts clean, and its own hook sets the client's variables (REQ-3, ADR-0019).
-func identityFreeEnv() []string {
-	var out []string
-	for _, kv := range envplan.Clean(os.Environ()) {
-		k, _, _ := strings.Cut(kv, "=")
-		if strings.EqualFold(k, "TQ_WS") || strings.EqualFold(k, "TQ_WS_ROOT") {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
-
-// reachParentShell names the shell reach runs in, as one of the shells tq hooks know, or "" when its
-// parent is none of them: cmd.exe has no profile hook (tq run covers it), and nothing is hooked then.
-func reachParentShell() string {
-	p, ok := humanonly.ParentOf(os.Getpid())
-	if !ok || p.Reused {
-		return ""
-	}
-	sh, _ := termopen.ShellName(p.Name)
-	return sh
-}
-
-// reachShells are the shells whose profile reach makes hold the tq block: every shell tq hooks install
-// detects, and the one reach runs in. A shell without a profile is left out.
-func reachShells(p hooks.Profiles, parent string) []hooks.Shell {
+// reachShells are the shells whose profile reach makes hold the tq block. A shell without a profile
+// is left out.
+func reachShells(p hooks.Profiles) []hooks.Shell {
 	var out []hooks.Shell
-	seen := map[hooks.Shell]bool{}
-	add := func(sh hooks.Shell) {
-		if !seen[sh] && p[sh] != "" {
-			seen[sh] = true
+	for _, sh := range reachDetectShells(p) {
+		if p[sh] != "" && !slices.Contains(out, sh) {
 			out = append(out, sh)
 		}
 	}
-	for _, sh := range reachDetectShells(p) {
-		add(sh)
-	}
-	add(hooks.Shell(parent))
 	return out
 }
 
-// reachMissing are the shells whose profile has no tq block yet: the confirmation names their profiles.
+// reachMissing are the shells whose profile has no tq block yet: the confirmation names their
+// profiles.
 func reachMissing(shells []hooks.Shell, p hooks.Profiles) []hooks.Shell {
 	var out []hooks.Shell
 	for _, sh := range shells {
@@ -543,145 +382,20 @@ func reachMissing(shells []hooks.Shell, p hooks.Profiles) []hooks.Shell {
 	return out
 }
 
-// hookState is what reach's profile step found. parentFailed: the shell reach runs in cannot take the hook,
-// so the handover does not happen (Q2). ok: the shells whose block is in place, the ones a new window in
-// that shell may route through (Q1).
-type hookState struct {
-	parentFailed bool
-	ok           map[hooks.Shell]bool
-	profiles     hooks.Profiles
-}
-
-// reachHooks writes the tq activation block into each shell's profile, after the typed yes. Install
-// leaves a profile that already has the block alone, so a second reach writes nothing. The shell reach
-// runs in must take the block, and PowerShell must load its profile (probed): otherwise the handover does
-// not happen. Any other shell's failure is a warning naming it, and the handover goes on (Q2).
-func reachHooks(c *cobra.Command, shells []hooks.Shell, p hooks.Profiles, parent string) hookState {
+// reachHooks writes the tq activation block into each shell's profile, after the typed yes. A
+// profile that already has the block is left alone; a failure is a warning naming the shell.
+func reachHooks(c *cobra.Command, shells []hooks.Shell, p hooks.Profiles) {
 	w := c.OutOrStdout()
-	hs := hookState{ok: map[hooks.Shell]bool{}, profiles: p}
 	for _, sh := range shells {
 		before := hooks.StatusOf(sh, p).State
 		st, err := hooks.Install(sh, p)
 		if err != nil {
-			if string(sh) == parent {
-				hs.parentFailed = true
-				fmt.Fprintf(w, "The tq activation block could not be written: %v\n", err)
-			} else {
-				fmt.Fprintf(w, "Warning: %s: the tq activation block could not be written: %v. A new %s terminal would not route into the client.\n", sh, err, sh)
-			}
+			fmt.Fprintf(w, "Warning: %s: the tq activation block could not be written: %v. A new %s terminal would not carry the client's identity.\n", sh, err, sh)
 			continue
 		}
 		if (before == "missing" || before == "no profile") && st.State == "installed" {
 			fmt.Fprintf(w, "The tq activation block is in %s.\n", st.Profile)
 		}
-		if string(sh) == parent {
-			if err := reachLoads(sh, p); err != nil {
-				hs.parentFailed = true
-				fmt.Fprintf(w, "The tq activation block is in %s, but %v. The terminal reach runs in is not ended.\n", st.Profile, err)
-				continue
-			}
-		}
-		hs.ok[sh] = true
-	}
-	return hs
-}
-
-// reachRouted says whether the new window will run tq's hook for the client. A window in the system's
-// default shell is taken to (the ticket's decision for wt). The Windows fallback, PowerShell, is taken to
-// only when its block is in place and PowerShell loads it (ADR-0019).
-func reachRouted(l termopen.Launch, hs hookState) bool {
-	if l.Shell == "" {
-		return true
-	}
-	sh := hooks.Shell(l.Shell)
-	return hs.ok[sh] && reachLoads(sh, hs.profiles) == nil
-}
-
-// reachFinish ends reach's output with what to do next. For a new client with a terminal to hand over,
-// it opens the client's terminal, prints the rest, and then ends the terminal reach was run from
-// (reachEndOld). Otherwise it prints the next step and opens nothing. It never fails reach: the client
-// is trusted either way.
-func reachFinish(c *cobra.Command, ws *resolve.Workspace, dir string, noTerminal bool, hs hookState) {
-	w := c.OutOrStdout()
-	summary := func() {
-		fmt.Fprintf(w, "\n%s is ready. It can use: %s\n", ws.Name, strings.Join(ws.Manifest.Scope(), ", "))
-		reachWarnOther(c, ws.Manifest)
-	}
-	switch {
-	case noTerminal:
-		summary()
-		fmt.Fprintf(w, "Open a new terminal in %s, then start claude and log in with this client's account.\n", dir)
-	case hs.parentFailed:
-		summary()
-		fmt.Fprintf(w, "Once the activation block works, open a new terminal in %s to start working.\n", dir)
-	default:
-		l, err := reachOpenTerminal(dir, identityFreeEnv())
-		summary()
-		if err != nil {
-			fmt.Fprintf(w, "Could not open a terminal (%v). Open one in %s to start working.\n", err, dir)
-			return
-		}
-		if !reachRouted(l, hs) {
-			// The window's hook is not confirmed: no login line, the old terminal stays, and the next step
-			// is tq run, which sets the identity itself (ADR-0019).
-			fmt.Fprintf(w, "Opened a new terminal in %s, but tq's shell hook is not confirmed to load there, so it is not set up for %s. Run tq run %s -- claude in it to start claude for %s.\n", dir, ws.Name, ws.Name, ws.Name)
-			fmt.Fprintln(w, "Close this terminal when you are ready.")
-			return
-		}
-		fmt.Fprintf(w, "Opened a new terminal in %s: start claude there and log in with this client's account.\n", dir)
-		reachEndOld(c, c.InOrStdin())
-	}
-}
-
-// reachEndTarget is reach's direct parent when tq may end it, or false. It must be readable, not a reused
-// pid, with its command line known; a shell tq knows and that is interactive; and not itself a child of a
-// shell. The last rule is Git Bash: a native program run from bash, directly or in a subshell or pipeline,
-// has a bash.exe stub as its direct parent, and the stub's parent is the interactive shell. Ending the stub
-// leaves that shell open with no message (ADR-0019). An unreadable grandparent counts as a shell.
-func reachEndTarget() (humanonly.Parent, bool) {
-	p, ok := humanonly.ParentOf(os.Getpid())
-	if !ok || p.Reused || !p.CmdlineKnown {
-		return p, false
-	}
-	shell, known := termopen.ShellName(p.Name)
-	if !known || !termopen.Interactive(shell, p.Cmdline) {
-		return p, false
-	}
-	g, ok := humanonly.ParentOf(p.PID)
-	if !ok {
-		return p, false
-	}
-	if _, isShell := termopen.ShellName(g.Name); isShell {
-		return p, false
-	}
-	return p, true
-}
-
-// reachEndOld ends the terminal reach was run from (REQ-4, REQ-5, REQ-10). Only reach's direct parent is
-// ever ended, and only when reachEndTarget allows it. Otherwise, or when the parent has changed by the time
-// the developer presses Enter, or the kill fails, the terminal stays open and reach says so. Keys typed
-// while the installs ran are discarded first, so an earlier Enter does not answer the pause; a closed input
-// counts as Enter.
-func reachEndOld(c *cobra.Command, in io.Reader) {
-	w := c.OutOrStdout()
-	first, ok := reachEndTarget()
-	if !ok {
-		fmt.Fprintln(w, "Close this terminal when you are ready.")
-		return
-	}
-	if f, isFile := in.(*os.File); isFile {
-		termopen.FlushInput(f)
-	}
-	fmt.Fprintln(w, "Press Enter to close this terminal.")
-	_, _ = bufio.NewReader(in).ReadString('\n')
-	// The pause may have lasted long: the parent is read again, and must still be the same process.
-	now, ok := reachEndTarget()
-	if !ok || now.PID != first.PID || now.Name != first.Name || now.Cmdline != first.Cmdline {
-		fmt.Fprintln(w, "Close this terminal when you are ready.")
-		return
-	}
-	if err := reachKill(now.PID); err != nil {
-		fmt.Fprintln(w, "Close this terminal when you are ready.")
 	}
 }
 

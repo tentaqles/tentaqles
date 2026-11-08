@@ -26,7 +26,7 @@ func TestDoctor_BrowserProfileMissing(t *testing.T) {
 	os.MkdirAll(root, 0o755)
 	body := "schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: { claude: {} }\n" +
 		"browsers:\n  - name: chrome\n    profile: Profile 7\n  - name: edge\n    profile: Default\n"
-	os.WriteFile(filepath.Join(root, manifest.FileName), []byte(body), 0o600)
+	os.WriteFile(markerFor(t, root), []byte(body), 0o600)
 	// edge's profile exists, chrome's does not
 	os.MkdirAll(filepath.Join(data, "Default"), 0o755)
 

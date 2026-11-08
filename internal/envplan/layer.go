@@ -10,15 +10,15 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/scope"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
 // The PATH and environment layer of an identity (PRD v2 §6.1
 // step 2, §6.2 rows PATH and Environment; ADR-0008). It is built from the same compiled scope
-// the hook judges by (policy.ScopeFor): an out-of-scope provider's CLI does not resolve by name
+// the hook judges by (scope.For): an out-of-scope provider's CLI does not resolve by name
 // on the identity PATH, and its variables are unset in the identity environment. Without the
 // flag nothing here runs.
 
@@ -34,7 +34,7 @@ func MaskDir(ws string) string { return filepath.Join(paths.IdentitiesRoot(), ws
 // Layer is one identity's compiled PATH and environment layer.
 type Layer struct {
 	Identity string
-	scope    *policy.Scope
+	scope    *scope.Scope
 	exes     map[string]string // out-of-scope executable name -> provider id
 	maskDir  string
 	shims    string // the identity's shims folder when it lists a browser (ADR-0016), else ""
@@ -46,7 +46,7 @@ func LayerFor(ws *resolve.Workspace) *Layer {
 	if ws == nil || ws.Manifest == nil {
 		return nil
 	}
-	s := policy.ScopeFor(ws.Name, ws.Manifest.Scope(), ws.Manifest.BundleMCP(), ws.Manifest.MCPAllow())
+	s := scope.For(ws.Name, ws.Manifest.Scope())
 	exes := s.OutOfScopeExecutables()
 	for n := range exes {
 		if providers.AmbiguousExecutable(n) {
@@ -66,9 +66,6 @@ func (l *Layer) IsMasked(name string) bool {
 	_, ok := l.scope.OutOfScopeExecutable(name)
 	return ok && !providers.AmbiguousExecutable(filepath.Base(name))
 }
-
-// Scope is the compiled scope the layer was built from.
-func (l *Layer) Scope() *policy.Scope { return l.scope }
 
 // MaskDir is the layer's mask folder.
 func (l *Layer) MaskDir() string { return l.maskDir }

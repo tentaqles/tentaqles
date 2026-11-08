@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/tentaqles/tentaqles/internal/envplan"
-	"github.com/tentaqles/tentaqles/internal/mcpscope"
-	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
@@ -171,73 +169,12 @@ func TestEnv_ScopeLayerRestore(t *testing.T) {
 	}
 }
 
-// TestSettingsRender_ScopeReferenceScenario_MCP is §6.1 step 3: an AWS MCP server configured
-// in company-x's Claude home (user and project scope) is gone after tq
-// settings render; the Azure server and an unrelated one stay, the removed ones are kept
-// beside the config, and the PATH mask is written.
-func TestSettingsRender_ScopeReferenceScenario_MCP(t *testing.T) {
-	root, _ := setupScoped(t, "company-x", companyXBody)
-	claudeDir := paths.IdentityDir("company-x", "claude")
-	write := func(p, s string) {
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	rootKey, _ := json.Marshal(filepath.ToSlash(root))
-	claudeJSON := `{"mcpServers":{"aws-api":{"command":"uvx","args":["awslabs.aws-api-mcp-server@latest"]},` +
-		`"azure":{"command":"npx","args":["-y","@azure/mcp@latest"]},"mydb":{"command":"uvx","args":["postgres-mcp"]}},` +
-		`"projects":{` + string(rootKey) + `:{"mcpServers":{"aws":{"type":"http","url":"https://knowledge-mcp.global.api.aws"}}}}}`
-	write(filepath.Join(claudeDir, ".claude.json"), claudeJSON)
-
-	out := runEnv(t, "settings", "render", "company-x")
-	if !strings.Contains(out, "removed MCP server aws-api") || !strings.Contains(out, "PATH mask written") {
-		t.Fatalf("render output:\n%s", out)
-	}
-	raw, _ := os.ReadFile(filepath.Join(claudeDir, ".claude.json"))
-	var cj struct {
-		MCP      map[string]any `json:"mcpServers"`
-		Projects map[string]struct {
-			MCP map[string]any `json:"mcpServers"`
-		} `json:"projects"`
-	}
-	if err := json.Unmarshal(raw, &cj); err != nil {
-		t.Fatal(err)
-	}
-	for name := range cj.MCP {
-		if strings.Contains(name, "aws") {
-			t.Fatalf("an AWS MCP server is still registered: %s", name)
-		}
-	}
-	if cj.MCP["azure"] == nil || cj.MCP["mydb"] == nil {
-		t.Fatalf("in-scope or unrelated servers removed: %v", cj.MCP)
-	}
-	for p, pr := range cj.Projects {
-		if len(pr.MCP) != 0 {
-			t.Fatalf("project %s keeps %v", p, pr.MCP)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(claudeDir, mcpscope.RemovedFile)); err != nil {
-		t.Fatalf("removed entries not kept in %s: %v", claudeDir, err)
-	}
-	if _, err := os.Stat(filepath.Join(envplan.MaskDir("company-x"), "aws")); err != nil {
-		t.Fatalf("PATH mask not written: %v", err)
-	}
-	// Trust survives the render (the MCP lists and the mask are not covered).
-	if got := runEnv(t, "settings", "render", "company-x"); strings.Contains(got, "skipped") || strings.Contains(got, "removed MCP") {
-		t.Fatalf("second render:\n%s", got)
-	}
-}
-
-// TestSessionStart_ScopeLine is §6.1 step 1 (advisory): the preamble states the scope in one
-// line.
+// The preamble states the client's tools in one line.
 func TestSessionStart_ScopeLine(t *testing.T) {
 	root, _ := setupScoped(t, "company-x", companyXBody)
 	_, out, _ := runHook(t, []string{"claude-hook", "session-start"}, `{"cwd":`+jsonPath(t, root)+`}`)
-	want := "Scope: az, azure-devops, claude. Identity company-x may use these providers only"
-	if n := strings.Count(out, "\nScope: "); n != 1 || !strings.Contains(out, want) {
+	want := "Tools: az, azure-devops, claude. Other providers' CLIs are not on this terminal's PATH."
+	if n := strings.Count(out, "\nTools: "); n != 1 || !strings.Contains(out, want) {
 		t.Fatalf("preamble lacks the scope line:\n%s", out)
 	}
 }

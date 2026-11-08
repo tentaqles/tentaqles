@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -242,16 +241,6 @@ func RemoveShims(ws string) (bool, error) {
 		return false, nil
 	}
 	return true, os.RemoveAll(dir)
-}
-
-// ShimFiles lists the shim programs' file names, sorted.
-func ShimFiles() []string {
-	var out []string
-	for _, n := range shimNames {
-		out = append(out, shimFile(n))
-	}
-	sort.Strings(out)
-	return out
 }
 
 // sameBytes reports whether two files hold the same bytes; false when either is unreadable.

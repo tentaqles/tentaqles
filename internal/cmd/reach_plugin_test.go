@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // fakeClaude puts a fake claude first on the PATH. It logs its argv and the CLAUDE_CONFIG_DIR it
@@ -38,16 +38,15 @@ var wantPluginCalls = [][]string{
 func TestReach_InstallsThePlugin(t *testing.T) {
 	clients := isolateReach(t, fullAnswers())
 	reachGuardPlugin = installGuardPlugin
-	// The install changes the covered files as a real one does (the plugin, installed_plugins.json,
-	// enabledPlugins). The re-sign after it is what keeps the record true: without it, reach's
-	// trust.Check below fails.
+	// The install writes the plugin as a real one does (the plugin, installed_plugins.json,
+	// enabledPlugins).
 	bin := fakeClaude(t, testutil.FakeSpec{CopyArg: "install", Copy: guardCopies(t, "acme")})
 	dir := filepath.Join(clients, "acme")
 	out, err := runReach(t, dir, "--no-banner")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if g := trust.CheckGuardHook(paths.IdentityDir("acme", "claude")); !g.OK {
+	if g := guardplugin.CheckGuardHook(paths.IdentityDir("acme", "claude")); !g.OK {
 		t.Fatalf("the installed plugin is not a guard: %s", g.Why)
 	}
 	if got := testutil.ReadFakeLog(t, filepath.Join(bin, "claude.argv.log")); !reflect.DeepEqual(got, wantPluginCalls) {
@@ -61,9 +60,6 @@ func TestReach_InstallsThePlugin(t *testing.T) {
 		if e["CLAUDE_CONFIG_DIR"] != paths.IdentityDir("acme", "claude") {
 			t.Fatalf("CLAUDE_CONFIG_DIR = %q, want the client's own", e["CLAUDE_CONFIG_DIR"])
 		}
-	}
-	if v := trust.Check("acme", manifestHash(t, dir)); !v.OK {
-		t.Fatalf("not trusted after the plugin install: %s", v.Reason)
 	}
 	if !strings.Contains(out, "The tentaqles plugin is installed") {
 		t.Fatalf("the install is not said:\n%s", out)
@@ -83,15 +79,12 @@ func TestReach_NoPluginFlag(t *testing.T) {
 	if got := testutil.ReadFakeLog(t, filepath.Join(bin, "claude.argv.log")); len(got) != 0 {
 		t.Fatalf("--no-plugin ran claude: %v", got)
 	}
-	if !strings.Contains(out, "--no-plugin") || !strings.Contains(out, trust.GuardPluginLine("acme")) {
+	if !strings.Contains(out, "--no-plugin") || !strings.Contains(out, guardplugin.GuardPluginLine("acme")) {
 		t.Fatalf("the skipped install is not said, with its line:\n%s", out)
-	}
-	if v := trust.Check("acme", manifestHash(t, dir)); !v.OK {
-		t.Fatalf("the client is not trusted: %s", v.Reason)
 	}
 }
 
-// A failed install never fails reach: the client is trusted, the reason and the exact line are
+// A failed install never fails reach: the client is made, the reason and the exact line are
 // printed, and exit is 0 (F-01). The failing fake, a hanging one at a lowered limit, and no claude
 // on the PATH each do it.
 func TestReach_PluginInstallFails(t *testing.T) {
@@ -145,9 +138,6 @@ func TestReach_PluginInstallFails(t *testing.T) {
 			}
 			if !strings.Contains(out, "acme is ready.") {
 				t.Errorf("reach did not finish:\n%s", out)
-			}
-			if v := trust.Check("acme", manifestHash(t, dir)); !v.OK {
-				t.Fatalf("the client is not trusted: %s", v.Reason)
 			}
 		})
 	}

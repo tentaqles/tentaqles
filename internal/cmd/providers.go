@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -199,12 +198,9 @@ func newProvidersAddCmd() *cobra.Command {
 	var force bool
 	c := &cobra.Command{
 		Use:   "add <id>",
-		Short: "Add or override a provider as a user file under providers/ (human only)",
+		Short: "Add or override a provider as a user file under providers/",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := refuseAgent("tq providers add"); err != nil {
-				return err
-			}
 			id := args[0]
 
 			cat, err := providers.Load()
@@ -256,9 +252,6 @@ func newProvidersAddCmd() *cobra.Command {
 				p.Verify = &providers.VerifyCmd{Cmd: providers.Cmd{Args: fields}}
 			}
 
-			if err := humanGate(c, "tq providers add", "tq providers add: about to write "+filepath.Join(providers.UserDir(), id+".yaml")); err != nil {
-				return err
-			}
 			path, err := providers.WriteUser(p)
 			if err != nil {
 				return err

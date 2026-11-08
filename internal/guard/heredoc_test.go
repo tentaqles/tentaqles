@@ -102,21 +102,3 @@ func TestBlankHeredocBodiesNeverPanics(t *testing.T) {
 		})
 	}
 }
-
-// Every prefix of every case: a scanner that indexes the wrong line panics on
-// some truncation of these inputs.
-func TestBlankHeredocBodiesPrefixesNeverPanic(t *testing.T) {
-	for _, tc := range heredocCases {
-		for i := 0; i <= len(tc.in); i++ {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						t.Fatalf("%s[:%d]: panic: %v", tc.name, i, r)
-					}
-				}()
-				_ = blankHeredocBodies(tc.in[:i])
-				_ = StripHeredocs(tc.in[:i])
-			}()
-		}
-	}
-}

@@ -1,8 +1,0 @@
-$ grep -n -o no-terminal contexts in docs/COMMANDS.md README.md
-
-README.md lines 55-58:
-
-reach then opens a new terminal in that folder, and ends the terminal it ran in after you press Enter (only when
-that is an interactive shell; `--no-terminal` skips both, and see ADR-0019). In the new terminal, start `claude`. In it:
-
-13:Then it opens a new terminal in the client's folder and, after you press Enter, ends the terminal reach ran in, only when that is an interactive PowerShell, pwsh, cmd, bash, zsh or fish that no other shell started (a Git Bash subshell or a shell inside a shell is left open); otherwise it leaves it open and says so. Without Windows Terminal the new window is PowerShell; when PowerShell will not load tq's profile (a Restricted execution policy, or a profile in another folder), the old terminal stays open and reach names `tq run <client> -- claude` as the next step. A terminal that cannot open, or a profile that cannot take the block (or a PowerShell that will not load it), leaves the old terminal open and prints the next step; a failure on another shell's profile is a warning. `--no-terminal` skips the opening and the ending, and prints the next step (ADR-0019)

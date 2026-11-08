@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestReach_InstallsThePlugin$ -count=1 -v
-=== RUN   TestReach_InstallsThePlugin
---- PASS: TestReach_InstallsThePlugin (0.95s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	1.050s
-exit code: 0

@@ -1,11 +1,7 @@
 package guard
 
 import (
-	"errors"
-	"os"
-	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 )
 
@@ -528,9 +524,6 @@ func sortByStart(s []gitInvocation) {
 	}
 }
 
-// BlankHeredocBodies is blankHeredocBodies for other packages.
-func BlankHeredocBodies(c string) string { return blankHeredocBodies(c) }
-
 // blankHeredocBodies replaces heredoc body lines with spaces (keeping the
 // length and line breaks), quoted `<<` included: a body is data, never a
 // command, even inside `"$(cat <<'EOF' … EOF)"`. Several markers on one line
@@ -548,114 +541,4 @@ func blankHeredocBodies(c string) string {
 // DirError says why the directory a command acts on could not be resolved.
 type DirError struct{ Reason string }
 
-func (e *DirError) Error() string { return e.Reason }
-
-// IsDirError reports whether err is a DirError.
-func IsDirError(err error) bool {
-	var d *DirError
-	return errors.As(err, &d)
-}
-
 var msysDriveRe = regexp.MustCompile(`^/([A-Za-z])(/|$)`)
-
-// ResolvePath resolves p against base the way a shell on this machine would.
-// It refuses what it cannot evaluate: ~, variables, substitutions, `-`.
-func ResolvePath(base, p string) (string, error) {
-	if p == "" || p == "-" || strings.HasPrefix(p, "~") || strings.ContainsAny(p, "$`%") {
-		return "", &DirError{Reason: "the command changes to a directory tq cannot evaluate (" + describe(p) + ")"}
-	}
-	if runtime.GOOS == "windows" {
-		if m := msysDriveRe.FindStringSubmatch(p); m != nil {
-			p = strings.ToUpper(m[1]) + ":/" + strings.TrimPrefix(p[len(m[0]):], "/")
-		}
-	}
-	p = filepath.FromSlash(p)
-	switch {
-	case filepath.IsAbs(p):
-		return filepath.Clean(p), nil
-	case runtime.GOOS == "windows" && (strings.HasPrefix(p, `\`) || filepath.VolumeName(p) != ""):
-		return "", &DirError{Reason: "the command changes to a drive-relative directory (" + describe(p) + ")"}
-	}
-	return filepath.Join(base, p), nil
-}
-
-func describe(p string) string {
-	if p == "" {
-		return "no directory given"
-	}
-	return p
-}
-
-func existingDir(d string) error {
-	fi, err := os.Stat(d)
-	if err != nil || !fi.IsDir() {
-		return &DirError{Reason: "the directory the command runs in does not exist: " + d}
-	}
-	return nil
-}
-
-// Dir returns the directory this git call acts on: cwd, then a leading
-// `cd <dir>` (first segment only), then every -C in order. It fails when the
-// directory cannot be known or does not exist: callers deny instead of
-// scanning the wrong repository.
-func (g GitInvocation) Dir(cwd string) (string, error) {
-	switch {
-	case g.Hidden:
-		return "", &DirError{Reason: "a git call inside a quoted string or a nested shell; tq cannot tell which repository it acts on"}
-	case g.BaseUnknown:
-		return "", &DirError{Reason: "the command changes directory before git in a way tq does not follow; use `cd <dir> && git …` as the first step or `git -C <dir>`"}
-	case g.GitDirOverride:
-		return "", &DirError{Reason: "the command sets --git-dir, --work-tree, GIT_DIR or GIT_WORK_TREE; tq cannot tell what it records"}
-	case g.envChdir:
-		return "", &DirError{Reason: "the command runs git through `env -C`; use `git -C <dir>`"}
-	}
-	d := cwd
-	var err error
-	if g.Base != "" {
-		if d, err = ResolvePath(d, g.Base); err != nil {
-			return "", err
-		}
-	}
-	for _, c := range g.Dirs {
-		if d, err = ResolvePath(d, c); err != nil {
-			return "", err
-		}
-	}
-	if err := existingDir(d); err != nil {
-		return "", err
-	}
-	return d, nil
-}
-
-// BaseDir returns the directory a whole command starts in: cwd, or the
-// target of a leading `cd <dir>` (first segment only). A later cd, or a
-// leading one tq cannot evaluate, is an error.
-func BaseDir(cwd, command string) (string, error) {
-	masked := maskQuoted(command)
-	d := cwd
-	seen := false
-	for k, sp := range segmentSpans(masked) {
-		words := splitWords(command[sp.start:sp.end])
-		if len(words) == 0 {
-			continue
-		}
-		dir, ok := cdTarget(words)
-		if !ok {
-			continue
-		}
-		if k != 0 || dir == "" || seen {
-			return "", &DirError{Reason: "the command changes directory in a way tq does not follow; use `cd <dir> && …` as the first step"}
-		}
-		r, err := ResolvePath(cwd, dir)
-		if err != nil {
-			return "", err
-		}
-		d, seen = r, true
-	}
-	if seen {
-		if err := existingDir(d); err != nil {
-			return "", err
-		}
-	}
-	return d, nil
-}

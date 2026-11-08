@@ -5,7 +5,6 @@ package providers
 
 import (
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 )
@@ -88,71 +87,6 @@ type VerifyCmd struct {
 	Subscription  *Field `yaml:"subscription,omitempty"`
 }
 
-// Connect is the MCP server `tentaqles connect <provider>` registers in an identity's
-// .claude.json (ADR-0017). Only the embedded catalog defines it: a user provider file that
-// carries one is not loaded, so no caller input and no user file can choose what an agent-run
-// connect writes. It holds no credential: the human authenticates the server with /mcp.
-type Connect struct {
-	// Name is the mcpServers key.
-	Name string `yaml:"name"`
-	// Transport is "http" (URL) or "stdio" (Command and Args).
-	Transport string   `yaml:"transport"`
-	URL       string   `yaml:"url,omitempty"`
-	Command   string   `yaml:"command,omitempty"`
-	Args      []string `yaml:"args,omitempty"`
-}
-
-// Connect transports.
-const (
-	TransportHTTP  = "http"
-	TransportStdio = "stdio"
-)
-
-// Entry is the mcpServers value connect writes, as Claude Code stores it.
-func (c Connect) Entry() map[string]any {
-	if c.Transport == TransportStdio {
-		args := make([]any, len(c.Args))
-		for i, a := range c.Args {
-			args[i] = a
-		}
-		return map[string]any{"type": TransportStdio, "command": c.Command, "args": args}
-	}
-	return map[string]any{"type": TransportHTTP, "url": c.URL}
-}
-
-// validate checks the entry is well formed: a server name, a known transport, and for http an
-// https URL with a host, for stdio a command; no control characters anywhere.
-func (c Connect) validate() error {
-	if !mcpNameRe.MatchString(c.Name) {
-		return fmt.Errorf("name %q is not an MCP server name (must match %s)", c.Name, mcpNameRe.String())
-	}
-	for _, s := range append([]string{c.URL, c.Command}, c.Args...) {
-		if hasControlChars(s) {
-			return fmt.Errorf("must not contain control characters")
-		}
-	}
-	switch c.Transport {
-	case TransportHTTP:
-		u, err := url.Parse(c.URL)
-		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
-			return fmt.Errorf("url %q: an http server needs an https URL with a host and no credentials", c.URL)
-		}
-		if c.Command != "" || len(c.Args) > 0 {
-			return fmt.Errorf("an http server takes a url, not a command or args")
-		}
-	case TransportStdio:
-		if strings.TrimSpace(c.Command) == "" {
-			return fmt.Errorf("a stdio server needs a command")
-		}
-		if c.URL != "" {
-			return fmt.Errorf("a stdio server takes a command and args, not a url")
-		}
-	default:
-		return fmt.Errorf("transport %q: use %s or %s", c.Transport, TransportHTTP, TransportStdio)
-	}
-	return nil
-}
-
 // Provider is one entry in the catalog.
 type Provider struct {
 	ID       string `yaml:"id"`
@@ -179,10 +113,6 @@ type Provider struct {
 	// Match is what the guard's identity category recognises as this provider when it is
 	// outside an identity's scope (PRD v2 §6.3, ADR-0007). See match.go.
 	Match Match `yaml:"match,omitempty"`
-
-	// Connect is the hosted MCP server `tentaqles connect` registers for this provider; nil when
-	// the catalog defines none. Embedded entries only (see Connect).
-	Connect *Connect `yaml:"connect,omitempty"`
 
 	// Source is "embedded" for catalog entries or the file path for user
 	// overrides. Never serialized.
@@ -255,11 +185,6 @@ func (p Provider) Validate() error {
 	}
 	if p.MCP != "" && !mcpNameRe.MatchString(p.MCP) {
 		return fmt.Errorf("provider %q: mcp %q is not an MCP server name (must match %s)", p.ID, p.MCP, mcpNameRe.String())
-	}
-	if p.Connect != nil {
-		if err := p.Connect.validate(); err != nil {
-			return fmt.Errorf("provider %q: connect: %w", p.ID, err)
-		}
 	}
 	if hasControlChars(p.Notes) {
 		return fmt.Errorf("provider %q: notes must not contain control characters", p.ID)

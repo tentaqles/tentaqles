@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestConnect_SurvivesRenderAndHook$ -count=1 -v
-=== RUN   TestConnect_SurvivesRenderAndHook
---- PASS: TestConnect_SurvivesRenderAndHook (0.93s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	1.021s
-exit code: 0

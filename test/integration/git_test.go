@@ -1,13 +1,14 @@
 package integration
 
 import (
-	"github.com/tentaqles/tentaqles/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/testutil"
 
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 )

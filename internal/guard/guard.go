@@ -20,7 +20,7 @@ import (
 type Input struct {
 	Command        string   // the Bash command Claude wants to run
 	Client         string   // manifest.Client ("" when no workspace)
-	Neutral        bool     // cwd resolves to no trusted workspace
+	Neutral        bool     // cwd resolves to no client
 	NeutralReason  string   // resolve.Result.Reason when Neutral
 	Blocked        []string // effective blocked-command list (manifest union)
 	CloudProvider  string   // "azure"|"aws"|"gcp"|"digitalocean"|"" (lowercased)
@@ -29,16 +29,13 @@ type Input struct {
 	ActualEmail    string   // effective `git config user.email` in cwd ("" if unknown)
 	ExpectedGHUser string   // manifest.Git.User (or ExpectedUser)
 	ActualGHUser   string   // from `gh api user --jq .login` ("" if unknown / not run)
-	Findings       []string // doctor codes for cwd: "untrusted","env-drift","git-email-drift","claude-config-drift",...
-	// Scoped: a trusted manifest, so the provider scope judges every provider
-	// CLI (policy.Scope, ADR-0007) and wrong-cloud, its subset, does not run here.
-	Scoped bool
+	Findings       []string // doctor codes for cwd: "env-drift","git-email-drift","claude-config-drift",...
 }
 
 // Decision is the outcome of Decide.
 type Decision struct {
 	Block  bool
-	Rule   string // "blocked-command"|"wrong-cloud"|"neutral-remote"|"git-email-drift"|"gh-user"|"env-drift"|"untrusted"|"claude-config-drift"|""
+	Rule   string // "blocked-command"|"wrong-cloud"|"neutral-remote"|"git-email-drift"|"gh-user"|"env-drift"|"claude-config-drift"|""
 	Reason string // multi-line message for stderr (starts with "BLOCKED [identity/<rule>]: ")
 }
 
@@ -237,9 +234,9 @@ func has(fs []string, code string) bool {
 	return false
 }
 
-// Decide applies the rule precedence documented in the task brief:
+// Decide applies the rules in this order:
 // blocked-command -> wrong-cloud -> neutral-remote ->
-// untrusted (non-read-only git only) -> env-drift (non-read-only git only) ->
+// env-drift (non-read-only git only) ->
 // claude-config-drift (git push / gh only) ->
 // git-email-drift (inline -c user.email/--config-env override on any git, or
 // non-read-only git with both emails known) ->
@@ -260,7 +257,7 @@ func Decide(in Input) Decision {
 			return block("blocked-command", fmt.Sprintf("Command '%s' is blocked by client manifest.\n  Client: %s", b, client))
 		}
 	}
-	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" && !in.Scoped {
+	if p := strings.ToLower(in.CloudProvider); p != "" && p != "none" {
 		allowed := map[string]bool{p: true}
 		for _, x := range in.ExtraClouds {
 			allowed[strings.ToLower(strings.TrimSpace(x))] = true
@@ -271,29 +268,17 @@ func Decide(in Input) Decision {
 			}
 		}
 	}
-	// integrity: the workspace's signed record fails (ADR-0004); the fix is
-	// tq hooks verify, not tq allow.
-	integrity := has(in.Findings, "integrity")
 	if in.Neutral {
 		if IsRemoteMutation(in.Command) {
-			if integrity {
-				return block("neutral-remote", fmt.Sprintf("integrity mismatch: run tq hooks verify %s; refusing a remote/cloud command with no identity.\n  %s", client, in.NeutralReason))
-			}
-			return block("neutral-remote", fmt.Sprintf("cwd is not inside a trusted tq workspace (%s); refusing a remote/cloud command with no identity.\n  Fix: cd into a workspace, or run: tq allow <name>", in.NeutralReason))
+			return block("neutral-remote", fmt.Sprintf("this folder belongs to no client (%s); refusing a remote/cloud command with no identity.\n  Fix: cd into a client folder, or make this one a client: tentaqles reach", in.NeutralReason))
 		}
 		return Decision{}
 	}
 	git := IsGit(in.Command)
 	// Read-only git (status/log/diff/...) is exempt from the identity rules:
-	// it neither writes history nor touches a remote, so a stale shell or an
-	// untrusted manifest is no reason to refuse it. Mutating git stays blocked.
+	// it neither writes history nor touches a remote, so a stale shell is no
+	// reason to refuse it. Mutating git stays blocked.
 	readOnlyGit := git && IsReadOnlyGit(in.Command)
-	if git && !readOnlyGit && has(in.Findings, "untrusted") {
-		if integrity {
-			return block("untrusted", fmt.Sprintf("workspace %s is not trusted: integrity mismatch: run tq hooks verify %s; git is refused until a human accepts the change", client, client))
-		}
-		return block("untrusted", fmt.Sprintf("workspace %s is not trusted; git is refused until you run: tq allow %s", client, client))
-	}
 	if git && !readOnlyGit && has(in.Findings, "env-drift") {
 		return block("env-drift", "shell identity (TQ_WS) does not match cwd; open a new shell or run: eval \"$(tq env --shell <shell>)\"")
 	}
@@ -304,7 +289,7 @@ func Decide(in Input) Decision {
 		return block("git-email-drift", "inline git identity override (-c user.email/--config-env) is not allowed; identity is managed by tq")
 	}
 	if git && !readOnlyGit && in.ExpectedEmail != "" && in.ActualEmail != "" && !strings.EqualFold(in.ExpectedEmail, in.ActualEmail) {
-		return block("git-email-drift", fmt.Sprintf("Git email mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tq doctor (identity is managed by tq; do not set user.email by hand)", in.ExpectedEmail, in.ActualEmail))
+		return block("git-email-drift", fmt.Sprintf("Git email mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tq doctor (the client folder sets it; do not set user.email by hand)", in.ExpectedEmail, in.ActualEmail))
 	}
 	if StartsWith(in.Command, "gh") && in.ExpectedGHUser != "" && in.ActualGHUser != "" && !strings.EqualFold(in.ExpectedGHUser, in.ActualGHUser) {
 		return block("gh-user", fmt.Sprintf("GitHub user mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tq login %s gh", in.ExpectedGHUser, in.ActualGHUser, client))
@@ -338,45 +323,4 @@ type GitInvocation struct {
 	envChdir bool
 }
 
-// GitInvocations returns every git call in command, in order.
-func GitInvocations(c string) []GitInvocation {
-	segs := gitSegments(c)
-	out := make([]GitInvocation, 0, len(segs))
-	for _, s := range segs {
-		out = append(out, s.GitInvocation)
-	}
-	return out
-}
-
 var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)['"]?`)
-
-// StripHeredocs removes heredoc bodies (the lines between `<<WORD` and the
-// closing WORD line) from a shell command, so text a command feeds to an
-// interpreter or writes to a file is not mistaken for commands to run.
-//
-// It fails toward keeping text: a `<<` inside quotes or a comment opens
-// nothing (see scanHeredocs), and when a heredoc's closing line never
-// appears the command is returned unchanged, because the shell would run
-// what follows it.
-func StripHeredocs(c string) string {
-	lines := strings.Split(c, "\n")
-	keep := make([]bool, len(lines))
-	for i := range keep {
-		keep[i] = true
-	}
-	for _, h := range scanHeredocs(lines) {
-		if !h.closed {
-			return c // unterminated: do not guess
-		}
-		for j := h.from; j <= h.to; j++ {
-			keep[j] = false
-		}
-	}
-	var out []string
-	for i, l := range lines {
-		if keep[i] {
-			out = append(out, l)
-		}
-	}
-	return strings.Join(out, "\n")
-}

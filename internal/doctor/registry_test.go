@@ -5,11 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func TestRegisteredChecksRun(t *testing.T) {
@@ -24,12 +22,8 @@ func TestRegisteredChecksRun(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mp := filepath.Join(root, manifest.FileName)
+	mp := markerFor(t, root)
 	if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: tester@example.com }\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, _ := trust.HashFile(mp)
-	if err := trust.Allow("acme", h); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,4 +57,11 @@ func TestRegisterPanicsOnDuplicateAndEmpty(t *testing.T) {
 			Register(c)
 		}()
 	}
+}
+
+// unregister removes a check (tests only).
+func unregister(name string) {
+	checksMu.Lock()
+	defer checksMu.Unlock()
+	delete(checks, name)
 }

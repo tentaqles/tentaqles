@@ -5,18 +5,8 @@ category: deploy
 docs: https://developers.cloudflare.com/workers/wrangler/
 cli:
   command: wrangler
-# NOT isolatable by an environment variable, deliberately:
-# WRANGLER_HOME does not exist -- the source carries a TODO saying so. Config resolves through XDG_CONFIG_HOME, but ONLY when ~/.wrangler is absent: if that directory exists the legacy path silently wins and the variable is ignored. Auth is CLOUDFLARE_API_TOKEN, a secret.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [wrangler, cloudflared]
   env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, CF_API_TOKEN]
-  paths: ["~/.wrangler", "%APPDATA%/xdg.config/.wrangler", "~/.cloudflared"]
-  hosts: [api.cloudflare.com]
-  mcp: [cloudflare, wrangler]
-  mcp_packages: ["@cloudflare/", "mcp/cloudflare"]
-  mcp_hosts: [mcp.cloudflare.com]

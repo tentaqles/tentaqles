@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestInstall_OutOfScopeRefused$ -count=1 -v
-=== RUN   TestInstall_OutOfScopeRefused
---- PASS: TestInstall_OutOfScopeRefused (0.52s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	0.608s
-exit code: 0

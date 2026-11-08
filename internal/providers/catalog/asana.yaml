@@ -4,17 +4,8 @@ category: pm
 docs: https://developers.asana.com
 cli: null
 mcp: asana
-notes: "No CLI login: store a personal access token with tq secret set <ws> asana (auth keychain), or name the variable in tracker.env for tq dotenv (auth env). The Asana MCP connector covers a Claude session."
-# connect: the hosted MCP server `tentaqles connect asana` registers (ADR-0017). Vendor docs:
-# https://developers.asana.com/docs/using-asanas-mcp-server
-connect:
-  name: asana
-  transport: http
-  url: https://mcp.asana.com/v2/mcp
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+notes: "No CLI login. A Claude session reaches Asana through an MCP server added in that client's Claude config (claude mcp add), signed in with /mcp."
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   env: [ASANA_ACCESS_TOKEN, ASANA_PAT]
-  hosts: [app.asana.com]
-  mcp: [asana]
-  mcp_hosts: [mcp.asana.com]

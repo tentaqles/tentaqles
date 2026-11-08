@@ -20,10 +20,8 @@ identity:
     GOOSE_DISABLE_KEYRING: "1"
 login:
   args: ["configure"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [goose]
   env: [GOOSE_PATH_ROOT]
-  paths: ["~/.config/goose"]
-  mcp: [goose]

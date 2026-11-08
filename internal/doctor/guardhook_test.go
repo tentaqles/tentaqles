@@ -7,11 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // findCode returns the first finding with code, and whether there is one.
@@ -41,19 +39,12 @@ func trustedClient(t *testing.T, identities string, plugin bool) *registry.Confi
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mp := filepath.Join(root, manifest.FileName)
+	mp := markerFor(t, root)
 	if err := os.WriteFile(mp, []byte("schema: tentaqles-client-v2\nclient: acme\ngit: { email: a@b }\nidentities: "+identities+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if plugin {
 		writeGuardFixture(t, "acme")
-	}
-	h, err := trust.HashFile(mp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := trust.Allow("acme", h); err != nil {
-		t.Fatal(err)
 	}
 	return cfg
 }
@@ -94,7 +85,7 @@ func TestDoctor_GuardHookNotForAClientWithoutClaude(t *testing.T) {
 	}
 }
 
-// A trusted client with no tentaqles plugin reports guard-hook-missing as an error with the fix
+// A client with no tentaqles plugin reports guard-hook-missing as an error with the fix
 // lines that install it (REQ-7); with the plugin in place the finding is gone.
 func TestDoctor_GuardHookMissing(t *testing.T) {
 	cfg := guardedClient(t, false)
@@ -103,7 +94,7 @@ func TestDoctor_GuardHookMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("no guard-hook-missing: %+v", fs)
 	}
-	wantFix := "tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles\n    tq hooks verify --accept acme"
+	wantFix := "tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles"
 	if f.Level != "error" || f.Workspace != "acme" || f.Fix != wantFix {
 		t.Fatalf("finding %+v", f)
 	}

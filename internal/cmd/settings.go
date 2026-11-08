@@ -15,43 +15,29 @@ import (
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/statusline"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func newSettingsCmd() *cobra.Command {
-	c := &cobra.Command{Use: "settings", Short: "Manage the tq-owned part of each identity's Claude settings.json, and the terminals the human-only check accepts"}
-	c.AddCommand(newSettingsRenderCmd(), newSettingsAnchorsCmd())
+	c := &cobra.Command{Use: "settings", Short: "Render each client's Claude settings, PATH mask and browser shims"}
+	c.AddCommand(newSettingsRenderCmd())
 	return c
 }
 
 func newSettingsRenderCmd() *cobra.Command {
 	var all, dryRun, noStatus bool
 	c := &cobra.Command{
-		Use:   "render [workspace...]",
-		Short: "Write the baseline env and status line into identity settings.json",
-		Long: `Brings each workspace's Claude identity settings.json in line with tq's
-baseline plus the manifest's claude.env:
+		Use:   "render [client...]",
+		Short: "Write each client's Claude settings, PATH mask and browser shims",
+		Long: `Brings each client's files in line with its manifest:
 
-  - env: tuning for costly plugins (e.g. no per-turn Opus security review)
-  - statusLine: tq statusline (replaces unpinned npx status lines only)
-
-tq writes no permission setting. The first render after an upgrade removes
-the permission settings an older tq wrote (the allow/deny/ask entries its
-state file records, and the defaultMode and skipDangerousModePermissionPrompt
-it set); an emptied permissions object goes.
+  - its Claude settings.json: the manifest's claude.env and the tq status line
+    (which replaces only an unpinned npx status line);
+  - its PATH mask: a stub for each CLI of a provider outside its scope;
+  - its browser shims, when the client lists a browser.
 
 Only entries tq wrote earlier are ever removed; anything added by hand stays.
-
-Human-only: a session is refused, and you confirm before the files are written
-(--dry-run writes nothing and asks nothing).`,
+--dry-run writes nothing.`,
 		RunE: func(c *cobra.Command, args []string) error {
-			// A dry run is a read (ADR-0005: dry runs are free); a render
-			// refuses a session before anything is resolved.
-			if !dryRun {
-				if err := refuseAgent("tq settings render"); err != nil {
-					return err
-				}
-			}
 			cfg, err := registry.Load()
 			if err != nil {
 				return err
@@ -61,21 +47,11 @@ Human-only: a session is refused, and you confirm before the files are written
 				fmt.Fprintln(c.ErrOrStderr(), "warning:", e)
 			}
 			if !all && len(args) == 0 {
-				return fmt.Errorf("name one or more workspaces, or pass --all")
+				return fmt.Errorf("name one or more clients, or pass --all")
 			}
 			want := map[string]bool{}
 			for _, a := range args {
 				want[a] = true
-			}
-			if !dryRun {
-				which := "every registered workspace"
-				if !all {
-					which = strings.Join(args, ", ")
-				}
-				about := fmt.Sprintf("tq settings render: about to write settings.json under %s for %s", paths.IdentitiesRoot(), which)
-				if err := humanGate(c, "tq settings render", about); err != nil {
-					return err
-				}
 			}
 			tqExe := ""
 			if !noStatus {
@@ -88,13 +64,8 @@ Human-only: a session is refused, and you confirm before the files are written
 					continue
 				}
 				n++
-				if v := trust.Check(ws.Name, ws.Hash); !v.OK {
-					fmt.Fprintf(c.OutOrStdout(), "%s: skipped (%s)\n", ws.Name, v.Reason)
-					continue
-				}
 				dir := paths.IdentityDir(ws.Name, "claude")
-				d := claudesettings.Desired(ws.Manifest, tqExe)
-				res, err := claudesettings.Render(dir, d, dryRun)
+				res, err := claudesettings.Render(dir, claudesettings.Desired(ws.Manifest, tqExe), dryRun)
 				if err != nil {
 					return fmt.Errorf("%s: %w", ws.Name, err)
 				}
@@ -109,32 +80,22 @@ Human-only: a session is refused, and you confirm before the files are written
 				for _, ch := range res.Changes {
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
-				// The PATH mask and the in-scope MCP lists (ADR-0008) are not covered by the
-				// integrity record; the browser shims (ADR-0016) are, so a change here is
-				// signed again too.
-				scopeChanged := renderScope(c, ws, dryRun)
-				if !dryRun && (res.Changed || scopeChanged) {
-					// settings.json is covered by the
-					// integrity record: a human's render signs it again,
-					// an agent session leaves it stale.
-					resignCovered(c, ws)
-				}
+				renderScope(c, ws, dryRun)
 			}
 			if n == 0 {
-				return fmt.Errorf("no matching workspace")
+				return fmt.Errorf("no matching client")
 			}
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&all, "all", false, "render every registered workspace")
+	c.Flags().BoolVar(&all, "all", false, "render every client")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without writing")
 	c.Flags().BoolVar(&noStatus, "no-statusline", false, "leave statusLine alone")
 	return c
 }
 
-// statuslineExe is the tq the status line runs: the installed tq on PATH,
-// since os.Executable may be a one-off build (go run, a temp dir) that later
-// disappears.
+// statuslineExe is the tq the status line runs: the installed tq on PATH, since os.Executable
+// may be a one-off build (go run, a temp dir) that later disappears.
 func statuslineExe() string {
 	if exe, err := exec.LookPath("tq"); err == nil {
 		return exe
@@ -145,50 +106,20 @@ func statuslineExe() string {
 	return ""
 }
 
-// renderIdentityFiles re-renders ws's Claude identity settings (for a
-// trusted workspace) after a trust change, so they
-// match at once rather than at the next tq settings render. Errors are
-// warnings: tq doctor reports the drift.
+// renderIdentityFiles renders ws's Claude settings, PATH mask and browser shims, after reach
+// wrote or changed its manifest. Errors are warnings: tq doctor reports the drift.
 func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
-	renderIdentityFilesFor(c, ws, false)
-}
-
-// renderIdentityFilesFor is renderIdentityFiles; force renders the Claude
-// settings whether or not ws is trusted yet. tq allow forces it: it renders
-// for the manifest it is about to sign, before the record that covers the
-// rendered files is written.
-func renderIdentityFilesFor(c *cobra.Command, ws *resolve.Workspace, force bool) {
 	if ws == nil {
 		return
 	}
-	if force || trust.IsTrusted(ws.Name, ws.Hash) {
-		dir := paths.IdentityDir(ws.Name, "claude")
-		if _, err := os.Stat(dir); err == nil {
-			d := claudesettings.Desired(ws.Manifest, statuslineExe())
-			if _, err := claudesettings.Render(dir, d, false); err != nil {
-				fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not re-rendered: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
-			}
+	dir := paths.IdentityDir(ws.Name, "claude")
+	if _, err := os.Stat(dir); err == nil {
+		d := claudesettings.Desired(ws.Manifest, statuslineExe())
+		if _, err := claudesettings.Render(dir, d, false); err != nil {
+			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not rendered: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
 		}
-		renderScope(c, ws, false)
 	}
-}
-
-// resignCovered signs ws's integrity record again after a tq command wrote
-// a covered file (settings.json#tq) for a workspace
-// that was trusted when the command started. Signing is a human act and
-// takes the same gate as tq allow (refuseAgent: the three detectors); a
-// refused re-sign leaves the record stale and names what the human runs.
-func resignCovered(c *cobra.Command, ws *resolve.Workspace) {
-	if ws == nil {
-		return
-	}
-	if err := refuseAgent("tq: sign the integrity record of " + ws.Name); err != nil {
-		fmt.Fprintf(c.ErrOrStderr(), "%s: a covered file changed but the integrity record was not signed again (%v); it is stale until a human runs: tq hooks verify --accept %s\n", ws.Name, err, ws.Name)
-		return
-	}
-	if err := trust.Allow(ws.Name, ws.Hash); err != nil {
-		fmt.Fprintf(c.ErrOrStderr(), "warning: %s: integrity record not signed again: %v (run tq hooks verify --accept %s)\n", ws.Name, err, ws.Name)
-	}
+	renderScope(c, ws, false)
 }
 
 func newStatuslineCmd() *cobra.Command {
@@ -198,7 +129,6 @@ func newStatuslineCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			defer trust.MemoScope()()
 			var in statusline.Input
 			_ = json.NewDecoder(c.InOrStdin()).Decode(&in)
 			cwd := in.Workspace.CurrentDir
@@ -221,8 +151,8 @@ func newStatuslineCmd() *cobra.Command {
 	}
 }
 
-// gitEmailIn returns the effective git email in dir, or "" (fast-fail: a
-// status line must never hang).
+// gitEmailIn returns the effective git email in dir, or "" (fast-fail: a status line must never
+// hang).
 func gitEmailIn(dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()

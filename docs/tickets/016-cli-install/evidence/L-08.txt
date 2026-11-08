@@ -1,9 +1,0 @@
-L-08 re-check (round 4)
-
-Claim of the finding: ADR-0015 says an out-of-scope npm is hidden, but npm is never masked.
-
-docs/adr/0015-provider-install.md:48-49 now reads: "A package manager is hidden by the identity's PATH layer only when a built-in match list claims it, and none does (npm's match is empty), so `tentaqles install codex` runs npm for an identity whose scope does not name npm."
-internal/providers/catalog/npm.yaml: `match: {}` (empty), comment "A generic tool ... never matched by name".
-internal/providers/generic.go:14-26: GenericTool() is true for a provider whose command is in none of its match lists (npm), so its variables are never unset.
-internal/providers/catalog/codex.yaml: install method is npm "@openai/codex" on every OS, so the ADR example is accurate.
-The ADR now matches the code.

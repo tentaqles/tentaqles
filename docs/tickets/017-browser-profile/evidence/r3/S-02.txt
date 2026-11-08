@@ -1,6 +1,0 @@
-$ go test ./internal/cmd -run ^TestPreToolUse_OsUrlOpenDenied$ -count=1 -v
-=== RUN   TestPreToolUse_OsUrlOpenDenied
---- PASS: TestPreToolUse_OsUrlOpenDenied (1.15s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/cmd	1.388s
-exit code: 0

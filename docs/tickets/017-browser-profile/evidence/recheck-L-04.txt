@@ -1,8 +1,0 @@
-$ go test ./internal/envplan -run ^TestBrowserShims_ManifestChangesUnderAnOpenTerminal$|^TestBrowserShims_LostState$ -count=1 -v
-=== RUN   TestBrowserShims_ManifestChangesUnderAnOpenTerminal
---- PASS: TestBrowserShims_ManifestChangesUnderAnOpenTerminal (0.16s)
-=== RUN   TestBrowserShims_LostState
---- PASS: TestBrowserShims_LostState (0.05s)
-PASS
-ok  	github.com/tentaqles/tentaqles/internal/envplan	0.287s
-exit code: 0

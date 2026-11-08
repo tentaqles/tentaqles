@@ -14,9 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/browser"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/manifest"
-	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 const openUsage = "usage: tentaqles open [--browser chrome|edge] <http or https URL>"
@@ -216,25 +214,8 @@ func shimOpen(wsName, name, want string, urls []string, stderr io.Writer) int {
 	return 0
 }
 
-// trustedByName is workspace name when its integrity record verifies: a changed shim, manifest
-// or hook file makes the identity untrusted, and its shim refuses.
-func trustedByName(name string) (*resolve.Workspace, error) {
-	cfg, err := registry.Load()
-	if err != nil {
-		return nil, err
-	}
-	all, _ := resolve.ListWorkspaces(cfg)
-	for i := range all {
-		if all[i].Name != name {
-			continue
-		}
-		if v := trust.Check(name, all[i].Hash); !v.OK {
-			return nil, fmt.Errorf("workspace %s is %s", name, v.Reason)
-		}
-		return &all[i], nil
-	}
-	return nil, fmt.Errorf("no workspace %q", name)
-}
+// trustedByName is the client named name.
+func trustedByName(name string) (*resolve.Workspace, error) { return findWorkspace(name) }
 
 // passThrough runs the real program called name: the first on PATH that is not in the shim's
 // own folder, with the arguments and the standard streams as they are. 127 when there is none.

@@ -12,15 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tentaqles/tentaqles/internal/policy"
-	"github.com/tentaqles/tentaqles/internal/registry"
-	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // The deadlines are ordered under the shortest harness hook timeout (Claude
 // Code 15 s in the plugin's hooks.json):
-// scan budget < decision deadline < process watchdog < tq_hook.sh's
+// decision deadline < process watchdog < tq_hook.sh's
 // watchdog (+1 s for its kill) < the harness timeout, with a margin. A
 // harness kills a slow hook and RUNS the call, so raising any of these past
 // the harness timeout must fail here.
@@ -69,7 +67,6 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 		name string
 		d    time.Duration
 	}{
-		{"maxScanBudget", maxScanBudget},
 		{"hookDeadline", hookDeadline},
 		{"hookWatchdog", hookWatchdog},
 		{"tq_hook.sh _tq_deadline (+1 s)", wrapper},
@@ -79,9 +76,6 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 		if steps[i-1].d >= steps[i].d {
 			t.Errorf("%s (%s) must be below %s (%s)", steps[i-1].name, steps[i-1].d, steps[i].name, steps[i].d)
 		}
-	}
-	if scanBudget > maxScanBudget {
-		t.Errorf("scanBudget %s over maxScanBudget %s", scanBudget, maxScanBudget)
 	}
 }
 
@@ -145,18 +139,18 @@ func TestRunMainHookErrorsDeny(t *testing.T) {
 // decision deadline set far out).
 func TestRunMainWatchdogDenies(t *testing.T) {
 	isolateHome(t)
-	prevW, prevD, prevE, prevP := hookWatchdog, hookDeadline, hookExit, hookPolicyDecision
+	prevW, prevD, prevE, prevP := hookWatchdog, hookDeadline, hookExit, hookGuardDecide
 	release := make(chan struct{})
 	hookWatchdog, hookDeadline = 150*time.Millisecond, time.Hour
-	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time) policy.Decision {
+	hookGuardDecide = func(guard.Input) guard.Decision {
 		<-release
-		return policy.Decision{}
+		return guard.Decision{}
 	}
 	codes := make(chan int, 1)
 	hookExit = func(c int) { codes <- c }
 	t.Cleanup(func() {
 		close(release)
-		hookWatchdog, hookDeadline, hookExit, hookPolicyDecision = prevW, prevD, prevE, prevP
+		hookWatchdog, hookDeadline, hookExit, hookGuardDecide = prevW, prevD, prevE, prevP
 	})
 	prevExit := exitFunc
 	exitFunc = func(int) {}

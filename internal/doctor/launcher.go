@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/tentaqles/tentaqles/internal/hooks"
 )
 
 // Owned by WS2 (spec E §8): checks about the claude/codex launcher.
@@ -35,7 +33,7 @@ var shellFuncRe = map[string]*regexp.Regexp{
 // activationRe finds the line that runs tq activate (or tq's managed block).
 var activationRe = regexp.MustCompile(`(?m)^.*(?:tq(?:\.exe)?["']?[ \t]+activate\b|# <<< tq <<<).*$`)
 
-// legacyBlockRe is the preserved pre-tq setup tq migrate keeps; it runs only
+// legacyBlockRe is a preserved pre-tq setup an older tq left in a profile; it runs only
 // under TQ_ENABLED=0, so its functions do not shadow the launcher.
 var legacyBlockRe = regexp.MustCompile(`(?s)# >>> tq-legacy >>>.*?# <<< tq-legacy <<<`)
 
@@ -79,7 +77,7 @@ func homes(d Deps) []string {
 // claude and codex launchers `tq activate` defines (spec E §8.2):
 //   - a PowerShell alias (aliases resolve before functions): warn;
 //   - a function named claude or codex defined after tq's activation, such
-//     as the wrapper an older tq migrate carried over: warn;
+//     as a wrapper an older tq carried over: warn;
 //   - a posix or fish alias that runs something else (an absolute path, a
 //     different command): warn;
 //   - a posix or fish alias whose value starts with the same name (alias
@@ -137,9 +135,6 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 				}
 				first := strings.Count(text[:loc[0]], "\n") + 1
 				fix := fmt.Sprintf("delete lines %d-%d of %s (function %s) by hand; tq activate defines %s", first, funcEndLine(text, loc[0], pf[1]), pf[0], name, name)
-				if cl, ok := hooks.CarriedWrapperLine(string(raw)); ok && cl == first && pf[1] == "powershell" {
-					fix = fmt.Sprintf("tq migrate removes it: it is the %s wrapper an older tq migrate carried over into %s (line %d); run tq migrate (tq activate defines %s)", name, pf[0], first, name)
-				}
 				add("warn", "claude-alias-shadow", "",
 					fmt.Sprintf("function %s, defined after tq's activation, replaces tq's %s launcher (%s)", name, name, pf[0]),
 					fix)

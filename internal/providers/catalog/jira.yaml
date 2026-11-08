@@ -19,21 +19,9 @@ login:
 verify:
   args: ["jira", "auth", "status"]
 mcp: atlassian
-notes: "acli keeps one global login, not one per workspace: run acli jira auth login yourself. Without acli, store an API token with tq secret set <ws> jira, or name a tracker.env variable for tq dotenv."
-# connect: the hosted (Atlassian Rovo) MCP server `tentaqles connect jira` registers (ADR-0017).
-# Vendor docs: https://support.atlassian.com/rovo/docs/getting-started-with-the-atlassian-remote-mcp-server/
-# The docs now name https://mcp.atlassian.com/v2/mcp; v1 still answers and moves to the v2 tools on 2027-03-01.
-# The entry stays v1 for now: the hook's cross-client exemption needs a connected entry to equal this one, so a
-# change here is an owner's call with a note for every client already connected.
-connect:
-  name: atlassian
-  transport: http
-  url: https://mcp.atlassian.com/v1/mcp
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+notes: "acli keeps one global login, not one per client: run acli jira auth login yourself. A Claude session can reach Jira through the Atlassian MCP server added in that client's Claude config."
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [acli, jira]
   env: [JIRA_API_TOKEN, ATLASSIAN_API_TOKEN]
-  hosts: [atlassian.net, api.atlassian.com]
-  mcp: [atlassian, jira]
-  mcp_hosts: [mcp.atlassian.com]

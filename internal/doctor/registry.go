@@ -55,13 +55,6 @@ func Registered() []Check {
 	return out
 }
 
-// unregister removes a check (tests only).
-func unregister(name string) {
-	checksMu.Lock()
-	defer checksMu.Unlock()
-	delete(checks, name)
-}
-
 func runWorkspaceChecks(w *resolve.Workspace, d Deps, add AddFunc) {
 	for _, c := range Registered() {
 		if c.Workspace != nil {
