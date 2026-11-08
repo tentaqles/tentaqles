@@ -52,8 +52,7 @@ _upath() {
 # enforces must not be its choice. Nor does the plugin folder: the plugin
 # ships no binary, so nothing under it is ever run as tq. The order is PATH,
 # then the well-known install dirs; the tq found there is the user's and the
-# OS's to protect (Phase 3's shim folder decides which one an identity
-# shell runs).
+# OS's to protect.
 TQ=""
 
 _try() {

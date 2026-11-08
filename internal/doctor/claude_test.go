@@ -32,18 +32,6 @@ func TestUnpinnedPackages(t *testing.T) {
 	}
 }
 
-func TestPythonStoreAlias(t *testing.T) {
-	t.Setenv("TENTAQLES_PY", "")
-	var codes []string
-	add := func(level, code, ws, msg, fix string) { codes = append(codes, code) }
-	look := func(string) (string, error) { return `C:\Users\x\AppData\Local\Microsoft\WindowsApps\python3.exe`, nil }
-	pythonStoreAlias(look, "windows", add)
-	pythonStoreAlias(look, "linux", add)
-	if len(codes) != 1 || codes[0] != "python-store-alias" {
-		t.Fatalf("codes = %v", codes)
-	}
-}
-
 func TestPluginForeignPath(t *testing.T) {
 	isolatedHome(t)
 	write := func(id, json string) {

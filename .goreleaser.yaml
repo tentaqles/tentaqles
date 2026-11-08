@@ -1,6 +1,6 @@
 version: 2
 project_name: tq
-# Two names, one program: `tentaqles` is the command of docs/IDEATION.md and `tq` its
+# Two names, one program: `tentaqles` is the command the docs name and `tq` its
 # alias, which the plugin hook (plugin/scripts/tq_hook.sh) resolves. Both builds compile the same
 # main package with the same flags, so the two binaries are byte for byte the same program: the
 # browser shims and PATH-mask stubs copied from either one match the other

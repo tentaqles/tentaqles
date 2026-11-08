@@ -1,7 +1,10 @@
 # Threat model
 
-Tentaqles keeps a developer's clients apart in the terminal and in Claude Code. This page says what it protects
-against and what it does not.
+For anyone deciding whether to rely on tentaqles, and for reviewers of a change to it. It says what tentaqles
+protects against, what it does not, and which tests keep each guarantee.
+
+Tentaqles keeps a developer's clients apart in the terminal and in Claude Code. How it does that is in
+[How it works](how-it-works.md); the hook's rules are in [the Claude Code hook](reference/claude-hook.md).
 
 ## What it is for
 
@@ -16,9 +19,10 @@ opened in the wrong browser profile.
 | A CLI acting on another client's account | The client's config home for each CLI, set by the shell hook in the folder and every subfolder, and by `tentaqles run` | `TestRunClaudeHasTheClientsIdentity`, `TestRunDotResolvesCwd`, `TestEnv_ScopeLayerRestore` |
 | A CLI the client doesn't use being reachable | The PATH mask and the unset variables of providers outside the client's scope; `tentaqles run` refuses them by any spelling | `TestEnv_ScopeReferenceScenario_PATH`, `TestEnv_ScopeReferenceScenario_SharedFolder`, `TestRun_OutOfScopeCLIRefused`, `TestOutOfScopeExecutables` |
 | Claude Code on the wrong account | `CLAUDE_CONFIG_DIR` per client; `tentaqles run . -- claude` starts the folder's client | `TestRunClaudeHasTheClientsIdentity` |
-| An agent pushing, calling `gh` or a cloud CLI under the wrong identity | The plugin's PreToolUse hook (`docs/CLAUDE-HOOK.md`): wrong cloud, wrong git email, wrong gh user, a stale shell, a remote command outside every client folder | `TestCanonicalSuite`, `TestNeutralRemoteNamesReach`, `TestReach_GuardsTheNewClient` |
-| A session without that check | `tentaqles run` refuses to start a session when the client's plugin is missing, off, or disabled by `disableAllHooks` | `TestRun_RefusesWithNoGuardHook`, `TestRun_DisabledPluginIsNoHook`, `TestRun_ForeignHookIsNoHook`, `TestRun_ProjectSettingsCountToo` |
+| An agent pushing, calling `gh` or a cloud CLI under the wrong identity | The plugin's PreToolUse hook: the manifest's blocked commands, the wrong cloud, a remote command outside every client folder, a stale shell, the wrong `CLAUDE_CONFIG_DIR`, git email or gh user | `TestCanonicalSuite`, `TestNeutralRemoteNamesReach`, `TestReach_GuardsTheNewClient` |
+| A session without that check | `tentaqles run` refuses to start a session when the client's plugin is missing or off, or its hook is not the guard, or `disableAllHooks` or a project setting turns it off | `TestRun_RefusesWithNoGuardHook`, `TestRun_DisabledPluginIsNoHook`, `TestRun_ForeignHookIsNoHook`, `TestRun_ProjectSettingsCountToo` |
 | A session running another client's identity | From inside a Claude Code session, `tentaqles run` runs only the folder's client | `TestRunOtherClient_RefusedForAgents`, `TestRunOtherClient_NeutralFolderRefused`, `TestRunOtherClient_InheritedEnvIgnored`, `TestRunOtherClient_HumanAllowed` |
+| An agent changing or deleting a client | `tentaqles reach`, `add`, `remove` and `drop` refuse to run inside a Claude Code session, and wait for a typed confirmation (`drop`: the client's name) | `TestReach_RefusedInsideClaudeCode`, `TestChange_Refusals`, `TestChange_DeclinedWritesNothing`, `TestDrop_Refusals`, `TestDrop_DeclinedDeletesNothing` |
 | A hook that hangs a session | A 6-second decision deadline, a 7-second process watchdog and the script's own kill at 8 seconds, all under the 15-second hook timeout; a stall or a crash denies | `TestHookDeadlinesUnderHarnessTimeouts`, `TestHookStall_SpinningDecisionIsDenied`, `TestPreToolUseGuardPanicDenies` |
 | A folder that copies another client's marker or manifest | A marker must name its own folder, and the manifest's `client` must too | `TestResolve_MarkerOrManifestOfAnotherClient` |
 | A link opened in the wrong browser profile | `BROWSER`, `xdg-open` and `open` shims, and `tentaqles open`, start the client's browser with its profile | `TestBrowserShims`, `TestOpen_UsesTheClientsProfile`, `TestOpen_Refusals` |
@@ -27,14 +31,26 @@ opened in the wrong browser profile.
 
 - **It is not a sandbox.** Every client's files and logins are readable by your user, and so by any program you
   run, Claude Code included. A CLI run by its full path, a script, or a different shell gets past the PATH mask.
-- **The hook reads text.** It checks the command line Claude Code is about to run. A command spelled to hide what it
-  does (a variable, an alias, `sh -c`, a script file) gets past it. It only checks shell commands; it doesn't see
-  file edits or MCP tools.
+- **The hook reads text.** It checks the command line Claude Code is about to run, and only shell commands (Bash and
+  PowerShell); it doesn't see file edits or MCP tools. A command spelled to hide what it does (a variable, an alias,
+  a script file) gets past it. A `gh` or cloud command wrapped in `sh -c`, `pwsh -Command`, `cmd /c` or `iex`
+  gets past it too; a git call wrapped that way is read, three levels deep.
+- **A failed lookup allows.** The `gh-user` rule asks `gh` for the active user with a 4-second limit; when the
+  lookup fails or times out, the call is allowed.
+- **"Inside Claude Code" is a convenience check, not a boundary.** The refusals of `reach`, `add`, `remove`,
+  `drop` and of another client's `tentaqles run` read the `CLAUDECODE` variable Claude Code sets for the commands it
+  runs. A session can unset it.
+- **Sessions start without Claude Code's permission prompts.** `tentaqles run <client> -- claude`, and the `claude`
+  launcher the shell hook defines, add `--dangerously-skip-permissions` unless the command line sets a permission
+  mode, runs a `claude` subcommand, or asks for `--help` or `--version` (`TestLaunchClaudeArgs`). The hook is the
+  check that remains; a `claude` started from inside a session gets no such flag.
+- **`tentaqles drop` deletes logins for good.** The client's identity folder, with every CLI's login and its Claude
+  config, is deleted after the typed name; nothing keeps a copy.
 - **Nothing is signed.** The manifests, the shell profile blocks and the client's Claude settings are files your
   user can edit, and so can an agent. An edited manifest takes effect at the next prompt.
 - **Some logins are shared by the CLI itself.** `aws sso login` caches tokens in `~/.aws/sso/cache`, the token from
   `terraform login` lives in the shared `terraform.d` folder, and `acli` keeps one login per machine. The catalog
-  says so in each provider's `caveat` or `notes`.
+  says so in each provider's `caveat` or `notes` ([providers](reference/providers.md)).
 - **MCP servers and claude.ai connectors** are whatever the client's Claude config holds; tentaqles neither adds
   nor removes them.
 

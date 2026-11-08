@@ -53,7 +53,7 @@ type GuardHook struct {
 // CheckGuardHook reads the Claude config dir claudeDir (an identity's own) and says whether a
 // session that loads only it runs tq's guard: settings.json does not set disableAllHooks, the
 // tentaqles plugin is installed and enabled (enabledPlugins), and the plugin's hooks/hooks.json
-// has a PreToolUse command hook that runs tq_hook.sh pre-tool-use, for Bash and for MCP tools.
+// has a PreToolUse command hook that runs tq_hook.sh pre-tool-use, for Bash and PowerShell.
 // Anything it cannot read counts as missing: the check fails closed. It reads a few small files
 // and runs no process. CheckSessionGuard adds the project's settings.
 func CheckGuardHook(claudeDir string) GuardHook {
@@ -102,8 +102,8 @@ var projectSettingsFiles = []string{filepath.Join(".claude", "settings.json"), f
 
 // CheckSessionGuard is CheckGuardHook for a session that runs in cwd inside the client folder root:
 // Claude Code merges the project settings of each folder from cwd up to root into the identity's,
-// so a disableAllHooks or a tentaqles entry set off there turns the guard off for that session
-// (REQ-8). A project file that cannot be read as JSON counts as off, and is named. A cwd that cannot
+// so a disableAllHooks or a tentaqles entry set off there turns the guard off for that session.
+// A project file that cannot be read as JSON counts as off, and is named. A cwd that cannot
 // be resolved is refused: its project settings cannot be read.
 func CheckSessionGuard(claudeDir, cwd, root string) GuardHook {
 	g := CheckGuardHook(claudeDir)
@@ -263,7 +263,7 @@ func resolveLinks(p string, depth int) (string, error) {
 }
 
 // preToolUseRunsGuard reports whether a hooks.json document has a PreToolUse entry whose matcher
-// covers Bash and an MCP tool and whose command hook runs tq_hook.sh pre-tool-use.
+// covers Bash and PowerShell and whose command hook runs tq_hook.sh pre-tool-use.
 func preToolUseRunsGuard(raw []byte) bool {
 	var doc struct {
 		Hooks struct {
@@ -314,11 +314,10 @@ func runsGuardCommand(command string) bool {
 }
 
 // GuardHookFix is the sequence of lines that gets a developer a guarded session for workspace ws,
-// each one copyable and run in order: the plugin install when it is missing (with its marketplace
-// and the record's re-sign), the enable when it is off, a fresh install (uninstall, re-sign, install)
-// when its hooks file is not the guard, or, for a settings file, the switch to clear or the file to
-// repair, and what follows the edit (a re-sign for the identity's settings, which the record covers;
-// a new session for a project's). The plugin install line is exact (REQ-5).
+// each one copyable and run in order: the plugin install when it is missing (with its marketplace),
+// the enable when it is off, a fresh install (uninstall, install) when its hooks file is not the
+// guard, or, for a settings file, the switch to clear or the file to repair, and the session to start
+// after the edit. The plugin install line is exact.
 func GuardHookFix(ws string, g GuardHook) []string {
 	switch {
 	case g.NoConfig:

@@ -5,6 +5,17 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **Docs rebuilt.** The README says what tentaqles is for, shows it working, and gets you to a first client in three
+  steps. `docs/` has an index, a getting-started tutorial, a how-it-works page, troubleshooting for every doctor
+  finding, and references for commands, the manifest, providers and the Claude Code hook, all checked against the
+  code. Tests fail when a command has no section in the reference, a docs link is broken, or a page is missing from
+  the index.
+- The hook compares `gh` with `git.expected_user` only for a GitHub client: on Azure DevOps that key is an email,
+  and every `gh` command was blocked.
+- The session-start `Git:` line no longer prints an empty user.
+- `tentaqles doctor` drops the Python-alias check (the plugin runs no Python), and `identity-dir-missing` names the
+  folder to create.
+
 ## [0.13.1] - 2026-11-08
 
 - A manifest holds only what tentaqles reads: `git.host` and the per-identity `share_capabilities`,

@@ -77,7 +77,6 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	// section below can tell a hand-written includeIf that duplicates tq's
 	// managed include file from an unrelated one.
 	wsGitFile := map[string]string{}
-	pythonStoreAlias(d.LookPath, runtime.GOOS, add)
 	for _, w := range all {
 		browserChecks(&w, add)
 		claudeChecks(&w, add)
@@ -93,7 +92,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		for _, id := range w.Manifest.IdentityNames() {
 			dir := paths.IdentityDir(w.Name, id)
 			if _, err := os.Stat(dir); err != nil {
-				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "mkdir it")
+				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "create "+dir+", then log in: tentaqles login "+w.Name+" "+id)
 			} else if id == "claude" && runtime.GOOS != "darwin" {
 				if _, err := os.Stat(filepath.Join(dir, ".credentials.json")); err != nil {
 					add("warn", "claude-not-logged-in", w.Name, "no Claude credentials in "+dir, "tentaqles login "+w.Name+" claude")
@@ -127,7 +126,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 	} // git global — only meaningful if git is actually installed.
 	if _, err := d.LookPath("git"); err != nil {
-		add("error", "git-missing", "", "git not found on PATH: tq cannot enforce per-workspace git identity", "install git, then re-run tentaqles doctor")
+		add("error", "git-missing", "", "git not found on PATH: tentaqles cannot apply each client's git identity", "install git, then re-run tentaqles doctor")
 	} else {
 		inc, _ := d.RunGit("config", "--global", "--get-all", "include.path")
 		if !strings.Contains(filepath.ToSlash(inc), filepath.ToSlash(gitcfg.IncludeFile())) {

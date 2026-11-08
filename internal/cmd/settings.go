@@ -30,8 +30,9 @@ func newSettingsRenderCmd() *cobra.Command {
 		Short: "Write each client's Claude settings, PATH mask and browser shims",
 		Long: `Brings each client's files in line with its manifest:
 
-  - its Claude settings.json: the manifest's claude.env and the tq status line
-    (which replaces only an unpinned npx status line);
+  - its Claude settings.json: the manifest's claude.env, the client's language and the
+    tentaqles status line (which replaces a missing status line, an @latest or ccstatusline
+    command, or a previous tentaqles one; any other status line stays);
   - its PATH mask: a stub for each CLI of a provider outside its scope;
   - its browser shims, when the client lists a browser.
 

@@ -4,6 +4,9 @@ Notable changes to the Tentaqles plugin. Versions follow [semver](https://semver
 
 ## [Unreleased]
 
+- The README describes the session-start preamble in full; a comment in `scripts/tq_hook.sh` no longer names a
+  removed plan step. No behaviour change.
+
 ## [0.17.0] - 2026-11-08
 
 - **The plugin is the identity check.** Its PreToolUse hook, on `^(Bash|PowerShell)$`, runs

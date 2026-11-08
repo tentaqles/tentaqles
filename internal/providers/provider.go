@@ -164,9 +164,9 @@ func (p Provider) Validate() error {
 }
 
 // installMetachars are the shell metacharacters an install hint must never
-// contain. Install hints are surfaced verbatim to the user and can be run by
-// the desktop app's "Install" button, so a hint like
-// "winget install x & calc" must not be able to smuggle in a second command.
+// contain. Install hints are shown verbatim to the user, who may paste them
+// into a shell, so a hint like "winget install x & calc" must not be able to
+// smuggle in a second command.
 const installMetachars = "&|;^<>$`\n\r\"'"
 
 // validate checks the runnable install hints for shell metacharacters. URL is
