@@ -19,7 +19,7 @@ func newVersionCmd() *cobra.Command {
 			if commit == "" {
 				commit = "unknown (dev build)"
 			}
-			_, err := fmt.Fprintf(c.OutOrStdout(), "tq %s (commit %s)\n", Version, commit)
+			_, err := fmt.Fprintf(c.OutOrStdout(), "tentaqles %s (commit %s)\n", Version, commit)
 			return err
 		},
 	}

@@ -1,6 +1,6 @@
 {
   "name": "tentaqles",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "The Tentaqles identity check for Claude Code: blocks a git, gh or cloud command that would run under another client's identity, and states the client at session start.",
   "author": {
     "name": "Tentaqles",
