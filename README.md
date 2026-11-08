@@ -80,6 +80,9 @@ tentaqles remove gh
 tentaqles add cloud aws --client acme
 ```
 
+To undo a client completely, `tentaqles drop acme` deletes everything tentaqles set up for it, logins included,
+and leaves your files in the folder.
+
 ## Commands
 
 See [docs/COMMANDS.md](docs/COMMANDS.md).
