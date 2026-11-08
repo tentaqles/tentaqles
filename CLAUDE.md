@@ -14,11 +14,12 @@ wrong identity.
 ## Layout
 
 - `cmd/tentaqles/`, `cmd/tq/`: one program under two names; the release builds `./cmd/tentaqles` as both.
-- `internal/cmd/`: every command (`root.go` registers them): `reach`, `env`, `activate`, `hooks`, `run`, `login`,
+- `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `env`, `activate`, `hooks`, `run`, `login`,
   `open`, `settings render`, `statusline`, `doctor`, `list`, `providers`, `version`, `claude-hook`.
   `claudehook.go` is the hook (`session-start`, `pre-tool-use`); `render.go` writes the PATH mask and the browser
   shims.
-- `internal/reach/`: the form's options and answers, and `Edit`, which changes only the keys the form owns.
+- `internal/reach/`: the form's options and answers, `Change` (what `add`/`remove` mean), and `Edit`, which
+  changes only the keys the form owns.
 - `internal/workspace/`: creates a client (manifest, marker, identity folders, git include).
 - `internal/resolve/`: maps a folder to its client (marker in the folder, manifest under `~/.tentaqles`).
 - `internal/manifest/`, `internal/registry/` (the clients folders), `internal/paths/`.
@@ -60,7 +61,8 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
   `TestRunOtherClient_HumanAllowed`.
 - reach writes nothing before a typed yes, and an edit changes only the keys the form owns:
   `TestReach_ConfirmsBeforeWriting`, `TestReach_ExistingClientDeclinedChangesNothing`, `TestEdit_Providers`,
-  `TestEdit_NoChangeIsTheSameBytes`.
+  `TestEdit_NoChangeIsTheSameBytes`, `TestChange_DeclinedWritesNothing`, `TestChange_Refusals`,
+  `TestEdit_DropsAnImpliedIdentity`.
 - A copied marker or manifest lends a folder nothing: `TestResolve_MarkerOrManifestOfAnotherClient`.
 - A client with browsers opens links in its own profile: `TestBrowserShims`, `TestOpen_UsesTheClientsProfile`,
   `TestOpen_Refusals`.

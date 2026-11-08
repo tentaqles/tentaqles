@@ -72,7 +72,13 @@ provider and browser profile. After you type `yes` it:
 Then open a new terminal in `~/clients/acme`, start `claude` and log in with the client's account. Log each CLI in
 once inside that terminal, or with `tentaqles login acme gh`, and the login stays the client's.
 
-Run `tentaqles reach` again in the same folder to change the client's providers, browser or email.
+To change the client later, run `tentaqles reach` again in its folder for the menu, or change one thing directly:
+
+```sh
+tentaqles add git azure-devops
+tentaqles remove gh
+tentaqles add cloud aws --client acme
+```
 
 ## Commands
 
