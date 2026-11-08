@@ -394,8 +394,11 @@ func reachHooks(c *cobra.Command, shells []hooks.Shell, p hooks.Profiles) {
 			fmt.Fprintf(w, "Warning: %s: the tq activation block could not be written: %v. A new %s terminal would not carry the client's identity.\n", sh, err, sh)
 			continue
 		}
-		if (before == "missing" || before == "no profile") && st.State == "installed" {
-			fmt.Fprintf(w, "The tq activation block is in %s.\n", st.Profile)
+		switch {
+		case (before == "missing" || before == "no profile") && st.State == "installed":
+			fmt.Fprintf(w, "The tentaqles activation block is in %s.\n", st.Profile)
+		case before == "outdated" && st.State == "installed":
+			fmt.Fprintf(w, "The tentaqles activation block in %s is updated.\n", st.Profile)
 		}
 	}
 }

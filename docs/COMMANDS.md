@@ -46,8 +46,10 @@ runs `aws sso login --sso-session NAME`. Logging in from a client's terminal doe
 
 ### The shell hook: `tentaqles hooks install|remove|status`, `tentaqles activate <shell>`, `tentaqles env`
 
-`tentaqles hooks install [shell...]` (or `--all-detected`) adds the activation block to your shell profiles; `remove`
-takes it out; `status` shows each shell's profile and state. Shells: bash, zsh, fish, PowerShell, pwsh, and cmd
+`tentaqles hooks install [shell...]` (or `--all-detected`) adds the activation block to your shell profiles, and
+rewrites a block an older version wrote (`tq activate`, shown as `outdated`) to call `tentaqles activate`; a
+backup of the profile as it was is kept beside it (`.tq-backup`). `remove` takes the block out; `status` shows
+each shell's profile and state. Shells: bash, zsh, fish, PowerShell, pwsh, and cmd
 (through `tentaqles activate cmd`). `tentaqles activate <shell>` prints the block to add by hand.
 
 At every prompt the hook runs `tentaqles env`, which prints the changes for the current folder:

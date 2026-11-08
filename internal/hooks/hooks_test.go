@@ -28,8 +28,8 @@ func TestBlock_Contents(t *testing.T) {
 		if !strings.Contains(b, "# <<< tq <<<") {
 			t.Errorf("%s: missing end marker", sh)
 		}
-		if !strings.Contains(b, "tq activate "+string(sh)) {
-			t.Errorf("%s: missing activate call", sh)
+		if !strings.Contains(b, "tentaqles activate "+string(sh)) || strings.Contains(b, "tq activate") {
+			t.Errorf("%s: the block must call tentaqles activate", sh)
 		}
 		if !strings.Contains(b, "TQ_ENABLED") {
 			t.Errorf("%s: missing TQ_ENABLED guard", sh)
@@ -512,5 +512,41 @@ func TestWriteProfile_RestoresOnFailure(t *testing.T) {
 
 	if _, serr := os.Stat(tmp); serr != nil {
 		t.Errorf("tmp file should still exist for manual recovery, stat err = %v", serr)
+	}
+}
+
+// A block an older tq wrote (calling tq activate) reads as outdated, and Install rewrites it in
+// place: the lines around it, the CRLF line ends and the backup stay; a second Install changes
+// nothing.
+func TestInstall_UpgradesAnOldBlockInPlace(t *testing.T) {
+	dir := t.TempDir()
+	profile := filepath.Join(dir, "Microsoft.PowerShell_profile.ps1")
+	old := "# >>> tq >>>\r\nif ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue)) { tq activate pwsh | Out-String | Invoke-Expression }\r\n# <<< tq <<<\r\n"
+	before := "Set-Alias ll Get-ChildItem\r\n\r\n"
+	after := "\r\nfunction prompt-extra { 'x' }\r\n"
+	if err := os.WriteFile(profile, []byte(before+old+after), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := Profiles{"pwsh": profile}
+	if st := StatusOf("pwsh", p); st.State != "outdated" {
+		t.Fatalf("state = %q, want outdated", st.State)
+	}
+	st, err := Install("pwsh", p)
+	if err != nil || st.State != "installed" {
+		t.Fatalf("Install = %+v %v", st, err)
+	}
+	b, _ := os.ReadFile(profile)
+	want := before + strings.ReplaceAll(Block("pwsh"), "\n", "\r\n") + after
+	if string(b) != want {
+		t.Fatalf("profile after upgrade:\n%q\nwant:\n%q", b, want)
+	}
+	if bak, err := os.ReadFile(profile + backupSuffix); err != nil || string(bak) != before+old+after {
+		t.Fatalf("backup: %v %q", err, bak)
+	}
+	if _, err := Install("pwsh", p); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(profile); string(again) != want {
+		t.Fatal("a second Install changed the profile")
 	}
 }

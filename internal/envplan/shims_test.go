@@ -54,6 +54,9 @@ func TestBrowserShims(t *testing.T) {
 		{MSYSSyntax(msys, strings.Join([]string{azDir, toolsDir}, ";")), msys},
 	}
 	for _, c := range cases {
+		if c.syn.Sep == ":" && runtime.GOOS != "windows" && c.path == msys {
+			continue // Git Bash's PATH syntax exists on Windows only
+		}
 		syn := c.syn
 		orig := map[string]string{"PATH": c.path, "BROWSER": "firefox", "HOME": "/home/me"}
 		sh := map[string]string{}

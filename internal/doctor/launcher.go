@@ -31,7 +31,7 @@ var shellFuncRe = map[string]*regexp.Regexp{
 }
 
 // activationRe finds the line that runs tentaqles activate (or tq's managed block).
-var activationRe = regexp.MustCompile(`(?m)^.*(?:tq(?:\.exe)?["']?[ \t]+activate\b|# <<< tq <<<).*$`)
+var activationRe = regexp.MustCompile(`(?m)^.*(?:(?:tq|tentaqles)(?:\.exe)?["']?[ \t]+activate\b|# <<< tq <<<).*$`)
 
 // legacyBlockRe is a preserved pre-tq setup an older tq left in a profile; it runs only
 // under TQ_ENABLED=0, so its functions do not shadow the launcher.

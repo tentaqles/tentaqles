@@ -23,7 +23,8 @@ with how often vendors change their URLs and sign-in methods.
   unset. Leaving the folder restores what was there.
 - **Every command is `tentaqles <command>`**, with `tq <command>` as its alias: the release ships both binaries
   (the same bytes), the installers install both, the shell hook defines both functions, and every help text,
-  message and fix line names the `tentaqles` form.
+  message and fix line names the `tentaqles` form. The profile block calls `tentaqles activate`; `tentaqles hooks
+  install` (and `reach`) rewrites a block an older version wrote in place, keeping a backup of the profile.
 - **The plugin's hook** runs on Bash and PowerShell calls only, and blocks a command under the wrong identity: a
   manifest's blocked commands, the wrong cloud, a remote command outside every client folder, a stale shell, the
   wrong `CLAUDE_CONFIG_DIR`, git email or gh user.

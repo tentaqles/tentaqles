@@ -74,7 +74,18 @@ func installFakeBrowsers(t *testing.T, missing ...string) *fakeBrowsers {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(t.TempDir(), "fakebin")
+	// Not under t.TempDir: a fake browser started detached may still be running when the test ends,
+	// and Windows cannot delete a running program, which fails t.TempDir's cleanup.
+	top, err := os.MkdirTemp("", "tq-fake-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 50 && os.RemoveAll(top) != nil; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	dir := filepath.Join(top, "fakebin") // isFakeBrowser knows the fake by this folder name
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +440,18 @@ func TestBrowserShims_WebURLNeverReachesTheRealProgram(t *testing.T) {
 	if c := run("open", "https://a.example", "https://b.example"); c != 0 {
 		t.Fatalf("two URLs: exit %d", c)
 	}
-	expect(fakeRun{"chrome-fake", []string{profile2, "https://a.example"}}, fakeRun{"chrome-fake", []string{profile2, "https://b.example"}})
+	// Two URLs start two browser processes at once: their runs may land in either order.
+	want = append(want, fakeRun{"chrome-fake", []string{profile2, "https://a.example"}}, fakeRun{"chrome-fake", []string{profile2, "https://b.example"}})
+	if got := fake.runs(len(want)); len(got) != len(want) {
+		t.Fatalf("runs = %+v, want %+v", got, want)
+	} else {
+		pair := []string{got[len(got)-2].Args[1], got[len(got)-1].Args[1]}
+		slices.Sort(pair)
+		if !slices.Equal(pair, []string{"https://a.example", "https://b.example"}) || got[len(got)-2].Args[0] != profile2 || got[len(got)-1].Args[0] != profile2 {
+			t.Fatalf("two URLs: %+v", got[len(got)-2:])
+		}
+		want = got
+	}
 	if c := run("open", "-g", "https://a.example"); c != 0 {
 		t.Fatalf("a flag: exit %d", c)
 	}
