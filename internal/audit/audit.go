@@ -55,7 +55,7 @@ type Denial struct {
 	// (the payload names an agent), or for a human-only refusal what the
 	// detector found (no-tty, harness).
 	Caller string `json:"caller,omitempty"`
-	// Harness is the agent the hook answered (claude, codex).
+	// Harness is the agent the hook answered (claude).
 	Harness  string `json:"harness,omitempty"`
 	Tool     string `json:"tool,omitempty"`
 	Command  string `json:"command"`

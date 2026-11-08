@@ -200,7 +200,7 @@ The same lists drive the layers before the hook (ADR-0008):
 |---|---|---|
 | `executables` | PATH (`tq env`, `tq run`) | a PATH folder holding only these is dropped; a shared folder is kept and the identity's `path-mask/` stub answers `command not found` (exit 127) |
 | `env` | environment (`tq env`, `tq run`) | unset in the identity terminal and launches, restored on leaving (`TF_TOKEN_*` unsets every match) |
-| `mcp`, `mcp_packages`, `images`, `hosts`, `env`, `executables` | harness config (`tq settings render`) and the hook | an MCP server whose name token, package or image (`command`/`args`), `env` key, `url` host or `command` is the provider's is removed from the identity's `.claude.json` and Codex `config.toml` (kept in `mcp-out-of-scope.json`), and its `mcp__<server>__*` tools are denied |
+| `mcp`, `mcp_packages`, `images`, `hosts`, `env`, `executables` | harness config (`tq settings render`) and the hook | an MCP server whose name token, package or image (`command`/`args`), `env` key, `url` host or `command` is the provider's is removed from the identity's `.claude.json` (kept in `mcp-out-of-scope.json`), and its `mcp__<server>__*` tools are denied |
 
 `mcp_packages` (ADR-0008) lists prefixes of what an MCP server's config runs:
 `awslabs.`, `@aws/`, `public.ecr.aws/awslabs/`, `@modelcontextprotocol/server-github`,

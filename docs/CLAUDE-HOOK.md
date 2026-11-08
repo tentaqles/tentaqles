@@ -16,7 +16,7 @@ ADR-0006).
 ## Subcommands
 
 - `tq claude-hook session-start` — prints a short identity/status preamble. Never blocks (always exits 0).
-- `tq claude-hook pre-tool-use` — decides whether to allow or block a tool call: shell commands (Bash, PowerShell), file reads and edits, and MCP tool calls. Exits 0 (allow) or 2 (block). `--agent codex` answers in Codex's format (see `CLAUDE-SETTINGS.md`, "Codex").
+- `tq claude-hook pre-tool-use` — decides whether to allow or block a tool call: shell commands (Bash, PowerShell), file reads and edits, and MCP tool calls. Exits 0 (allow) or 2 (block). An old Codex hook file's `--agent codex` is denied as `tq/guard-error`.
 
 Both subcommands read a single JSON payload from stdin — the same shape
 Claude Code sends its own hooks.
@@ -79,13 +79,12 @@ on stderr and exit 2 (ADR-0006):
 |---|---|
 | a payload that cannot be read (see above) | `the hook payload cannot be read (...)`, `the hook payload names no tool` |
 | a panic in tq's own analysis (`tq: guard panic: …` on stderr too) | `tq guard error (...)` |
-| a decision that takes longer than 6 s; a tq process still running after 7 s (the process watchdog, also under Codex's bare hook command); a tq that `tq_hook.sh` stops (TERM at 7 s, KILL at 8 s), at least 5 s under the hook timeout because Git Bash forks are slow. All under the harness's own hook timeout (15 s Claude, 30 s Codex), since Claude Code and Codex run a call whose hook they killed (`TestHookDeadlinesUnderHarnessTimeouts` pins the order) | `the guard did not decide within 6s`, `tq did not answer within 7s`, `tq exited with status …` |
+| a decision that takes longer than 6 s; a tq process still running after 7 s (the process watchdog); a tq that `tq_hook.sh` stops (TERM at 7 s, KILL at 8 s), at least 5 s under the hook timeout because Git Bash forks are slow. All under Claude Code's own hook timeout (15 s), since Claude Code runs a call whose hook it killed (`TestHookDeadlinesUnderHarnessTimeouts` pins the order) | `the guard did not decide within 6s`, `tq did not answer within 7s`, `tq exited with status …` |
 | a usage error of `tq claude-hook pre-tool-use` (an unknown flag) | `tq could not run the hook (...)` |
 | a field tq cannot judge: a shell tool with no string `command`, a path field that is not a string, a Read naming no file, invalid UTF-8, and a tool tq does not know (or a lower-case `bash`) whose input carries a `command`, `file_path`, `notebook_path`, `path` or `pattern`. An unknown tool with none of these (a WebFetch-like tool) is allowed | `the hook payload cannot be judged (...)` |
 | `~/.tentaqles/config.yaml` cannot be read or parsed | `tq cannot read its registry (...)` |
 | the folder carries tq's marker or manifest but tq cannot read a usable manifest (a marker without its protected copy, a manifest that does not parse or validate) — every tool, until a human fixes it | `the manifest of identity <name> cannot be read (...)` |
 | tq's own evidence says the folder is an identity whose manifest is gone: a registered folder with no marker or manifest left while `trust/<name>.json` (not a tombstone) or the protected manifest exists, and a folder under no registered base (a missing `config.yaml`) that a signed record names as its root | `... has a signed record ...`, `... names it as its root` |
-| a Codex patch tq cannot parse, or one too big to judge in the budget | the parse error, or `split the patch` |
 
 A commit whose secret scan cannot finish is denied by its own rule,
 `BLOCKED [secrets/tq/commit-secret]: the secret scan ...; tq denies a commit
@@ -428,7 +427,7 @@ If no `tq` binary can be found or run:
   blocked with `BLOCKED [self-protection/tq/protected-path]`. It does not
   know the root marker or the human-only tq commands (tq is not installed).
 
-The off launchers (`claude-off`, `codex-off`, `tq run --off -- claude`)
+The off launchers (`claude-off`, `tq run --off -- claude`)
 start the agent outside tq with the plugin switched off, so neither the
 hook nor the fallback runs there.
 
@@ -523,7 +522,7 @@ text, and a glob matches what it could expand to (`rm -rf ~/.tentaqles/*`).
 
 | id | denies |
 |---|---|
-| `tq/protected-path` | a Read, Grep (a Grep with no path searches the cwd) or NotebookRead of tq's state; a Write, Edit, MultiEdit or NotebookEdit of any protected path, also file by file in a Codex `apply_patch`; an `mcp__*` call whose input carries a string that resolves to a protected path; in the shell, a redirect (`>`, `>>`, `1>`, `2>`, `&>`) to a protected path, a copy, move, delete, `mkdir`/`New-Item`, permission or ACL change (`chmod`, `chown`, `icacls`, `attrib`, `chattr`, `chflags`), link (`ln`, `mklink`), `truncate`, `tee`, `Out-File`, `Set-Content`, `Add-Content`, `sed -i` or `perl -i` with a protected argument, a read (`cat`, `type`, `Get-Content`, `less`, `head`, `tail`, `grep`, `findstr`, `source`, a `<` redirect) of tq's state, `python -c`, `node -e`, `perl -e` and the like whose code names a protected path, a PowerShell `[IO.File]::...` call on a line that names one, `git -C`/`--git-dir`/`--work-tree` at a protected path or a protected path argument of a git sub-command that writes, a `cd` into a protected folder followed by a write (`cd ~/.tentaqles && git init`), and `cmdkey /generic:`/`/add:`/`/delete:`, `security add-generic-password`/`delete-generic-password -s` or `secret-tool store`/`clear service` naming `tentaqles` |
+| `tq/protected-path` | a Read, Grep (a Grep with no path searches the cwd) or NotebookRead of tq's state; a Write, Edit, MultiEdit or NotebookEdit of any protected path; an `mcp__*` call whose input carries a string that resolves to a protected path; in the shell, a redirect (`>`, `>>`, `1>`, `2>`, `&>`) to a protected path, a copy, move, delete, `mkdir`/`New-Item`, permission or ACL change (`chmod`, `chown`, `icacls`, `attrib`, `chattr`, `chflags`), link (`ln`, `mklink`), `truncate`, `tee`, `Out-File`, `Set-Content`, `Add-Content`, `sed -i` or `perl -i` with a protected argument, a read (`cat`, `type`, `Get-Content`, `less`, `head`, `tail`, `grep`, `findstr`, `source`, a `<` redirect) of tq's state, `python -c`, `node -e`, `perl -e` and the like whose code names a protected path, a PowerShell `[IO.File]::...` call on a line that names one, `git -C`/`--git-dir`/`--work-tree` at a protected path or a protected path argument of a git sub-command that writes, a `cd` into a protected folder followed by a write (`cd ~/.tentaqles && git init`), a recursive search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) run from inside a read-denied protected folder (the cwd, or the folder a `cd` went to), whatever root it names or none, and `cmdkey /generic:`/`/add:`/`/delete:`, `security add-generic-password`/`delete-generic-password -s` or `secret-tool store`/`clear service` naming `tentaqles` |
 | `tq/human-only-command` | a shell line that runs tq (`tq`, `tq.exe`, any path to it, `go run ./cmd/tq`, also behind `sudo`, `env` or a nested `bash -c`/`cmd /c`) with a human-only verb: `init`, `add`, `edit`, `off`, `allow`, `deny`, `trust`, `hooks install`/`remove`, `hooks verify --accept`, `settings render` (not `--dry-run`), `settings anchors add`/`remove`, `bundle sync`/`capture`, `migrate --apply`, `uninstall`, `setup`, `onboard`, `secret set`/`rm`, `providers add`, `login`, `run --off`, `worktrees prune`. The commands refuse a session on their own too (ADR-0003); the hook denies them before they run |
 
 Allowed: reading the marker, the plugin's files and the binary; `ls` of the
@@ -558,7 +557,7 @@ their refusals to (PRD v2 §7.3, ADR-0006):
 | `rule` | the rule id |
 | `layer` | `hook`; `filesystem` for `tq/protected-path`; `human-only` for a tq command's own refusal; `command` for a refusal by a tq command the agent ran (`tentaqles install` or `tentaqles connect` outside the scope) |
 | `caller` | `harness` (the main session) or `subagent` (the payload carries `agent_id`/`agent_type`); for a human-only refusal `harness` or `no-tty`; for the scope refusal of `tentaqles install` or `connect` `harness`, `no-tty` or `human` (a person at a terminal) |
-| `harness` | `claude` or `codex` |
+| `harness` | `claude` |
 | `tool` | the tool name |
 | `command` | the shell line, redacted (below); a file tool's path; for an MCP call or a patch the tool name, never the input or the content |
 | `subject` | the one path or token the deny named (the protected path, the human-only verb) |
@@ -626,6 +625,6 @@ write changes them. The only switches are trust and the off launchers:
   Both refuse a session (an agent marker, a harness in the process tree, a
   non-terminal stdin or stdout) and ask you to type `yes` before the trust
   changes, so a session cannot trust a folder itself (ADR-0003).
-- `claude-off` / `codex-off` (`tq run --off -- claude`) start the agent
+- `claude-off` (`tq run --off -- claude`) starts the agent
   outside tq with the plugin switched off: main logins, no identity env, no
-  hook. Use them for tq-free work, never for client work.
+  hook. Use it for tq-free work, never for client work.

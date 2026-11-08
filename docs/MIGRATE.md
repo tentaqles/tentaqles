@@ -258,8 +258,7 @@ editing the marker changes nothing about the trust hash.
 The step also brings the trust record up to date (ADR-0004). Trust is now a
 signed integrity record, `~/.tentaqles/trust/<name>.json`, over the manifest
 and the files that make the hook run (the marker, the enforcing keys of the
-Claude `settings.json`, the installed plugin's hooks and scripts, the Codex
-hook files, the shims). Older versions wrote an empty marker,
+Claude `settings.json`, the installed plugin's hooks and scripts, the shims). Older versions wrote an empty marker,
 `~/.tentaqles/trust/<hash>` (keyed by the manifest's bytes alone) or
 `~/.tentaqles/trust/<name>/<hash>`. Those markers count until the first
 signature on the machine; that signature takes a signed snapshot of them,
@@ -411,7 +410,7 @@ migration.
 `TQ_ENABLED=0` has one meaning: no shell activation (no `tq env`, no
 identity on the prompt). The Claude Code hooks and the plugin's skill scripts
 still run under it, so a `claude` started from such a shell is still
-guarded. For one tq-free launch use `claude-off` / `codex-off`
+guarded. For one tq-free launch use `claude-off`
 (`tq run --off -- claude`, see `CLAUDE-HOOK.md`, "Turning rules on and
 off"): the plugin is switched off for that process and the identity env is
 cleaned; nothing is stored and no variable is set.
@@ -442,7 +441,7 @@ Install the new `tq` (the installer replaces the binary), then:
 - **Trust is a signed record (ADR-0004).** `tq allow <ws>` signs
   `~/.tentaqles/trust/<ws>.json` over the manifest, the marker, the enforcing
   keys of the identity's Claude `settings.json`, the installed plugin's hooks
-  and scripts, the Codex hook files and the shims; the key lives in the OS
+  and scripts and the shims; the key lives in the OS
   keychain (`tentaqles` / `integrity-key`), or in `~/.tentaqles/integrity.key`
   when the keychain is unavailable (`tq doctor`: `integrity-key-file`). A
   marker an older `tq` wrote still counts until `tq allow <ws>` or `tq migrate
@@ -452,7 +451,7 @@ Install the new `tq` (the installer replaces the binary), then:
   plugin (a new version folder) or changing a covered file makes the workspace
   untrusted until you read `tq hooks verify <ws>` and run `tq hooks verify
   --accept <ws>` (human-only, with a confirmation): no identity in the shell,
-  no `claude`/`codex` launch, no mutating git or remote command from the hook,
+  no `claude` launch, no mutating git or remote command from the hook,
   one line at every prompt meanwhile. After a plugin update, `tq hooks verify
   --accept --all` lists every workspace whose only change is the new version
   and whose new plugin folder is, byte for byte, the release this tq was built
@@ -467,17 +466,17 @@ Install the new `tq` (the installer replaces the binary), then:
   Claude settings, removing the permission settings an earlier tq wrote
   there (the `permissions` entries it recorded, its `defaultMode` and
   `skipDangerousModePermissionPrompt`; your own entries stay, see
-  [CLAUDE-SETTINGS.md](CLAUDE-SETTINGS.md)), removes the marked block an
-  earlier tq wrote at the head of the Codex `config.toml` and the other
-  files it wrote into the Codex identity, and signs the record again. Trust
-  tq's hook again in Codex's `/hooks` if it asks.
+  [CLAUDE-SETTINGS.md](CLAUDE-SETTINGS.md)), and signs the record again. tq no
+  longer touches a Codex identity (ADR-0013): what an earlier tq wrote there
+  stays until you delete it, and an old Codex `hooks.json` that calls
+  `--agent codex` is denied as `tq/guard-error`.
 - **The state folder** (`~/.tentaqles`): folders tq does not use are left
   in place and never deleted; `tq doctor` lists them as `state-dir-unused`
   (a warning); remove them yourself. Tokens in the keychain stay usable
   through `tq secret`.
-- **The launchers** `claude-off` and `codex-off` (`tq run --off`) start the
-  agent with the plugin switched off and the identity env cleaned; they set
-  no variable, and they are human-only: refused from a session, a non-terminal
+- **The launcher** `claude-off` (`tq run --off`) starts the
+  agent with the plugin switched off and the identity env cleaned; it sets
+  no variable, and it is human-only: refused from a session, a non-terminal
   stdin or stdout, or under a harness in the process tree, and confirmed by
   you before the launch (ADR-0003).
 

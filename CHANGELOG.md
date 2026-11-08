@@ -87,7 +87,7 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   (`gh`, `linear`, `asana`, `jira`), in the client's `.claude.json`. It is the one command an agent may
   run that writes the Claude config, so it is narrow: the provider and nothing else, in the client's
   scope, in a trusted client, logged to `connections.jsonl`. A refusal for a provider outside the scope
-  is in the denial log.
+  is in the denial log (layer `command`).
 - The catalog schema gains `connect:`. Only the embedded catalog defines it: a user provider file with a
   `connect:` key is not loaded.
 - An identity's `.claude.json` and every other copy of its MCP entries (`backups/.claude.json*`,
@@ -100,6 +100,8 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
   wrote for a provider in the identity's scope, when another client's bundle has the same name. Only
   that entry is exempt: a same-named server with any other entry (in `.claude.json` or a `.mcp.json`
   in the folder) is still denied, and so is any server when the config cannot be read (ADR-0017).
+  An entry an earlier `tq settings render` removed while the provider was out of scope no longer keeps
+  the connected server denied once the provider is in scope: only the live sources count.
 - The hook denies a recursive search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) run from
   inside a protected folder, such as the identity's `backups/` folder, whatever root it names
   (`tq/protected-path`).

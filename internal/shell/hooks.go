@@ -11,7 +11,7 @@ import (
 var hookFS embed.FS
 
 // Hook returns the shell snippet users eval in their profile, calling this
-// tq binary by its absolute path (so the tq, claude and codex functions it
+// tq binary by its absolute path (so the tq and claude functions it
 // defines never recurse into themselves). When the path is unknown it calls
 // the tq program found on PATH, never a function or alias named tq.
 func Hook(sh string) (string, error) {

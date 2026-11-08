@@ -371,13 +371,17 @@ func connectEntries(scope []string, server string) []map[string]any {
 // in ws's scope: every entry of that name the harness loads (mcpscope.Entries: the identity's
 // .claude.json, and the .mcp.json files from cwd up to the root) equals the catalog's entry, and
 // at least one entry is there. A source that cannot be read leaves no exemption, and so does a
-// name with no catalog entry in scope or any entry that differs.
+// name with no catalog entry in scope or any entry that differs. Only the live sources count:
+// an entry an earlier render removed while the provider was out of scope (mcpscope.RemovedFile)
+// is not loaded by a session started after it, and would otherwise keep the server blocked
+// after the provider joined the scope and `tentaqles connect` wrote the catalog's entry.
 func connectExempt(ws *resolve.Workspace, cwd, server string) bool {
 	want := connectEntries(ws.Manifest.Scope(), server)
-	if len(want) == 0 || !sourcesReadable(paths.IdentityDir(ws.Name, "claude"), cwd, ws.Root) {
+	claudeDir := paths.IdentityDir(ws.Name, "claude")
+	if len(want) == 0 || !sourcesReadable(claudeDir, cwd, ws.Root) {
 		return false
 	}
-	entries := mcpscope.Entries(paths.IdentityDir(ws.Name, "claude"), cwd, ws.Root)[server]
+	entries := withoutRemoved(mcpscope.Entries(claudeDir, cwd, ws.Root)[server], claudeDir, server)
 	if len(entries) == 0 {
 		return false
 	}
@@ -387,6 +391,39 @@ func connectExempt(ws *resolve.Workspace, cwd, server string) bool {
 		}
 	}
 	return true
+}
+
+// withoutRemoved is entries less one copy of each entry of server that claudeDir's
+// mcpscope.RemovedFile keeps: mcpscope.Entries appends those after the live sources' entries, so
+// what is left is the live sources' entries. The file is decoded as Entries decodes it (numbers
+// kept as json.Number), so an entry compares equal to its copy; a missing or unreadable file
+// takes nothing away, as Entries then added nothing.
+func withoutRemoved(entries []map[string]any, claudeDir, server string) []map[string]any {
+	b, err := os.ReadFile(filepath.Join(claudeDir, mcpscope.RemovedFile))
+	if err != nil {
+		return entries
+	}
+	var removed []mcpscope.Removed
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if dec.Decode(&removed) != nil {
+		return entries
+	}
+	out := slices.Clone(entries)
+	for _, r := range removed {
+		e, ok := r.Entry.(map[string]any)
+		if !ok || r.Name != server {
+			continue
+		}
+		// The removed copies are last in entries; drop the last equal one.
+		for i := len(out) - 1; i >= 0; i-- {
+			if reflect.DeepEqual(out[i], e) {
+				out = slices.Delete(out, i, i+1)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // sourcesReadable reports whether every file mcpscope.Entries reads is absent or parses as JSON.

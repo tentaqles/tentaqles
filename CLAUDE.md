@@ -205,7 +205,8 @@ From `docs/threat-model.md`; each line names the test that keeps it.
   does any server when the config cannot be read: `TestHook_ConnectedServerNotCrossClientDenied`,
   `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`,
   `TestHook_ForeignSameNameInProjectMCPJSONDenied`, `TestHook_ForeignBesideCatalogEntryDenied`,
-  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`.
+  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`,
+  `TestHook_UnreadableMCPJSONNoExemption`; an entry a render removed does not count: `TestHook_RemovedEntryDoesNotBlockConnectedServer`.
 - The integrity record is signed and covers the hooks, the enforcing settings keys and the
   shims; a mismatch is at least as strict as untrusted (the hook denies mutating git and
   remote commands), withholds the identity and refuses the launch; a signed workspace never

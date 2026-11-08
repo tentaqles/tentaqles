@@ -34,7 +34,8 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
     command reads the embedded catalog only, so neither a caller nor a user file chooses the entry;
   - the provider must be in the identity's scope (`Manifest.Scope`, the same one the hook judges by);
     outside it, `connect` exits 1 with `<provider> is outside the scope of identity <ws>: <scope>` and
-    writes a line in the denial log, category `identity`;
+    writes a line in the denial log, category `identity`, layer `command` (a refusal by a tq command the
+    agent ran, as for `tentaqles install`, ADR-0015);
   - a neutral folder, an untrusted client, or an identity with no `claude` identity is refused;
   - it adds one member to the top-level `mcpServers` object, editing the file as bytes so every other
     key, number and indent stays, under a lock file and an atomic rename; a file that is not JSON, or
@@ -69,7 +70,18 @@ manifest or `.claude.json` either, so it needs a read command that carries no se
   `TestHook_ConnectedServerNotCrossClientDenied` (all four catalog entries),
   `TestHook_OtherClientsBundleServerStaysDenied`, `TestHook_OutOfScopeProviderNameStaysDenied`,
   `TestHook_ForeignSameNameInProjectMCPJSONDenied`, `TestHook_ForeignBesideCatalogEntryDenied`,
-  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`.
+  `TestHook_OnlyCatalogEntryPasses`, `TestHook_UnreadableConfigNoExemption`,
+  `TestHook_UnreadableMCPJSONNoExemption` (a corrupt `.mcp.json` at the root or in a parent of the cwd).
+- **Amendment (2026-11-08): only the live sources count for the exemption.** `mcpscope.Entries` also returns
+  the entries `tq settings render` removed into `<identity>/claude/mcp-out-of-scope.json`, so the scope rules
+  keep denying what a session started before the render may still have loaded. For the exemption that kept a
+  connected server blocked for good: a server removed while its provider was out of scope, then the provider
+  added to the scope and `connect` run, left the old entry beside the catalog's, and the server was denied as
+  `tq/cross-client-mcp` whenever another client's bundle listed its name. `connectExempt` now takes one copy
+  of each removed entry of that name out of what `Entries` returns, so it compares the live sources only
+  (`.claude.json`, the installed plugins' servers, the `.mcp.json` files). `internal/mcpscope` and the scope
+  rules are unchanged: an out-of-scope removed entry is still judged by `identity/out-of-scope-mcp`, and a foreign
+  entry in any live source still denies. Test: `TestHook_RemovedEntryDoesNotBlockConnectedServer`.
 - **A recursive search from a protected folder (round 3, `internal/policy/selfprotect.go`).** A recursive
   search (`grep -r`, `rg`, `findstr /s`, `Get-ChildItem -Recurse`) whose run folder (the cwd, or the folder a
   `cd` went to) is a read-denied protected folder is denied as `tq/protected-path`, whatever root it names,

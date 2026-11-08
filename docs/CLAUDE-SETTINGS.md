@@ -79,9 +79,7 @@ brings the identity's harness config in line with its provider scope:
 
 - **MCP servers.** Every server tq can tell is out of scope is removed from
   `<identity>/claude/.claude.json` (the top-level `mcpServers`, user scope,
-  and every `projects[<path>].mcpServers`, local scope) and from
-  `<identity>/codex/config.toml` (`[mcp_servers.<name>]` and its sub-tables,
-  or a one-line `name = { ... }` under `[mcp_servers]`). Out of scope means a
+  and every `projects[<path>].mcpServers`, local scope). Out of scope means a
   token of the name (split on `_ - .`) is an out-of-scope provider's `mcp`
   entry and no in-scope provider's, the package or image its `command`/`args`
   run is one of an out-of-scope provider's `mcp_packages` or `images`, one of
@@ -119,7 +117,7 @@ brings the identity's harness config in line with its provider scope:
 
 Not rendered, and judged by the hook alone: a project `.mcp.json`, plugin MCP
 servers, claude.ai connectors, a machine-wide `managed-mcp.json`,
-`--mcp-config`, Codex's project `.codex/config.toml`, and the global
+`--mcp-config`, and the global
 `~/.claude.json` an identity without a `claude` identity loads.
 
 Settings changes apply to running sessions immediately.
@@ -155,62 +153,6 @@ uses `git worktree remove` without `--force`, so git still refuses anything
 with uncommitted work. Branches that were squash-merged show as unmerged and
 are kept; delete those by hand once you have checked them.
 
-## Codex
-
-tq gives Codex CLI the same two things it gives Claude: a private config
-home per workspace and the PreToolUse hook (identity drift and secrets).
-tq writes nothing into Codex's `config.toml`.
-
-**What tq writes**, into the workspace's Codex identity home (`CODEX_HOME`),
-on `tq settings render`, `tq allow` and `tq deny`. A workspace without a
-Codex identity gets nothing; when the identity is dropped, the next render
-removes what tq wrote.
-
-- tq's entries in `hooks.json`: PreToolUse runs
-  `tq claude-hook pre-tool-use --agent codex` and SessionStart runs
-  `tq claude-hook session-start --agent codex` (matcher `*`, timeout 30 s).
-  Your entries and keys stay as they are. **Codex runs a hook only after you
-  trust it once in `/hooks`**, and skips a changed hook until you trust it
-  again. tq never passes `--dangerously-bypass-hook-trust`.
-
-The launcher (`tq run . -- codex`, the `codex` function) starts Codex with
-its full-bypass flag `--dangerously-bypass-approvals-and-sandbox` (PRD v2
-§7.2): tq never sets how Codex asks, and its hook still denies the three
-categories. A flag you type yourself about asking or the sandbox (`-a`,
-`-s` and the glued `-anever`/`-sread-only`, `--yolo`, the bypass flag, a `-c`
-override of `approval_policy` or `sandbox_mode`, glued ones included) goes
-through as typed and the launcher adds nothing. The flag goes right after
-`exec`, `e`, `resume` or `fork` (which take it themselves in codex 0.154),
-first otherwise. The launch is refused when `tq` is not on the PATH Codex will
-run with, since the Codex hook is a bare `tq claude-hook pre-tool-use
---agent codex`. `codex-off`
-(`tq run --off -- codex`) starts Codex with its bypass flag, the main
-`~/.codex` and no tq.
-
-A render removes only what an older tq wrote: its marked `config.toml`
-block (by its markers, with the two keys inside it), and a `rules/tq.rules`
-or profile file that tq wrote. Keys you set in `config.toml` outside that
-block, your own `rules/*.rules` files, and a `tq.rules` tq did not write,
-are never touched.
-
-**Codex and the hook.** tq never sends an ask, to any harness (ADR-0006).
-Every deny under `--agent codex`, whatever the category, answers Codex with
-the PreToolUse deny JSON on stdout and exits 2, so either half blocks; a call
-tq cannot judge is a deny of `tq/guard-error`.
-
-**`apply_patch`.** Codex sends the patch text, not a file path. The hook
-reads its file headers (`*** Add File:`, `*** Update File:`,
-`*** Delete File:`, `*** Move to:`) and runs the secret file rules on every
-file the patch writes. A patch whose file list tq cannot read is blocked
-(`tq/guard-error`).
-
-**Conflicts.** An old tq block in `config.toml` without its end marker, an
-invalid `hooks.json`, or a hook group that mixes tq's handler with yours, is
-a conflict, reported on each render ("not changed"), and tq never touches
-your keys or files. `config.toml` and the hook entries are independent: a
-conflict in one still writes the other, so the hook keeps running and the
-identity guard keeps blocking.
-
 ## `tq doctor` checks
 
 | Code | Meaning |
@@ -223,7 +165,4 @@ identity guard keeps blocking.
 | `plugin-foreign-path` | an identity's `installed_plugins.json` points at another identity's plugin cache or at `~/.claude` (a config dir copied from a sibling); hooks then run another identity's files. Reinstall the plugin inside the identity |
 | `memory-stale` | a workspace's `.claude/memory.db` was last written more than 48 h before its newest Claude transcript: the plugin hooks are not capturing |
 | `python-store-alias` | `python3` is the Microsoft Store alias (slower hook start); set `TENTAQLES_PY` |
-| `claude-alias-shadow` | a shell profile defines something that stands in for tq's `claude`/`codex` launcher: a PowerShell alias, an alias that runs another command, or a function of that name after tq's activation (warn: delete it), or an alias that calls the launcher with extra flags (info) |
-| `codex-hooks-missing` | tq's PreToolUse entry is not in the codex identity's `hooks.json`: Codex runs without tq's guard. Fix: `tq settings render <ws>` |
-| `codex-hooks-disabled` | the codex identity's `config.toml` sets `[features] hooks = false` |
-| `codex-hooks-untrusted` | no trust record for tq's hook was found: trust it once in Codex's `/hooks`. The check sees a missing record, not a stale one; `/hooks` shows both |
+| `claude-alias-shadow` | a shell profile defines something that stands in for tq's `claude` launcher: a PowerShell alias, an alias that runs another command, or a function of that name after tq's activation (warn: delete it), or an alias that calls the launcher with extra flags (info) |
