@@ -19,8 +19,6 @@ identity:
     TURSO_CONFIG_FOLDER: "{dir}"
 login:
   args: ["auth", "login"]
-verify:
-  args: ["auth", "whoami"]
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

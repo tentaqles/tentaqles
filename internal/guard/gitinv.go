@@ -461,7 +461,7 @@ func gitSegmentsDepth(c string, depth int) []gitInvocation {
 			covered[firstNonSpace(c, sp.start)] = true
 			if depth >= 3 {
 				// too deep to read: report an unreadable hidden commit so the
-				// commit scan denies (tq never asks, ADR-0006)
+				// commit scan denies (tq never asks)
 				out = append(out, gitInvocation{GitInvocation: GitInvocation{Sub: "commit", Hidden: true}, start: sp.start},
 					gitInvocation{GitInvocation: GitInvocation{Sub: "push", Hidden: true}, start: sp.start})
 				continue

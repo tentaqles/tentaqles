@@ -16,14 +16,12 @@ import (
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
-// The PATH and environment layer of an identity (PRD v2 §6.1
-// step 2, §6.2 rows PATH and Environment; ADR-0008). It is built from the same compiled scope
-// the hook judges by (scope.For): an out-of-scope provider's CLI does not resolve by name
-// on the identity PATH, and its variables are unset in the identity environment. Without the
-// flag nothing here runs.
+// The PATH and environment layer of an identity, built from its compiled scope (scope.For): an
+// out-of-scope provider's CLI does not resolve by name on the identity PATH, and its variables
+// are unset in the identity environment.
 
 // MaskDirName is the per-identity folder, under the identity's folder in the tq home, that
-// holds one stub per out-of-scope executable name (ADR-0008): it goes first on the identity
+// holds one stub per out-of-scope executable name: it goes first on the identity
 // PATH when a PATH folder that tq cannot drop (one shared with other tools) holds an
 // out-of-scope CLI. A stub prints "<name>: command not found" and exits 127.
 const MaskDirName = "path-mask"
@@ -37,7 +35,7 @@ type Layer struct {
 	scope    *scope.Scope
 	exes     map[string]string // out-of-scope executable name -> provider id
 	maskDir  string
-	shims    string // the identity's shims folder when it lists a browser (ADR-0016), else ""
+	shims    string // the identity's shims folder when it lists a browser, else ""
 	ready    *bool  // memoized MaskReady
 }
 

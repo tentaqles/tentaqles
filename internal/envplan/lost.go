@@ -9,7 +9,7 @@ import (
 
 // A shell whose __TQ_STATE is gone (unset, truncated, edited) while TQ_WS says an identity is
 // active cannot be restored: tq no longer knows the values from before it. It fails closed
-// (ADR-0008): every variable tq sets for any identity and every mask folder on PATH are
+//: every variable tq sets for any identity and every mask folder on PATH are
 // removed, everything else stays, the identity of the folder (if any) is applied afresh, and
 // the prompt says the old values are lost and that a new terminal has them.
 
@@ -40,7 +40,7 @@ func tqVars() map[string]bool {
 	for _, k := range AllProviderVars() {
 		m[envKey(k)] = true
 	}
-	m[envKey("BROWSER")] = true // a client's shim, ADR-0016 (tqOwned says whose)
+	m[envKey("BROWSER")] = true // a client's shim (tqOwned says whose)
 	return m
 }
 

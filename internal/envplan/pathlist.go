@@ -77,7 +77,7 @@ type PathReport struct {
 	MaskMissing bool
 }
 
-// FilterPath is the identity PATH built from path (layer 2, ADR-0008), in syn's spelling:
+// FilterPath is the identity PATH built from path (layer 2), in syn's spelling:
 //
 //   - an entry whose executables are all out-of-scope CLIs (an AWS CLI install folder for an
 //     Azure-only identity) is dropped: the CLI resolves to nothing;
@@ -87,7 +87,7 @@ type PathReport struct {
 //   - every other entry, an empty one, one tq cannot map to an OS path, and on Windows any
 //     folder under %SystemRoot% are kept as they are, in order;
 //   - for a client that lists a browser, its shims folder (xdg-open, open) goes first of all
-//     (ADR-0016).
+//     .
 //
 // A mask or shims entry already there is removed before the result is built, so filtering is
 // idempotent.
@@ -121,7 +121,7 @@ func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 		}
 	}
 	if l.shims != "" {
-		// ADR-0016: the client's xdg-open and open come first, so a tool that opens a page
+		// The client's xdg-open and open come first, so a tool that opens a page
 		// reaches the client's browser profile and not the system's default handler.
 		kept = append([]string{syn.FromOS(l.shims)}, kept...)
 	}

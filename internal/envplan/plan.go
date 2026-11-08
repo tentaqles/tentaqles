@@ -20,7 +20,7 @@ func Desired(ws *resolve.Workspace) map[string]string {
 	out["TQ_WS"] = ws.Name
 	out["TQ_WS_ROOT"] = ws.Root
 	if HasBrowsers(ws) {
-		// ADR-0016: BROWSER names the client's shim, which opens a URL in the client's profile.
+		// BROWSER names the client's shim, which opens a URL in the client's profile.
 		out["BROWSER"] = BrowserVar(ws.Name)
 	}
 	provs := Providers()
@@ -46,7 +46,7 @@ func Desired(ws *resolve.Workspace) map[string]string {
 type State struct {
 	WS   string             `json:"ws"`
 	Prev map[string]*string `json:"prev"`
-	// PathSet is the PATH tq last wrote for an identity (ADR-0008), in the shell's
+	// PathSet is the PATH tq last wrote for an identity, in the shell's
 	// spelling: a PATH still equal to it needs no work at the next prompt, and one the user
 	// changed since is merged back (MergePath) on leaving.
 	PathSet string `json:"path,omitempty"`
@@ -96,7 +96,7 @@ type Notice struct {
 const (
 	// NoticeMask: an identity's PATH needs its mask folder (a folder
 	// shared with other tools holds an out-of-scope CLI) and the folder is
-	// missing or changed; the fix is tq settings render (ADR-0008).
+	// missing or changed; the fix is tq settings render.
 	NoticeMask = "path-mask"
 	// NoticeCmdLong: the identity PATH is longer than a cmd.exe line, so cmd.exe keeps the
 	// PATH it has (out-of-scope CLIs still resolve there); the rest of the identity applies.
@@ -107,7 +107,7 @@ const (
 )
 
 // Want is what a workspace wants of the environment: the variables to set and, for an
-// identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
+// identity, the variables to unset. PathSep is the shell's PATH list
 // separator, used when a PATH tq changed is restored.
 type Want struct {
 	Set     map[string]string

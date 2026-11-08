@@ -1,106 +1,128 @@
-# Tentaqles commands
+# Commands
 
-`tentaqles` is the CLI, and `tq` is the same program under a shorter name. `docs/IDEATION.md` is the spec.
-
-**Human-only** means the command refuses to run from an agent session, and asks you to type `yes` before it
-writes. It refuses when stdin or stdout is not a terminal, when a harness is in the process tree, or when the
-environment carries an agent marker. The refusal goes to `~/.tentaqles/denials.jsonl`.
+The program answers to `tentaqles` and to `tq`; both names run the same binary. A *client* is a folder under one
+of your clients folders that `tentaqles reach` set up: it holds a marker file, `.tentaqles.yaml`, and its manifest
+lives under `~/.tentaqles/identities/<client>/manifest.yaml` (`$TQ_HOME` moves `~/.tentaqles`).
 
 ## Setting up a client
 
-| Command | What it does |
-|---|---|
-| `tentaqles reach [<path>]` | **Human-only.** Makes the current folder, or `<path>`, a client identity. It prints the banner (`--no-banner` or `TQ_NO_BANNER=1` for none), asks for the identity email and the client's providers, and after you type `yes` writes the manifest and trusts it. The folder's name is the identity's name, and its parent folder is where your clients live. In a folder that already is a trusted client, it shows the client and offers a menu: change its providers (git, clouds, team, data, task, email provider), its browser and profile, or its email, through the same questions with the current answers ticked. It shows what changes, and after your `yes` rewrites only those keys of the manifest (every other key and comment stays), makes the folders of the identities it added, points the folder's git at a new email, signs the client again as `tq allow` does, and installs the CLIs of added providers (`--no-install` skips this). A provider taken out keeps its identity folder, which reach names. An untrusted client, one whose integrity record does not match, or one whose manifest is not migrated is only shown (ADR-0012). Once the client is trusted it installs the tentaqles plugin into the client's Claude config, with `claude plugin marketplace add tentaqles/tentaqles` and `claude plugin install tentaqles@tentaqles` (two minutes each at most), and signs the record again: the plugin holds the guard (`--no-plugin` skips this). A failed install does not fail reach: it prints the reason and the three lines to run, in order (the marketplace, the install, and `tq hooks verify --accept <ws>` to re-sign), and `tq run` refuses to start a session until the plugin is there. `--no-plugin` prints the same lines. Then it installs the CLI of each provider the client can use, one line each (`--no-install` skips this; a failure does not stop the rest). For a new client it also writes tq's activation block into the profile of each shell tq detects and of the shell it runs in, after your `yes` (the confirmation names the profile; a profile that already has it is left alone). Then it opens a new terminal in the client's folder and, after you press Enter, ends the terminal reach ran in, only when that is an interactive PowerShell, pwsh, cmd, bash, zsh or fish that no other shell started (a Git Bash subshell or a shell inside a shell is left open); otherwise it leaves it open and says so. Without Windows Terminal the new window is PowerShell; when PowerShell will not load tq's profile (a Restricted execution policy, or a profile in another folder), the old terminal stays open and reach names `tq run <client> -- claude` as the next step. A terminal that cannot open, or a profile that cannot take the block (or a PowerShell that will not load it), leaves the old terminal open and prints the next step; a failure on another shell's profile is a warning. `--no-terminal` skips the opening and the ending, and prints the next step (ADR-0019). |
-| `tentaqles install <provider>` | Installs a provider's CLI for the current client, through the first package manager on its PATH from `winget`, `scoop`, `brew`, `apt`, `npm`, `pip`, and prints `<provider>: installed <version>`, `already present <version>`, `manual, download from <docs URL>` or `install failed: <reason>` (exit 1). It takes the provider id and nothing else, runs at most 10 minutes, and refuses a provider outside the client's scope (exit 1, logged). An agent may run it for a provider in scope. tq never launches a desktop installer, and accepts the vendor's licence through winget's flags. See [PROVIDERS.md](PROVIDERS.md#installing-a-providers-cli). |
-| `tq login <ws> <identity>` | **Human-only.** Runs a CLI's own login inside that client's private config folder. |
-| `tq secret set\|rm\|status` | Keeps an issue-tracker token in the OS keychain. `set` and `rm` are **human-only**. `status` shows presence only. |
-| `tq list` | Lists every client, whether it is trusted, its git email and its identities. |
+### `tentaqles reach [<path>]`
 
-## Trust
+Makes the current folder, or `<path>`, a client. The folder's name is the client's name (lowercase letters,
+digits, `.`, `_`, `-`), and its parent folder is registered as a clients folder.
 
-| Command | What it does |
-|---|---|
-| `tq allow <ws>` | **Human-only.** Trusts the client as it is now, after a hand edit of its manifest. It renders the identity's settings, then signs the integrity record. |
-| `tq deny <ws>` | **Human-only.** Revokes trust. |
-| `tq hooks verify [--accept]` | Lists what changed against the signed record. `--accept` re-signs, and is **human-only**. |
+For a new client it prints the banner (`--no-banner` or `TQ_NO_BANNER=1` for none) and asks for the client's email,
+git provider, clouds, team, data and task tools, email provider, and browsers with a profile each. A name typed
+under *Other* is recorded in the manifest's `other_providers`, and reach says that tentaqles can't isolate it. It
+then prints what it is about to do and waits for a typed `yes`. Nothing is written before that. Then it:
 
-## The terminal
+- writes the manifest and the marker, and a folder under `~/.tentaqles/identities/<client>/` for each identity
+  (Claude Code, and each provider with its own config home);
+- writes the folder's `.gitconfig-tentaqles` with the client's name and email, and the `includeIf` lines in
+  `~/.gitconfig-tentaqles` that apply it to every repository under the folder;
+- renders the client's Claude settings, PATH mask and browser shims (as `tq settings render`);
+- installs the tentaqles plugin into the client's Claude config, with `claude plugin marketplace add
+  tentaqles/tentaqles` and `claude plugin install tentaqles@tentaqles`, two minutes each at most. A failed install
+  doesn't fail reach: it prints the reason and the lines to run. `--no-plugin` skips it and prints the same lines;
+- adds tq's activation block to the profile of each shell it detects, when the block isn't there yet.
 
-| Command | What it does |
-|---|---|
-| `tq hooks install\|remove\|status` | Manages the shell-profile block that makes a terminal follow the folder. `install` and `remove` are **human-only**. |
-| `tentaqles open [--browser chrome\|edge] <url>` | Opens an `http` or `https` URL in the client's browser: the first one in its `browsers:` list, started from its install path with `--profile-directory=<the client's profile>`, never through the system's default handler. It refuses any other scheme, a value that starts with `-`, a folder that is not a client's (nothing opens), a client with no `browsers:` (`no browser is set for this client`) and a listed browser that is not installed (`<browser> is not installed`). An agent may run it. |
-| `tq run <ws>\|. -- <cmd>` | Runs one command under an identity without `cd`-ing into its folder. In an agent session it runs only the identity of the folder it is in: `tq run <other>` is refused (ADR-0020). A `claude` session (a prompt, or the interactive UI) in an identity's folder starts only when the client's Claude config has the tentaqles plugin enabled with its guard hook, and no project settings file in the folders it starts in (up to the client's folder) switches the guard off: otherwise it exits non-zero, says why, and prints the fix lines (see [CLAUDE-HOOK.md](CLAUDE-HOOK.md#no-session-without-the-hook)). `claude` subcommands, `--help` and `--version` are not refused, so the fix lines run. A neutral folder's `claude` is unchanged. |
-| `tq activate <shell>` | Prints the shell hook. The profile block runs it. |
-| `tq env` | Prints the environment changes for this folder. The shell hook runs it at each prompt. cmd.exe has no prompt hook, so there you call the hook yourself or use `tq run`. |
+In a folder that already is a client, reach shows the client and what it can use, then offers a menu: nothing,
+the providers, the browser and profile, or the email. The chosen part of the form opens with the current answers.
+reach lists the changes and waits for `yes`, then rewrites only those keys of the manifest (other keys and comments
+stay), makes the folders of new identities, rewrites the folder's git email when it changed, and renders the
+client's files again. A provider taken out keeps its identity folder, with any login in it, and reach names it.
 
-## Checking
+reach refuses to run from inside a Claude Code session, and without a terminal on stdin and stdout: it is the
+developer's command.
 
-| Command | What it does |
-|---|---|
-| `tq doctor`, `tq status` | Health report: trust, hooks, git identity, logins and settings drift. Read-only, and each finding ends with its fix. `tq doctor --json` is the health report for scripts. |
-| `tq status --json` | The onboarding skill's read: one JSON object for the client of this folder, and nothing written. `identity`, `root`, `scope`, one entry per provider in scope (`id`, `category`, `cli`, `cli_resolves`, `credential`, `connection`, `verified`), `browsers` and `other_providers`. `credential` and `connection` are `present`, `missing` or `none`; `verified` is true only when the provider's read-only `verify` command passed in this run (5 s each; a keychain lookup has the same limit and reads `missing` on a timeout). `connection` reads `missing` for a client with no Claude identity, and `present` for a server registered under any of the provider's names (az's `azure`, glab's `gitlab`). `credential` is `present` with a keychain token, a set credential variable or a passing `verify`; `missing` for a tracker provider (its keychain token) or a provider with a `verify` that did not pass; and `none` for a CLI login with no `verify` command, which tq cannot tell from logged out, so the skill does not log in again forever. It carries no token, credential or MCP `env` value. In a neutral folder `identity` is null; in an untrusted client it holds `trusted: false` and a `reason`, and no provider data. The skill uses this instead of reading the manifest or `.claude.json`, which are protected. |
-| `tq status --denials` | **Human-only read.** The denial log. |
-| `tq providers list\|show\|check\|add` | The provider catalog. `add` is **human-only**. |
-| `tq secrets audit` | Finds where secrets sit in agent config. Prints path and line only. |
-| `tq dotenv run [--file F] -- <cmd>` | Uses a `.env` for one command and masks its values in the output. It is the only way to use a `.env`, because the guard blocks reading one. |
-| `tq version` | The version and the commit it was built from. |
+### `tq login <client> <cli>`
 
-## Claude Code config
+Runs the CLI's own login with the client's config home, so the credentials land in
+`~/.tentaqles/identities/<client>/<cli>`. For `aws`, `--sso` runs `aws configure sso` and `--sso-session NAME`
+runs `aws sso login --sso-session NAME`. Logging in from a client's terminal does the same.
 
-| Command | What it does |
-|---|---|
-| `tq settings render [--all]` | **Human-only.** Writes tq's part of the identity's Claude `settings.json`, the out-of-scope MCP filter and the PATH mask. For a client with `browsers:` it also writes the browser shims and signs them, and sets `--user-data-dir` on the Playwright MCP entries (see Browsers). |
-| `tentaqles connect <provider>` | **Agent-callable, not human-only.** Adds the provider's hosted MCP server, as the embedded catalog defines it (`gh`, `linear`, `asana`, `jira`, `notion`, `trello`), to `mcpServers` in the client's `.claude.json`, keeping every other key, and prints `<provider>: connected as <name>`. Again: `already connected`, nothing written. A provider with no catalog entry: `no MCP server in the catalog`, exit 0. A provider outside the client's scope, or a neutral or untrusted folder: exit 1, and a scope refusal is logged in the denial log. It takes the provider and nothing else, no flag and no user file changes the entry. When a Claude session looks open it warns on stderr, since Claude Code may write `.claude.json` back: restart it and check `tq status --json`. Each change is one line in `~/.tentaqles/connections.jsonl` (time, identity, provider, server, caller, outcome; no value of the entry). A line says `failed` when the write after it did not happen. It does not sign in: use `/mcp`. |
-| `tq bundle catalog\|diff\|sync\|capture` | Plugins, skills and MCP servers for a client from a shared catalog. `sync` and `capture` are **human-only**. |
-| `tq statusline` | Hidden. What Claude Code's status line calls. |
+## Working in a client's folder
 
-## Browsers
+### The shell hook: `tq hooks install|remove|status`, `tq activate <shell>`, `tq env`
 
-`tentaqles reach` records a `browsers:` list in the manifest (Chrome or Edge, and the profile folder of each). For
-a client that has one, tq (ADR-0016):
+`tq hooks install [shell...]` (or `--all-detected`) adds the activation block to your shell profiles; `remove`
+takes it out; `status` shows each shell's profile and state. Shells: bash, zsh, fish, PowerShell, pwsh, and cmd
+(through `tq activate cmd`). `tq activate <shell>` prints the block to add by hand.
 
-- opens pages in that profile: `tentaqles open <url>`, `BROWSER`, and the client's `xdg-open` and `open`. In the
-  client's terminal `BROWSER` names a program under `~/.tentaqles/shims/<client>/`, and that folder comes first on
-  `PATH`, so `xdg-open <url>` and `open <url>` do what `tentaqles open` does for any argument that starts with
-  `http://` or `https://`: it opens in the client's profile, or tq refuses it and nothing opens; it never reaches the
-  real program. `open -a "Google Chrome" <url>` and `open -a "Microsoft Edge" <url>` go to the client's profile in
-  that browser, and `open -a` for any other app, like any line with no such URL, passes to the real program. Leaving the folder puts `BROWSER` and `PATH` back as they were. The programs
-  are copies of the tq binary, written by `tq settings render` and covered by the integrity record: after you
-  upgrade tq, run `tq settings render <client>` so they match the new binary.
-- denies, in the hook, as `BLOCKED [identity/other-browser-profile]`, a shell command that starts `chrome`, `msedge`
-  or `google-chrome` with another profile, another `--user-data-dir`, or neither flag (Chrome then picks the profile
-  it used last; `--version`, `--help` and `--headless` with no profile flag are allowed), and the routes that hand a URL to the system's default browser: `start <url>`,
-  `Start-Process <url>`, `explorer <url>`, `rundll32 url.dll` and `cmd /c start <url>`. The message names
-  `tentaqles open <url>`. A URL in a commit message, a grep pattern or an `echo` stays allowed.
-  `--headless` with no profile flag is allowed by the owner's decision, but which user data folder a headless
-  start uses is unconfirmed: if it is the default one, a headless page reads that profile's cookies.
-- gives the Playwright MCP server its own browser folder, `~/.tentaqles/identities/<client>/browser`, because it
-  cannot attach to a profile that is already open: `tq settings render` sets `--user-data-dir` on its entries in the
-  client's Claude config and keeps their other arguments. It edits the identity's `.claude.json` only: a
-  repository's `.mcp.json` and a plugin's own files are never rewritten, so a Playwright server declared there
-  keeps its own arguments.
-- warns in `tq doctor` (`browser-profile-missing`) when a named profile has no folder in that browser's user data
-  folder. The browser makes the profile the first time `tentaqles open` starts it.
+At every prompt the hook runs `tq env`, which prints the changes for the current folder:
 
-**Claude in Chrome attaches to a browser that is already running**, in whatever profile that browser is in, so tq
-cannot verify its profile. The hook denies `mcp__claude-in-chrome__*` for a client whose `browsers:` list does not
-include Chrome, and allows it for one that does; for that client, keep only the client's own Chrome profile open
-while Claude in Chrome is in use.
+- in a client's folder, or any folder under it: `TQ_WS` and `TQ_WS_ROOT`; `CLAUDE_CONFIG_DIR`; each provider's
+  config home variable (`GH_CONFIG_DIR`, `AZURE_CONFIG_DIR`, `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`,
+  `CLOUDSDK_CONFIG`, `GLAB_CONFIG_DIR`, `DATABRICKS_CONFIG_FILE` and others, see `tq providers list`); `BROWSER`
+  when the client lists a browser; and a `PATH` without the folders that hold only CLIs of providers outside the
+  client's scope (a folder shared with other tools gets a mask instead, see below). The variables of those
+  providers (`AWS_PROFILE`, `AZURE_*` and the like) are unset.
+- leaving the folder puts back exactly what was there before.
 
-A client with no `browsers:` list is unchanged: no `BROWSER`, no shims on `PATH`, no browser rule in the hook.
+`TQ_ENABLED=0` turns the hook off in a shell. `tq env --json` prints the same changes as JSON.
 
-## Upgrading and leaving
+### `tq run <client>|. -- <command> [args...]`
 
-| Command | What it does |
-|---|---|
-| `tq migrate` | **Human-only with `--apply`.** Moves a hand-built setup and old manifests under tq's management. |
-| `tq uninstall --restore` | **Human-only.** Replays the migration journal backwards. |
+Runs a command with a client's environment without changing folder; `.` is the current folder's client (none in a
+neutral folder). The command is looked up on the client's PATH, so a CLI outside the client's scope isn't found,
+however it is spelled.
 
-## The plugin
+For `claude`, tq adds `--dangerously-skip-permissions` unless the command line sets a permission mode, runs a
+`claude` subcommand, or asks for `--help` or `--version`. It refuses to start a session when the client's Claude
+config has no enabled tentaqles plugin, or when `disableAllHooks` is set there or in the folder's
+`.claude/settings.json`; the refusal prints the lines that fix it.
 
-| Skill | What it does |
-|---|---|
-| `/tentaqles:onboard` | Connects a client's tools in Claude Code, one provider at a time: reads `tentaqles status --json`, installs each CLI in scope with `tentaqles install`, connects each MCP server with `tentaqles connect`, has the developer run each login (`!` only for a known browser flow, otherwise in their own terminal), verifies, and ends with one table. It never runs a login, never handles a token and never changes the hook. |
+From inside a Claude Code session, `tq run` runs only the client of the current folder: another client's name is
+refused, and a nested `claude` gets no bypass flag.
 
-The plugin also holds the guard hook, which runs `tq claude-hook` before each tool call.
+### `tentaqles open [--browser chrome|edge] <url>`
+
+Opens an `http` or `https` URL in the client's browser profile: the first browser of the manifest's `browsers`
+list, or the one `--browser` names, started from its install path with `--profile-directory`. It refuses any other
+scheme, a value starting with `-`, a neutral folder, a client without browsers, and a browser that isn't installed.
+In a client's terminal, `BROWSER`, `xdg-open` and `open` go the same way: they are shims under
+`~/.tentaqles/shims/<client>/`.
+
+## Keeping a client's files in line
+
+### `tq settings render [client...] | --all`
+
+Brings each client's files in line with its manifest:
+
+- the client's Claude `settings.json`: the manifest's `claude.env`, and the tq status line (which replaces only an
+  unpinned `npx` status line; `--no-statusline` leaves it alone). Only what tq wrote earlier is removed;
+- the PATH mask, `~/.tentaqles/identities/<client>/path-mask/`: one stub per CLI of a provider outside the client's
+  scope, for the PATH folders that hold it beside other tools. A stub prints `<name>: command not found` and exits
+  127;
+- the browser shims, when the client lists a browser.
+
+`--dry-run` writes nothing. Run it after editing a manifest by hand, and after upgrading tq (the shims and stubs are
+copies of the binary).
+
+### `tq doctor [--json]`
+
+Reports, without changing anything: the shell hook (installed, and in effect in this shell), git (the include file,
+`user.useConfigOnly`, a global `user.email` that would leak into neutral folders, each client's
+`.gitconfig-tentaqles`), each client's identity folders and Claude login, the CLIs it needs (missing, or shadowed by
+a script earlier on PATH), its browser profiles and shims, its Claude settings, its plugin, and a shell function
+that replaces tq's `claude` launcher. Exits 1 when a finding is an error.
+
+### `tq list [--json]`
+
+Lists the clients: name, git email, identities and folder.
+
+### `tq providers list|show <id>|check [id...]|add <id>`
+
+The provider catalog: the CLIs tentaqles knows, the variable that moves each one's config home, its login command,
+and what a client's terminal hides when the provider is outside its scope. `add` writes a provider file of your own
+under `~/.tentaqles/providers/`; see [PROVIDERS.md](PROVIDERS.md).
+
+### `tq version`
+
+The version and the commit the binary was built from.
+
+## Used by the Claude Code plugin
+
+`tq claude-hook pre-tool-use` and `tq claude-hook session-start` are what the plugin's hook runs; see
+[CLAUDE-HOOK.md](CLAUDE-HOOK.md). `tq statusline` is the status line the client's Claude settings run: the client,
+the git email, the model, the context size and the cost.

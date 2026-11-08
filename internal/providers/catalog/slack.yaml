@@ -5,7 +5,6 @@ docs: https://docs.slack.dev/ai/mcp-server
 # MCP only: tq never reads Slack itself (spec B §3). Onboarding sets the connector up and doctor
 # checks that the identity's .claude.json lists it.
 cli: null
-mcp: slack
 notes: "No CLI. A Claude session reaches Slack through an MCP server or connector added in that client's Claude config, signed in with /mcp."
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).

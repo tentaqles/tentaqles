@@ -4,5 +4,4 @@ category: email
 docs: https://learn.microsoft.com/graph/outlook-mail-concept-overview
 # MCP only (spec B §3).
 cli: null
-mcp: outlook
 notes: "No CLI. A Claude session reaches Outlook through an MCP server or connector added in that client's Claude config, signed in with /mcp."

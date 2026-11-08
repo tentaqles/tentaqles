@@ -16,13 +16,13 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The PATH and environment layer (layer 2 of the PRD v2 Â§6.1 scenario, ADR-0008): identity
+// The PATH and environment layer (layer 2): identity
 // company-x declares Azure as its only cloud; on the PATH tq builds for it, aws resolves to
 // nothing (its install folder is dropped) or to tq's stub (in a folder shared with other
 // tools), az and everything else resolve as before, and leaving the folder puts the shell
 // back exactly.
 
-// companyX is the Â§6.1 identity: Azure (az, and azure-devops for git) and Claude.
+// companyX is the reference identity: Azure (az, and azure-devops for git) and Claude.
 func companyX(t testing.TB, v2 bool) *resolve.Workspace {
 	t.Helper()
 	m := &manifest.Manifest{Schema: "tentaqles-client-v2", Client: "company-x",
@@ -94,7 +94,7 @@ func pathEnv(p string) []string {
 	return env
 }
 
-// TestPathLayer_ScenarioAwsNotOnPath is the Â§6.1 scenario at layer 2: the AWS CLI folder is
+// TestPathLayer_ScenarioAwsNotOnPath is the reference scenario at the PATH: the AWS CLI folder is
 // dropped from company-x's PATH, so aws resolves to nothing, while az and git still resolve.
 func TestPathLayer_ScenarioAwsNotOnPath(t *testing.T) {
 	t.Setenv("TQ_HOME", testutil.TempDir(t))

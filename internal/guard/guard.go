@@ -39,9 +39,8 @@ type Decision struct {
 	Reason string // multi-line message for stderr (starts with "BLOCKED [identity/<rule>]: ")
 }
 
-// Category is the guard category every rule of Decide belongs to (PRD v2
-// §7.1): the manifest's blocked commands and identity drift are both the
-// identity category.
+// Category is the category every rule of Decide belongs to: the manifest's blocked commands and
+// identity drift are both identity rules.
 const Category = "identity"
 
 // sepPattern is the single shared definition of what separates one shell
@@ -317,7 +316,7 @@ type GitInvocation struct {
 	BaseUnknown bool
 	// Loose: the safety net found the word git in a command that is not a
 	// git call (see looseGit). Hidden is set too. The commit and push rules
-	// deny on it (an incomplete scan; tq never asks, ADR-0006); the identity
+	// deny on it (an incomplete scan; tq never asks); the identity
 	// rules in Decide ignore it.
 	Loose    bool
 	envChdir bool

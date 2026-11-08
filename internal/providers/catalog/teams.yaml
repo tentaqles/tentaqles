@@ -4,5 +4,4 @@ category: chat
 docs: https://learn.microsoft.com/microsoftteams/
 # MCP only (spec B §3).
 cli: null
-mcp: teams
 notes: "No CLI. A Claude session reaches Teams through an MCP server or connector added in that client's Claude config, signed in with /mcp."

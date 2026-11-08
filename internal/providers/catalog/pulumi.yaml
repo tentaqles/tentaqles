@@ -19,9 +19,6 @@ identity:
     PULUMI_HOME: "{dir}"
 login:
   args: ["login"]
-verify:
-  args: ["whoami", "--json"]
-  account: { json: user }
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

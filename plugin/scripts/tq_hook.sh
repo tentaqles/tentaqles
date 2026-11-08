@@ -6,7 +6,7 @@
 # Resolves the `tq` binary and runs `tq claude-hook <event>` (stdin passes
 # straight through, exit status is propagated).
 #
-# FAIL-CLOSED: if tq cannot be found or run, pre-tool-use denies every tool
+# FAIL-CLOSED: if tq cannot be found or run, pre-tool-use denies every shell command
 # (exit 2). A missing or unknown event also exits 2, so a misconfigured hook
 # cannot silently disable enforcement.
 #
@@ -89,7 +89,7 @@ fi
 # found") still reaches the deny below; the child inherits stdin, so the hook
 # payload passes through unchanged.
 #
-# pre-tool-use fails closed (PRD v2 §6.3, ADR-0006): tq answers 0 (allow)
+# pre-tool-use fails closed: tq answers 0 (allow)
 # or 2 (deny). Any other status (a crash the Go runtime could not recover,
 # a killed process, a usage error) is a call tq did not judge, and Claude
 # Code would run it on a non-2 exit, so it becomes a deny here.
@@ -141,7 +141,7 @@ fi
 
 # --- tq is not installed (or could not be executed) ---
 if [ "$_event" != "pre-tool-use" ]; then
-  echo "Tentaqles: tq is not installed, so every tool call is blocked. Install: $INSTALL_URL"
+  echo "Tentaqles: tq is not installed, so every shell command is blocked. Install: $INSTALL_URL"
   exit 0
 fi
 

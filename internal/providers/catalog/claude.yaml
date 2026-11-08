@@ -24,14 +24,6 @@ identity:
 # subcommand and matches every other provider here.
 login:
   args: ["auth", "login"]
-verify:
-  args: ["auth", "status"]
-  # Output is JSON on both Windows and macOS (verified on each):
-  #   {"loggedIn": true, "authMethod": "claude.ai", "email": "...",
-  #    "orgName": "...", "subscriptionType": "max"}
-  logged_out_when: '"loggedIn" *: *false'
-  account: { json: email }
-  subscription: { json: subscriptionType }
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

@@ -4,5 +4,4 @@ category: email
 docs: https://developers.google.com/gmail/api
 # MCP only (spec B §3).
 cli: null
-mcp: gmail
 notes: "No CLI. A Claude session reaches Gmail through an MCP server or connector added in that client's Claude config, signed in with /mcp."

@@ -99,8 +99,8 @@ var (
 	cloudCLI = map[string]string{"azure": "az", "aws": "aws", "gcp": "gcloud"}
 )
 
-// AddOptions is the workspace these answers describe, in folder name under base. The trust is
-// signed afterwards by the same path as `tq allow`, past the human's confirmation.
+// AddOptions is the client these answers describe, in folder name under base. reach creates it
+// after the developer's typed yes.
 func (a *Answers) AddOptions(base, name, gitName string) (workspace.AddOptions, error) {
 	if err := a.Validate(); err != nil {
 		return workspace.AddOptions{}, err

@@ -16,9 +16,6 @@ install:
 # verified, so tq does not claim to isolate it.
 login:
   args: ["jira", "auth", "login"]
-verify:
-  args: ["jira", "auth", "status"]
-mcp: atlassian
 notes: "acli keeps one global login, not one per client: run acli jira auth login yourself. A Claude session can reach Jira through the Atlassian MCP server added in that client's Claude config."
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).

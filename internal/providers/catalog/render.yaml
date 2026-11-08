@@ -17,10 +17,6 @@ identity:
     RENDER_CLI_CONFIG_DIR: "{dir}"
 login:
   args: ["login"]
-verify:
-  args: ["whoami"]
-  logged_out_when: 'run `render login`|not authenticated'
-  account: { regex: '^Email:\s*(\S+)' }
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

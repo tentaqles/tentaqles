@@ -5,9 +5,8 @@ import (
 	"strings"
 )
 
-// Company services (spec B §6): the chat and email connectors the agent uses over MCP, the data
-// platform and the agent CLIs this workspace logs into. Every block is optional, and like the
-// rest of the manifest they hold names only, never secrets.
+// The email block names the client's email provider. It is optional, and like the rest of the
+// manifest it holds names only, never secrets.
 
 // EmailProviders are the accepted email.provider values.
 var EmailProviders = []string{"gmail", "outlook", "none"}

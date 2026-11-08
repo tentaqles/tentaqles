@@ -7,7 +7,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The test binary is the stub program of the PATH masks the tests write (ADR-0008): run as
+// The test binary is the stub program of the PATH masks the tests write: run as
 // path-mask/aws.exe it answers as the stub, as tq does.
 func TestMain(m *testing.M) {
 	if ok, code := StubMain(os.Stderr); ok {

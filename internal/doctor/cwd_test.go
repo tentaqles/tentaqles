@@ -34,8 +34,8 @@ func setupTrustedWorkspace(t *testing.T, name, email string) (*registry.Config, 
 	base := testutil.TempDir(t)
 	cfg := &registry.Config{}
 	cfg.AddBase(base)
-	// On disk too: the integrity record finds the workspace root through
-	// the registry (trust.Covered).
+	// On disk too: resolve finds the client folder through
+	// the registry.
 	if err := cfg.Save(); err != nil {
 		t.Fatal(err)
 	}

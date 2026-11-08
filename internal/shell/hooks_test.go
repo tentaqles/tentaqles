@@ -142,7 +142,7 @@ func checkLog(t *testing.T, log, sh string) {
 
 // poisonProfiles points HOME, USERPROFILE, ZDOTDIR, XDG_CONFIG_HOME and
 // BASH_ENV of this test process at profile files that print PROFILE-LEAK, so a
-// shell test that forgets to isolate them fails (spec E §16: no test touches
+// shell test that forgets to isolate them fails (no test touches
 // a real shell profile).
 func poisonProfiles(t *testing.T) {
 	t.Helper()

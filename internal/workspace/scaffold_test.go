@@ -16,7 +16,7 @@ import (
 
 func fakeGit(...string) (string, error) { return "", nil }
 
-// tq add creates the protected layout (ADR-0002): a name-only marker in the
+// tq add creates the protected layout: a name-only marker in the
 // root, the manifest under $TQ_HOME/identities/<name>/manifest.yaml, private
 // to the user.
 func TestAdd_CreatesMarkerAndProtectedManifest(t *testing.T) {

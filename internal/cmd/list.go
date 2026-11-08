@@ -15,7 +15,7 @@ func newListCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "list",
-		Short: "List workspaces under all registered bases",
+		Short: "List the clients in every clients folder",
 		RunE: func(c *cobra.Command, _ []string) error {
 			cfg, err := registry.Load()
 			if err != nil {

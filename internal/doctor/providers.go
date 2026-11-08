@@ -9,7 +9,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// providerFileFindings lists every user provider file tq did not load (ADR-0007 rounds 3 and
+// providerFileFindings lists every user provider file tq did not load (and
 // 4): an override of a built-in id is a warning (the built-in lists stay in force), a new id
 // an error. The message names the workspaces whose scope names the id (each is refused every
 // call), or none, and says the fix once, in the Fix column.

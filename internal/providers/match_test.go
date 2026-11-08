@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// genericTools are the catalog providers whose command is never matched by name (ADR-0007):
+// genericTools are the catalog providers whose command is never matched by name:
 // each talks to whatever the project configures. cursor's command, `agent`, is too generic a
 // word to deny; its match lists cursor-agent instead.
 var genericTools = []string{"dbt", "docker", "helm", "kube", "npm", "postgres", "pulumi", "terraform", "cursor"}

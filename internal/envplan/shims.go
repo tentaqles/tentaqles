@@ -15,7 +15,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
-// The browser shims (ADR-0016): for a client with a browsers: list, three programs in
+// The browser shims: for a client with a browsers: list, three programs in
 // $TQ_HOME/shims/<ws>/ that open an http or https URL in the client's browser profile:
 //
 //   - tq-open, the program BROWSER names;
@@ -25,7 +25,7 @@ import (
 // Each is a copy of the tq binary (the first) or a link to that copy, which answers as a shim
 // when it runs from such a folder (ShimName). A program, not a batch file, on every OS: cmd.exe
 // re-parses a batch file's arguments, and a URL with & in it would run the rest as a command.
-// Every file of the folder is covered by the identity's integrity record.
+// The folder holds only what tq writes.
 
 // ShimOpen is the program BROWSER names, without a Windows suffix.
 const ShimOpen = "tq-open"
@@ -167,9 +167,8 @@ func ShimsReady(ws string) bool {
 }
 
 // WriteShims brings identity ws's shims folder in line with the tq binary: the copy written or
-// replaced, the links made, anything else removed. It reports whether anything changed. Only
-// human-only commands call it (tq allow, tq settings render): the folder is under the
-// protected tq home.
+// replaced, the links made, anything else removed. It reports whether anything changed.
+// tq settings render and tentaqles reach call it.
 func WriteShims(ws string) (bool, error) {
 	if !workspace.NameRe.MatchString(ws) {
 		return false, fmt.Errorf("invalid workspace name %q", ws)

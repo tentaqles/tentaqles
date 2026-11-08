@@ -40,7 +40,7 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
 }
 Expand-Archive $zip -DestinationPath $binDir -Force
 Remove-Item $zip
-# One program under two names (ADR-0021): tentaqles.exe, and tq.exe, which the plugin hook runs.
+# One program under two names: tentaqles.exe, and tq.exe, which the plugin hook runs.
 foreach ($b in 'tentaqles.exe', 'tq.exe') {
   if (-not (Test-Path (Join-Path $binDir $b))) { throw "the archive has no $b; tq is not fully installed" }
 }

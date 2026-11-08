@@ -14,7 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The browser shims of ADR-0016 in the environment layer: a client that lists a browser has
+// The browser shims in the environment layer: a client that lists a browser has
 // BROWSER set to its shim and its shims folder first on PATH; leaving restores both exactly;
 // a client with no browsers: list has neither.
 

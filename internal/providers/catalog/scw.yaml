@@ -22,8 +22,6 @@ identity:
     SCW_CONFIG_PATH: "{dir}/config.yaml"
 login:
   args: ["login"]
-verify:
-  args: ["info", "-o", "json"]
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

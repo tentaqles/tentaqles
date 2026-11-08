@@ -62,7 +62,7 @@ func claudeIsSession(args []string) bool {
 	return true
 }
 
-// guardRefusal is the refusal of a session that would start with no tentaqles guard (ADR-0018):
+// guardRefusal is the refusal of a session that would start with no tentaqles guard:
 // the reason in one line, then the fix to run, one copyable line each, in order. It is the error of
 // tq run, not of claude.
 func guardRefusal(ws string, g guardplugin.GuardHook) error {
@@ -122,7 +122,7 @@ func (l launch) run() error {
 		// A session in an identity's folder starts only with the guard: the plugin's PreToolUse
 		// hook in the Claude config the session will run with, CLAUDE_CONFIG_DIR as the identity
 		// environment sets it, and no project settings of the folders it starts in switching it
-		// off (ADR-0018). A neutral folder is unchanged.
+		// off. A neutral folder is unchanged.
 		if l.ws != nil && claudeIsSession(args) {
 			// A working folder that cannot be read (Getwd fails: cwd is "") is refused by the check itself.
 			cwd, _ := os.Getwd()
@@ -135,7 +135,7 @@ func (l launch) run() error {
 	env := envplan.Environ(l.ws, os.Environ())
 	name := l.name
 	if layer := envplan.LayerFor(l.ws); layer != nil {
-		// ADR-0008: an out-of-scope CLI is refused however it is spelled (aws,
+		// An out-of-scope CLI is refused however it is spelled (aws,
 		// aws.exe, its install path); anything else resolves on the identity PATH, not on tq's
 		// own, so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
 		if layer.IsMasked(name) {
@@ -198,10 +198,11 @@ func refuseOtherWorkspace(name string) error {
 }
 func newRunCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "run <workspace>|. -- <command> [args...]",
-		Short: "Run a command with a workspace's identity without cd-ing into it",
-		Long: "Run a command with a workspace's identity. `.` is the current folder's workspace (neutral when none).\n" +
-			"For claude, the launcher starts in bypass (tq's guard is the hook, in every permission mode).",
+		Use:   "run <client>|. -- <command> [args...]",
+		Short: "Run a command with a client's identity without cd-ing into its folder",
+		Long: "Run a command with a client's identity. `.` is the current folder's client (none in a neutral folder).\n" +
+			"For claude, the launcher starts in bypass, and refuses to start a session without the tentaqles plugin.\n" +
+			"From inside a Claude Code session, only the client of the current folder runs.",
 		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -214,7 +215,7 @@ func newRunCmd() *cobra.Command {
 			}
 			args = append(args[:1:1], rest...)
 			if len(args) < 2 {
-				return errors.New("usage: tq run <workspace>|. -- <command> [args...]")
+				return errors.New("usage: tq run <client>|. -- <command> [args...]")
 			}
 			var ws *resolve.Workspace
 			if args[0] == "." {

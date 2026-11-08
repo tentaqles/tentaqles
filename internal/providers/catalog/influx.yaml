@@ -17,8 +17,6 @@ identity:
     INFLUX_CONFIGS_PATH: "{dir}/configs"
 login:
   args: ["config", "create"]
-verify:
-  args: ["config", "list"]
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

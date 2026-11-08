@@ -8,7 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
-// The provider scope (PRD v2 §6, ADR-0007): the catalog ids an identity may touch. It is the
+// The provider scope: the catalog ids an identity may touch. It is the
 // single source of truth the guard's identity category, the PATH, the environment and the
 // harness's MCP list are built from.
 
@@ -51,7 +51,7 @@ func (m *Manifest) Scope() []string {
 }
 
 // unknownProviderHint is what an unknown-provider error adds when a user provider file named
-// for the id exists but does not load (ADR-0007 round 3): the file, its first error and the
+// for the id exists but does not load: the file, its first error and the
 // fix, so the developer is not told the id is unknown when it is the file that is broken.
 func unknownProviderHint(id string) string {
 	if fe := providers.UserFileError(id); fe != nil {

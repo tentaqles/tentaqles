@@ -17,9 +17,6 @@ install:
 identity:
   env:
     DBT_PROFILES_DIR: "{dir}"
-verify:
-  args: ["debug"]
-  logged_out_when: 'profiles\.yml file \[ERROR not found\]'
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

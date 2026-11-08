@@ -69,7 +69,7 @@ func NoticeText(n envplan.Notice) (string, bool) {
 // the hook's own form (`@if "!!"=="" (for /f ... do @%%L) else (...)`, delayed expansion off
 // and on): a printed line of 8192 characters runs, one of 8193 is dropped together with every
 // line after it (TestEmit_Cmd_LineBudget). cmd.exe's 8191-character command line plus the `@`
-// the body adds is that budget. tq env leaves a longer PATH alone and says so (ADR-0008);
+// the body adds is that budget. tq env leaves a longer PATH alone and says so;
 // Emit refuses a longer line rather than lose it silently. Bytes, not characters: cmd.exe
 // reads the UTF-8 tq prints byte by byte, so this is the conservative count.
 const CmdLineMax = 8192

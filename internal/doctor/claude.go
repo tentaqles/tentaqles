@@ -47,7 +47,7 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 }
 
 // guardHookCheck reports a trusted workspace whose Claude sessions in its folder would start with no
-// tentaqles guard (ADR-0018): the check tq run makes before it starts claude, on the same
+// tentaqles guard: the check tq run makes before it starts claude, on the same
 // CLAUDE_CONFIG_DIR and the folder's own project settings, with the same fix line.
 func guardHookCheck(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
 	g := guardplugin.CheckSessionGuard(envplan.Desired(w)["CLAUDE_CONFIG_DIR"], w.Root, w.Root)

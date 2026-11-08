@@ -13,7 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The guard of a session is the tentaqles plugin's PreToolUse hook (ADR-0018): tq run refuses
+// The guard of a session is the tentaqles plugin's PreToolUse hook: tq run refuses
 // to start claude in an identity's folder when the client's Claude config has no enabled
 // plugin that runs it. These tests write the plugin the way claude plugin install leaves it.
 
@@ -306,7 +306,7 @@ func TestRun_RefusalOnlyForASession(t *testing.T) {
 }
 
 // The project's settings are merged into a session's, so a switch set off in the folders the session
-// starts in refuses it, with the file named (REQ-8, ADR-0018). A file above the client folder is not
+// starts in refuses it, with the file named (REQ-8). A file above the client folder is not
 // read, and a project file with neither switch starts.
 func TestRun_ProjectSettingsCountToo(t *testing.T) {
 	root, _ := mkGuardWS(t, "acme", guardOpts{})

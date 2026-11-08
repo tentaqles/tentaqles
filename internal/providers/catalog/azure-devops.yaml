@@ -24,12 +24,6 @@ identity:
 # `az devops login` only stores a PAT; `az login` is the account login the token comes from.
 login:
   args: ["login"]
-verify:
-  args: ["account", "show"]
-  # Logged out, az prints "Please run 'az login' to setup account." and exits non-zero.
-  logged_out_when: "az login"
-  account: { json: user.name }
-  subscription: { json: name }
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

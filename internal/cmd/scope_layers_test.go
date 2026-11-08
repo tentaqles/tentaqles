@@ -13,9 +13,9 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The PRD v2 §6.1 reference scenario at layers 1, 2 and 3 (ADR-0008), each in its own test:
+// The reference scenario, an Azure-only client and the AWS CLI, at each layer, in its own test:
 // identity company-x declares Azure as its only cloud. Layer 4, the hook, is
-// TestPreToolUse_ScopeReferenceScenario (ADR-0006).
+// TestPreToolUse_ScopeReferenceScenario.
 //
 //   - layer 1 (advisory): the session-start preamble states the scope;
 //   - layer 2 (PATH): aws is not on the identity PATH tq builds, az is;
@@ -58,7 +58,7 @@ func envJSON(t *testing.T, sh string) (set map[string]string, unset []string) {
 	return v.Set, v.Unset
 }
 
-// TestEnv_ScopeReferenceScenario_PATH is §6.1 step 2: on the PATH tq env builds for
+// TestEnv_ScopeReferenceScenario_PATH: on the PATH tq env builds for
 // company-x, a shell call to aws finds nothing (command-not-found) while az still resolves;
 // the AWS variables are unset. tq run from outside the folder resolves on the same PATH.
 func TestEnv_ScopeReferenceScenario_PATH(t *testing.T) {

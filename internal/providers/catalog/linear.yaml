@@ -3,7 +3,6 @@ name: Linear
 category: pm
 docs: https://linear.app/developers
 cli: null
-mcp: linear
 notes: "No CLI login. A Claude session reaches Linear through an MCP server added in that client's Claude config (claude mcp add), signed in with /mcp."
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).

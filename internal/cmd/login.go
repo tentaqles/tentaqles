@@ -13,7 +13,7 @@ func newLoginCmd() *cobra.Command {
 	var sso bool
 	var ssoSession string
 	cmd := &cobra.Command{
-		Use:   "login <workspace> <identity>",
+		Use:   "login <client> <cli>",
 		Short: "Run a CLI's own login flow inside the client's private config home",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {

@@ -5,7 +5,7 @@ permissions:
 jobs:
   go:
     strategy:
-      # One OS failing does not hide another's result (ADR-0009).
+      # One OS failing does not hide another's result.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -35,7 +35,7 @@ jobs:
         run: |
           export TQ_HOME=$(mktemp -d) HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=$HOME/.gitconfig
           mkdir -p $HOME/work
-          # A runner has no terminal: the human-only verbs refuse and write nothing (ADR-0009).
+          # A runner has no terminal: reach's form cannot run, so it writes nothing.
           if ./tq reach $HOME/work/acme; then echo "tq reach ran without a human"; exit 1; fi
           test ! -e "$TQ_HOME/config.yaml"
           eval "$(./tq activate bash)"
@@ -51,7 +51,7 @@ jobs:
           $env:TQ_HOME = Join-Path $env:RUNNER_TEMP "tqh"; $env:USERPROFILE = Join-Path $env:RUNNER_TEMP "home"
           $env:GIT_CONFIG_GLOBAL = "$env:USERPROFILE\.gitconfig"
           New-Item -ItemType Directory -Force "$env:USERPROFILE\work" | Out-Null
-          # A runner has no terminal: the human-only verbs refuse and write nothing (ADR-0009).
+          # A runner has no terminal: reach's form cannot run, so it writes nothing.
           .\tq.exe reach "$env:USERPROFILE\work\acme"; if ($LASTEXITCODE -eq 0) { throw "tq reach ran without a human" }
           if (Test-Path "$env:TQ_HOME\config.yaml") { throw "a refused verb wrote config.yaml" }
           $tq = (Resolve-Path .\tq.exe).Path
@@ -61,7 +61,7 @@ jobs:
           exit 0
 
   # Known vulnerabilities in the Go code tq calls, standard library included
-  # (docs/threat-model.md TM-5). setup-go takes the newest 1.26 patch, the
+  # setup-go takes the newest 1.26 patch, the
   # same toolchain the release builds with.
   govulncheck:
     runs-on: ubuntu-latest

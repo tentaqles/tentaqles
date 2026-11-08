@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The release ships one program under two names (ADR-0021): `tentaqles`, the command of
+// The release ships one program under two names: `tentaqles`, the command of
 // docs/IDEATION.md, and `tq`, which the plugin hook resolves. The two builds compile the same
 // main package with the same flags, so the binaries are the same bytes and a browser shim or a
 // PATH-mask stub copied from one matches the other. Both land in every archive, and both

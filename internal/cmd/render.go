@@ -10,7 +10,7 @@ import (
 )
 
 // renderShims writes the browser shims of a client that lists a browser, or removes the folder
-// of one that no longer does (ADR-0016). It reports whether anything changed (or would, dryRun).
+// of one that no longer does. It reports whether anything changed (or would, dryRun).
 func renderShims(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 	if envplan.HasBrowsers(ws) {
 		if dryRun {

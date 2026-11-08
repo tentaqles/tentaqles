@@ -10,7 +10,7 @@ import (
 
 // MarkerSchema is the schema of the name-only marker that stays at
 // <root>/.tentaqles.yaml once the manifest itself lives under
-// ~/.tentaqles/identities/<name>/manifest.yaml (ADR-0002). The marker names
+// ~/.tentaqles/identities/<name>/manifest.yaml. The marker names
 // the workspace and nothing else; the guard never reads anything else from it.
 const MarkerSchema = "tentaqles-marker-v1"
 

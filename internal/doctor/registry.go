@@ -11,7 +11,7 @@ import (
 // AddFunc records one finding.
 type AddFunc func(level, code, ws, msg, fix string)
 
-// Check is a doctor check registered from its own file (spec E §17), so each
+// Check is a doctor check registered from its own file, so each
 // workstream adds checks without editing Run. Either func may be nil.
 // Checks must stay cheap: no network, no subprocess (RunForCwd backs the
 // hook path; Run calls these only from tq doctor).

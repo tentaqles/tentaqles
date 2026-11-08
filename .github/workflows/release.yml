@@ -8,7 +8,7 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     # provenance: a signed statement, kept by GitHub, that this workflow built
-    # each archive from this tag (docs/threat-model.md TM-2)
+    # each archive from this tag
     permissions:
       contents: write
       id-token: write

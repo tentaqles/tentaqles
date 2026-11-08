@@ -18,8 +18,6 @@ identity:
     GLAB_CONFIG_DIR: "{dir}"
 login:
   args: ["auth", "login"]
-verify:
-  args: ["auth", "status"]
 # match: what a client's terminal hides when this provider is outside the client's scope: its
 # CLIs (masked on the client's PATH) and its variables (unset).
 match:

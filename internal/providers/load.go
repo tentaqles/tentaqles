@@ -102,7 +102,7 @@ func loadEmbedded() (*Catalog, error) {
 // FileError is a user provider file (~/.tentaqles/providers/<id>.yaml) that tq did not load:
 // it cannot be read, does not parse or validate, collides with another provider's identity
 // variable, or (a new id) claims an entry a built-in provider lists. The file contributes
-// nothing; for a built-in id the built-in entry stays in force (ADR-0007 round 3).
+// nothing; for a built-in id the built-in entry stays in force.
 type FileError struct {
 	Path    string // the full path of the file
 	ID      string // the id the file is named for (its basename without .yaml)
@@ -243,7 +243,7 @@ func Load() (*Catalog, error) {
 // LoadAll is Load but never stops at the first bad user file: it loads every readable, valid
 // user file over the embedded catalog and returns one error per file it did not load (a
 // *FileError) plus any error reading the folder, so `tq providers list` and `tq doctor` can
-// report them all and the hook can decide per workspace (ADR-0007 round 3). The embedded
+// report them all and the hook can decide per workspace. The embedded
 // catalog alone still errors with a nil catalog.
 func LoadAll() (*Catalog, []error) {
 	c, err := loadEmbedded()
@@ -427,7 +427,7 @@ func mustLoadUncached() (*Catalog, error) {
 
 // override puts a user provider file into the catalog: a new id is appended, a known id is
 // replaced, except its match lists, which are the union of both (Match.Union): a user file
-// extends what the guard recognises and never shortens it (ADR-0007).
+// extends what the guard recognises and never shortens it.
 func (c *Catalog) override(p Provider) {
 	prev, exists := c.byID[p.ID]
 	if !exists {

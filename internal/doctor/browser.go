@@ -8,7 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// browserChecks reads a client's browsers: list (ADR-0016): every named profile has a folder in
+// browserChecks reads a client's browsers: list: every named profile has a folder in
 // that browser's user data folder, and the shims that send BROWSER, xdg-open and open to that
 // profile are written. Both are warnings: the browser makes a profile the first time
 // --profile-directory names it, and the shims come with the next render.

@@ -19,7 +19,7 @@ import (
 
 const openUsage = "usage: tentaqles open [--browser chrome|edge] <http or https URL>"
 
-// newOpenCmd is `tentaqles open <url>`: the URL in the client's browser profile (ADR-0016).
+// newOpenCmd is `tentaqles open <url>`: the URL in the client's browser profile.
 // It writes nothing under the tq home, so a session may run it; it opens only an http or https
 // URL, by the browser's install path with --profile-directory, never through the system's
 // default handler. Flags are read by hand: any word that starts with '-' and is not --browser
@@ -114,7 +114,7 @@ func openFor(ws *resolve.Workspace, want, rawURL string) (manifest.Browser, erro
 }
 
 // ShimMain makes the tq binary answer as a browser shim when it runs from a client's shims
-// folder ($TQ_HOME/shims/<ws>/tq-open, xdg-open, open; ADR-0016). Every other run of tq returns
+// folder ($TQ_HOME/shims/<ws>/tq-open, xdg-open, open). Every other run of tq returns
 // false.
 func ShimMain(stderr io.Writer, args []string) (bool, int) {
 	exe, err := os.Executable()

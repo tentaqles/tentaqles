@@ -20,7 +20,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// The browser profile (ADR-0016) end to end, with a fake browser: the test binary copied as
+// The browser profile end to end, with a fake browser: the test binary copied as
 // chrome-fake / msedge-fake into a folder named fakebin, which records its argv. No real
 // browser opens in these tests.
 

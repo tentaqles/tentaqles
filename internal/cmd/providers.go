@@ -28,7 +28,7 @@ func newProvidersListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List providers in the catalog",
 		RunE: func(c *cobra.Command, _ []string) error {
-			// LoadAll reports every bad user file instead of aborting on the first (ADR-0007
+			// LoadAll reports every bad user file instead of aborting on the first
 			// round 2), so a single broken file never hides the rest of the catalog.
 			cat, loadErrs := providers.LoadAll()
 			if cat == nil {
@@ -60,12 +60,12 @@ func newProvidersListCmd() *cobra.Command {
 				return err
 			}
 			// Overlaps between providers (the same entry, a host under another's) are
-			// reported, never silent (ADR-0007 rounds 2 and 3).
+			// reported, never silent.
 			for _, o := range cat.Overlaps() {
 				fmt.Fprintf(c.ErrOrStderr(), "overlap: %s\n", o)
 			}
 			// A provider file tq did not load is an error: the list printed is not what the
-			// file says, so the command fails (ADR-0007 round 3).
+			// file says, so the command fails.
 			for _, e := range loadErrs {
 				fmt.Fprintf(c.ErrOrStderr(), "error: %v\n", e)
 			}
@@ -194,7 +194,7 @@ func newProvidersCheckCmd() *cobra.Command {
 func newProvidersAddCmd() *cobra.Command {
 	var name, category, command string
 	var versionArgs, envPairs []string
-	var loginArgs, verifyArgs, docs string
+	var loginArgs, docs string
 	var force bool
 	c := &cobra.Command{
 		Use:   "add <id>",
@@ -244,13 +244,6 @@ func newProvidersAddCmd() *cobra.Command {
 				}
 				p.Login = &providers.Cmd{Args: fields}
 			}
-			if verifyArgs != "" {
-				fields, err := splitArgs(verifyArgs)
-				if err != nil {
-					return err
-				}
-				p.Verify = &providers.VerifyCmd{Cmd: providers.Cmd{Args: fields}}
-			}
 
 			path, err := providers.WriteUser(p)
 			if err != nil {
@@ -266,7 +259,6 @@ func newProvidersAddCmd() *cobra.Command {
 	c.Flags().StringSliceVar(&versionArgs, "version-args", nil, "args to print the CLI's version")
 	c.Flags().StringArrayVar(&envPairs, "env", nil, "identity env var, KEY=VALUE (repeatable)")
 	c.Flags().StringVar(&loginArgs, "login", "", "login command args, e.g. \"auth login\"")
-	c.Flags().StringVar(&verifyArgs, "verify", "", "verify command args, e.g. \"auth status\"")
 	c.Flags().StringVar(&docs, "docs", "", "docs URL")
 	c.Flags().BoolVar(&force, "force", false, "overwrite an embedded provider or an existing user file")
 	_ = c.MarkFlagRequired("name")
@@ -275,7 +267,7 @@ func newProvidersAddCmd() *cobra.Command {
 }
 
 // splitArgs splits a shell-like argument string on whitespace. It does not
-// support quoting; that's sufficient for the simple login/verify args tq
+// support quoting; that's sufficient for the simple login args tq
 // providers add expects.
 func splitArgs(s string) ([]string, error) {
 	fields := strings.Fields(s)

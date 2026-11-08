@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	xterm "github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/banner"
 	"github.com/tentaqles/tentaqles/internal/envplan"
@@ -412,8 +413,20 @@ func huhOptions(opts []reach.Option) []huh.Option[string] {
 	return append(out, huh.NewOption("Other", reachOther), huh.NewOption("Skip", reachSkip))
 }
 
+// errNoTerminal refuses the interactive form when stdin or stdout is not a terminal: the form would
+// otherwise wait on the console for an answer no one can give (a CI runner, a pipe).
+var errNoTerminal = errors.New("tentaqles reach needs a terminal: run it in your own terminal")
+
+// interactive reports whether stdin and stdout are terminals.
+func interactive() bool {
+	return xterm.IsTerminal(os.Stdin.Fd()) && xterm.IsTerminal(os.Stdout.Fd())
+}
+
 // runReachForm asks each question in turn. An Other answer asks for the name.
 func runReachForm() (*reach.Answers, error) {
+	if !interactive() {
+		return nil, errNoTerminal
+	}
 	a := &reach.Answers{}
 	for _, part := range []string{reachPartEmail, reachPartProviders, reachPartBrowsers} {
 		if err := askReachPart(part, a); err != nil {
@@ -559,6 +572,9 @@ func askBrowsers(run func(huh.Field) error, a *reach.Answers) error {
 
 // runReachMenu asks what to change in a client that exists. Nothing is the default.
 func runReachMenu() (string, error) {
+	if !interactive() {
+		return "", errNoTerminal
+	}
 	v := reachPartNothing
 	err := huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title("This folder is already a client. What do you want to change?").Options(
 		huh.NewOption("Nothing, just show it", reachPartNothing),
@@ -571,6 +587,9 @@ func runReachMenu() (string, error) {
 
 // runReachEditForm asks one part of the form for an existing client, starting from its answers.
 func runReachEditForm(part string, cur *reach.Answers) (*reach.Answers, error) {
+	if !interactive() {
+		return nil, errNoTerminal
+	}
 	a := *cur
 	a.Clouds, a.Team, a.Data = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data)
 	a.Browsers, a.Other = slices.Clone(cur.Browsers), slices.Clone(cur.Other)

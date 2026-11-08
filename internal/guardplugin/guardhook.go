@@ -13,8 +13,8 @@ import (
 
 // The guard of a session is the tentaqles plugin's PreToolUse hook (the plugin's hooks/hooks.json
 // runs tq_hook.sh pre-tool-use). A Claude config dir without it starts a session with no guard
-// at all, so tq refuses to start one (ADR-0018). The check reads the same plugin folder the
-// integrity record covers (PluginRoot), so the two cannot disagree about which plugin is loaded.
+// at all, so tq refuses to start one. The check reads the same plugin folder the
+// tq reads (PluginRoot), so the two cannot disagree about which plugin is loaded.
 
 // GuardMarketplace and GuardPlugin are the constant names of the install (`claude plugin
 // marketplace add tentaqles/tentaqles`, `claude plugin install tentaqles@tentaqles`). GuardPlugin

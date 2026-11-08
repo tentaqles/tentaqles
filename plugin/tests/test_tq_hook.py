@@ -187,13 +187,13 @@ def test_tq_hook_never_runs_a_tq_from_the_plugin_folder(tmp_path):
     assert "tq is not installed" in p.stdout
 
 
-def test_hooks_json_pretooluse_matcher_covers_shell_file_and_mcp_tools():
+def test_hooks_json_pretooluse_matcher_covers_the_shell_tools_only():
     hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
     entry = next(e for e in hooks["hooks"]["PreToolUse"] if "tq_hook.sh" in e["hooks"][0]["command"])
     rx = re.compile(entry["matcher"])
-    for tool in ("Bash", "PowerShell", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Agent", "mcp__x__y"):
+    for tool in ("Bash", "PowerShell"):
         assert rx.search(tool), tool
-    for tool in ("TodoWrite", "AgentX"):
+    for tool in ("Read", "Edit", "Write", "Agent", "mcp__x__y", "BashX", "TodoWrite"):
         assert not rx.search(tool), tool
 
 

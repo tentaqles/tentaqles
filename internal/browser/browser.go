@@ -1,5 +1,5 @@
 // Package browser finds a client's browser and builds the command that opens a URL in the
-// client's profile (ADR-0016): Chrome or Edge, by install path, with --profile-directory, never
+// client's profile: Chrome or Edge, by install path, with --profile-directory, never
 // through the system's default handler, which opens whatever profile the OS last used.
 //
 // It never runs a shell: the program and every argument are separate argv elements, so a URL

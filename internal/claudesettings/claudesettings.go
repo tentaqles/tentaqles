@@ -1,7 +1,7 @@
 // Package claudesettings renders the tq-managed part of a Claude identity's
 // settings.json: a few env vars and the status line. Every identity gets the
 // same baseline plus what its manifest adds, so identities stop drifting
-// apart. tq writes no permission setting (PRD v2 §13: permission modes of
+// apart. tq writes no permission setting (permission modes of
 // any kind are a non-goal); its hook only denies.
 //
 // tq only touches what it owns. What it wrote last time is recorded in

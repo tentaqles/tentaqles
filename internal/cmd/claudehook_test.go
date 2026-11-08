@@ -103,7 +103,7 @@ func TestPreToolUse_NonBashToolAllowed(t *testing.T) {
 	}
 }
 
-// A payload tq cannot read is denied (PRD v2 §6.3, fail closed; ADR-0006).
+// A payload tq cannot read is denied: the hook fails closed.
 func TestPreToolUse_MalformedStdinDenies(t *testing.T) {
 	isolateHome(t)
 	code, out, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, "not json")

@@ -375,3 +375,17 @@ func TestReach_ExistingClientNoChange(t *testing.T) {
 		t.Fatal("the manifest changed")
 	}
 }
+
+// Without a terminal the real form and menu refuse at once instead of waiting on the console for
+// an answer no one can give (a CI runner, a pipe). The test binary's stdin is a closed pipe.
+func TestReach_FormNeedsATerminal(t *testing.T) {
+	if _, err := runReachForm(); !errors.Is(err, errNoTerminal) {
+		t.Fatalf("form: %v", err)
+	}
+	if _, err := runReachMenu(); !errors.Is(err, errNoTerminal) {
+		t.Fatalf("menu: %v", err)
+	}
+	if _, err := runReachEditForm(reachPartEmail, &reach.Answers{}); !errors.Is(err, errNoTerminal) {
+		t.Fatalf("edit form: %v", err)
+	}
+}

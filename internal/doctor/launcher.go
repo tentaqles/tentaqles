@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Owned by WS2 (spec E §8): checks about the claude/codex launcher.
+// Checks about the claude launcher tq activate defines.
 
 func init() {
 	Register(Check{Name: "launcher", Global: claudeAliasShadow})
@@ -74,7 +74,7 @@ func homes(d Deps) []string {
 }
 
 // claudeAliasShadow reports what in a shell profile stands in for the
-// claude and codex launchers `tq activate` defines (spec E §8.2):
+// claude launcher `tq activate` defines:
 //   - a PowerShell alias (aliases resolve before functions): warn;
 //   - a function named claude or codex defined after tq's activation, such
 //     as a wrapper an older tq carried over: warn;

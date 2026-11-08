@@ -1,13 +1,26 @@
 # tentaqles
 
-An identity manager for developers who work for several clients. One folder per client: a terminal or a
-Claude Code session opened there sees only that client's tools and accounts, and a hook blocks what belongs to
-another client. [docs/IDEATION.md](docs/IDEATION.md) is the spec.
+One terminal identity per client folder, for developers who work for several clients.
+
+You keep one folder per client. A terminal opened in that folder, or in any folder under it, carries that client's
+identity and no other:
+
+- **Claude Code** runs with the client's own config home, so it is logged in to the client's own Claude account
+  and subscription.
+- **git** commits with the client's name and email.
+- **Each CLI** (`gh`, `az`, `aws`, `gcloud`, `glab`, `databricks` and others) reads its own login for that client.
+- **The browser**: links the terminal opens go to the client's Chrome or Edge profile.
+- **Only the client's tools**: the CLIs of providers the client doesn't use answer `command not found` in that
+  terminal.
+
+A small hook in Claude Code blocks a `git`, `gh` or cloud command that would run under the wrong identity.
+
+[docs/IDEATION.md](docs/IDEATION.md) describes what it is for.
 
 ## Install
 
-Every install puts one program on the PATH under two names: `tentaqles` and its alias `tq`,
-which the plugin's guard hook runs (ADR-0021). From source, install both.
+Every install puts one program on the PATH under two names: `tentaqles`, and its alias `tq`, which the plugin hook
+runs.
 
 macOS / Linux:
 
@@ -21,6 +34,9 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/tentaqles/tentaqles/main/installers/install.ps1 | iex
 ```
 
+Both installers check the archive's SHA-256 against the release's `checksums.txt`, and, when `gh` is logged in,
+its build provenance.
+
 Homebrew or Scoop:
 
 ```sh
@@ -28,55 +44,42 @@ brew install --cask --no-quarantine tentaqles/tap/tq   # macOS / Linux
 scoop bucket add tentaqles https://github.com/tentaqles/scoop-bucket && scoop install tq
 ```
 
-`--cask` is required for `--no-quarantine` to be accepted at all: it is a
-cask-only option, and `brew install --no-quarantine ...` fails with
-`invalid option`. If it is already installed, use `brew reinstall --cask
---no-quarantine tentaqles/tap/tq`.
+`--no-quarantine` is needed on macOS because the binary is not signed with an Apple Developer certificate; the
+`curl` installer doesn't need it.
 
-`--no-quarantine` is not optional on macOS today. `tq` is not signed with an
-Apple Developer certificate, so Homebrew's default quarantine makes Gatekeeper
-refuse it with *"Apple could not verify tq is free of malware"*. The `curl`
-installer above has no such problem -- files fetched with `curl` are never
-quarantined. If you already installed it and hit the block:
-
-```sh
-xattr -dr com.apple.quarantine "$(brew --prefix)/Caskroom/tq"
-```
-
-From source (requires Go 1.26+):
+From source (Go 1.26 or later):
 
 ```sh
 go install github.com/tentaqles/tentaqles/cmd/tentaqles@latest
-go install github.com/tentaqles/tentaqles/cmd/tq@latest   # the alias the plugin hook runs
+go install github.com/tentaqles/tentaqles/cmd/tq@latest
 ```
 
 ## Quick start
 
-```powershell
-tq hooks install                     # once: terminals follow the folder
-tentaqles reach C:\clients\acme      # the banner, a short form, then a typed yes
+```sh
+tentaqles reach ~/clients/acme
 ```
 
-reach then opens a new terminal in that folder, and ends the terminal it ran in after you press Enter (only when
-that is an interactive shell; `--no-terminal` skips both, and see ADR-0019). In the new terminal, start `claude`. In it:
+`reach` shows a banner and asks for the client's email, git host, clouds, team, data and task tools, email
+provider and browser profile. After you type `yes` it:
 
-- Only the CLIs of that client's providers run. Another provider's CLI answers `command not found`.
-- `git`, `gh`, `az` and the other CLIs use that client's account.
-- Claude Code uses that client's login.
-- If an agent reaches for another client's tool anyway, by path or by API, the hook blocks it and names the
-  scope.
-- An agent cannot change the guard, the manifest or the identity. Those commands are human-only.
+1. writes the client's manifest under `~/.tentaqles/identities/acme/`, and a marker file in the folder;
+2. points the folder's git at the client's name and email;
+3. renders the client's Claude settings, the PATH mask and the browser shims;
+4. installs the tentaqles plugin into the client's Claude config;
+5. adds tq's activation block to your shell profiles, if it isn't there yet.
+
+Then open a new terminal in `~/clients/acme`, start `claude` and log in with the client's account. Log each CLI in
+once inside that terminal, or with `tq login acme gh`, and the login stays the client's.
+
+Run `tentaqles reach` again in the same folder to change the client's providers, browser or email.
 
 ## Commands
 
 See [docs/COMMANDS.md](docs/COMMANDS.md).
 
-## Status
+## What it does not do
 
-Being rebuilt around IDEATION. Installing the CLIs during `reach`, browser profiles and the new onboarding skill are
-not built yet. The handover to a new terminal is built (ADR-0019).
-
-## Security
-
-See [docs/threat-model.md](docs/threat-model.md). The guard is a speed bump for shell text, not a sandbox: it
-stops mistakes and casual reach, not a program already running as your user.
+The isolation is the terminal's environment. A program can still read another client's files, or run a CLI by its
+full path, and the hook only reads the text of a shell command. Tentaqles prevents mistakes; it is not a sandbox.
+See [docs/threat-model.md](docs/threat-model.md).
