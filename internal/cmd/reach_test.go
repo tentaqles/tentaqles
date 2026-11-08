@@ -30,6 +30,14 @@ func isolateReach(t *testing.T, a *reach.Answers) string {
 	t.Setenv("TQ_NO_BANNER", "")
 	clearAgentMarkers(t)
 	prevForm, prevGit, prevInstall, prevPlugin := reachForm, reachRunGit, reachInstall, reachGuardPlugin
+	prevMenu, prevEdit := reachMenu, reachEditForm
+	// An existing client's menu answers "nothing" unless a test says otherwise; no edit form runs.
+	reachMenu = func() (string, error) { return reachPartNothing, nil }
+	reachEditForm = func(string, *reach.Answers) (*reach.Answers, error) {
+		t.Fatal("an edit form ran without a test asking for one")
+		return nil, nil
+	}
+	t.Cleanup(func() { reachMenu, reachEditForm = prevMenu, prevEdit })
 	reachForm = func() (*reach.Answers, error) { return a, nil }
 	reachRunGit = func(...string) (string, error) { return "", nil }
 	// No test but the install ones runs a package manager (TestReach_InstallsAndContinues puts

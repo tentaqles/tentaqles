@@ -6,6 +6,14 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### `tentaqles reach` changes an existing client (ADR-0012)
+
+- In a folder that already is a trusted client, `tentaqles reach` offers a menu: change the providers, the
+  browser and profile, or the email, through the same questions with the current answers ticked. After the
+  typed `yes`, which lists every change, it rewrites only those keys of the manifest (hand-written keys and
+  comments stay), signs the client again as `tq allow` does, updates the folder's git email, and installs the
+  CLIs of added providers. An untrusted client is only shown, as before.
+
 ### The `tentaqles` command ships (ADR-0021)
 
 - Every release archive, the Scoop manifest, the Homebrew cask and both installers now install `tentaqles`

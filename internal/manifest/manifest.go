@@ -192,6 +192,12 @@ func Load(path string) (*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return Parse(raw, path)
+}
+
+// Parse is Load for bytes already read: path only names them in errors and in Manifest.Path.
+// tentaqles reach checks an edited manifest with it before writing the file.
+func Parse(raw []byte, path string) (*Manifest, error) {
 	if loc := secretRe.FindIndex(raw); loc != nil {
 		return nil, fmt.Errorf("%w (at byte %d of %s)", ErrSecretLike, loc[0], path)
 	}

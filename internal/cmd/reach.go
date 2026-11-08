@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,7 +47,9 @@ func newReachCmd() *cobra.Command {
 		Short: "Make a folder a client identity, or show the one it already is (human only)",
 		Long: "tentaqles reach makes the current folder, or <path>, an isolated client identity. The folder's\n" +
 			"name is the identity's name, and its parent folder is where your clients live. In a folder that\n" +
-			"already is a client, it shows that client and changes nothing. Once the client is trusted it\n" +
+			"already is a trusted client, it shows that client and offers to change its providers, its browser\n" +
+			"and profile, or its email through the same questions; the change is confirmed, written and signed\n" +
+			"again like tq allow (an untrusted client is only shown). Once a new client is trusted it\n" +
 			"installs the tentaqles plugin into the client's Claude config (--no-plugin skips this): the plugin\n" +
 			"holds the guard, and claude won't start a session for the client without it. Then it installs the\n" +
 			"CLI of each provider the client can use (--no-install skips this).\n\n" +
@@ -74,7 +77,7 @@ func newReachCmd() *cobra.Command {
 			}
 			if _, err := os.Stat(filepath.Join(dir, manifest.FileName)); err == nil {
 				show()
-				return reachShowExisting(c, dir, name)
+				return reachShowExisting(c, dir, name, noInstall)
 			}
 			if !workspace.NameRe.MatchString(name) {
 				return fmt.Errorf("the folder name %q can't name a client: use lowercase letters, digits, dots, dashes and underscores, starting with a letter or digit", name)
@@ -257,13 +260,25 @@ func reachDir(args []string) (string, error) {
 	return abs, nil
 }
 
-// reachShowExisting reports a folder that already is a client. It reads and changes nothing else.
-func reachShowExisting(c *cobra.Command, dir, name string) error {
+// Seams for tests: the menu of an existing client and the part of the form it asks.
+var (
+	reachMenu     = runReachMenu
+	reachEditForm = runReachEditForm
+)
+
+// reachShowExisting reports a folder that already is a client and, for a trusted client whose manifest
+// is in the protected location, offers to change its setup through the same form (IDEATION: the menu
+// differs for an existing client). An untrusted client is only shown: an edit re-signs, and re-signing
+// a client whose trust or integrity record fails is tq allow's decision, made knowingly, not a side
+// effect of an edit.
+func reachShowExisting(c *cobra.Command, dir, name string, noInstall bool) error {
 	w := c.OutOrStdout()
 	fmt.Fprintln(w, "This folder is already a client.")
 	path := paths.ManifestPath(name)
+	protected := true
 	if _, err := os.Stat(path); err != nil {
 		path = filepath.Join(dir, manifest.FileName) // an identity not yet migrated keeps it in the root
+		protected = false
 	}
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -278,6 +293,114 @@ func reachShowExisting(c *cobra.Command, dir, name string) error {
 	}
 	if v := trust.Check(name, h); !v.OK {
 		fmt.Fprintf(w, "It isn't trusted right now: %s\n", v.Reason)
+		return nil
+	}
+	if !protected {
+		fmt.Fprintf(w, "Its manifest is still in the folder; run tq migrate manifests to change its setup with reach.\n")
+		return nil
+	}
+	ws, err := findWorkspace(name)
+	if err != nil {
+		return err
+	}
+	if rep, err := trust.Verify(name); err != nil || !rep.Trusted(ws.Hash) {
+		fmt.Fprintf(w, "Its integrity record does not match (tq hooks verify %s says why); reach changes nothing until it does.\n", name)
+		return nil
+	}
+	part, err := reachMenu()
+	if err != nil {
+		return err
+	}
+	if part == reachPartNothing {
+		return nil
+	}
+	return reachEdit(c, ws, part, noInstall)
+}
+
+// reachEdit changes one part of an existing client's setup: it asks the part, shows what changes,
+// asks the typed yes, rewrites the manifest, makes the new identities' folders, points the folder's
+// git at a new email, and signs the client again (the path of tq allow). Then it installs the CLIs of
+// the providers it added. Nothing is written before the yes.
+func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string, noInstall bool) error {
+	w := c.OutOrStdout()
+	cur := reach.AnswersFrom(ws.Manifest)
+	next, err := reachEditForm(part, cur)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(ws.ManifestPath)
+	if err != nil {
+		return err
+	}
+	out, changes, added, removed, err := reach.Edit(raw, cur, next)
+	if err != nil {
+		return err
+	}
+	if len(changes) == 0 {
+		fmt.Fprintln(w, "Nothing changed.")
+		return nil
+	}
+	about := fmt.Sprintf("tentaqles reach: about to change the client %s (%s), rewrite its manifest %s, and sign it again",
+		ws.Name, strings.Join(changes, "; "), ws.ManifestPath)
+	if err := humanGate(c, "tentaqles reach", about); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(ws.ManifestPath, out, 0o600); err != nil {
+		return err
+	}
+	for _, id := range added {
+		if err := os.MkdirAll(paths.IdentityDir(ws.Name, id), 0o700); err != nil {
+			return err
+		}
+	}
+	if next.Email != cur.Email {
+		if err := gitcfg.WriteWorkspace(ws.Root, ws.Manifest.Git.Name, next.Email); err != nil {
+			return fmt.Errorf("the manifest names %s, but the folder's git config was not updated: %w", next.Email, err)
+		}
+	}
+	updated, err := findWorkspace(ws.Name)
+	if err != nil {
+		return err
+	}
+	if err := signWorkspace(c, updated); err != nil {
+		return fmt.Errorf("the manifest of %s was changed but not signed: %w. Run tq allow %s to finish", ws.Name, err, ws.Name)
+	}
+	if len(added) > 0 && !noInstall {
+		reachInstall(c, updated)
+	}
+	for _, id := range removed {
+		fmt.Fprintf(w, "%s is no longer in this client's scope. Its folder %s stays, with any login in it; delete it if you no longer need it.\n",
+			id, paths.IdentityDir(ws.Name, id))
+	}
+	fmt.Fprintf(w, "\n%s is updated. It can use: %s\n", ws.Name, strings.Join(updated.Manifest.Scope(), ", "))
+	reachWarnOther(c, updated.Manifest)
+	fmt.Fprintf(w, "Open a new terminal in %s, and restart its claude sessions, for the change to apply.\n", ws.Root)
+	return nil
+}
+
+// writeFileAtomic replaces p with b through a temporary file in the same folder and a rename.
+func writeFileAtomic(p string, b []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		os.Remove(tmp)
+		return err
 	}
 	return nil
 }
@@ -577,8 +700,56 @@ func huhOptions(opts []reach.Option) []huh.Option[string] {
 
 // runReachForm asks each question in turn. An Other answer asks for the name.
 func runReachForm() (*reach.Answers, error) {
-	run := func(f huh.Field) error { return huh.NewForm(huh.NewGroup(f)).Run() }
 	a := &reach.Answers{}
+	for _, part := range []string{reachPartEmail, reachPartProviders, reachPartBrowsers} {
+		if err := askReachPart(part, a); err != nil {
+			return nil, err
+		}
+	}
+	return a, nil
+}
+
+// The parts of the form, which the menu of an existing client offers one at a time.
+const (
+	reachPartEmail     = "email"
+	reachPartProviders = "providers"
+	reachPartBrowsers  = "browsers"
+	reachPartNothing   = "nothing"
+)
+
+// askReachPart asks one part of the form, starting from what a already holds (an existing client's
+// answers, or none) and writing the new answers into it.
+func askReachPart(part string, a *reach.Answers) error {
+	run := func(f huh.Field) error { return huh.NewForm(huh.NewGroup(f)).Run() }
+	switch part {
+	case reachPartEmail:
+		email := a.Email
+		if err := run(huh.NewInput().Title("Identity email").Value(&email).Validate(reach.ValidateEmail)); err != nil {
+			return err
+		}
+		a.Email = strings.TrimSpace(email)
+		return nil
+	case reachPartBrowsers:
+		return askBrowsers(run, a)
+	case reachPartProviders:
+		return askProviders(run, a)
+	}
+	return fmt.Errorf("no form part %q", part)
+}
+
+func askProviders(run func(huh.Field) error, a *reach.Answers) error {
+	// Names typed under Other before are kept unless the developer unticks them.
+	if len(a.Other) > 0 {
+		var opts []huh.Option[string]
+		for _, n := range a.Other {
+			opts = append(opts, huh.NewOption(n, n).Selected(true))
+		}
+		keep := slices.Clone(a.Other)
+		if err := run(huh.NewMultiSelect[string]().Title("Providers tentaqles does not manage: keep").Options(opts...).Value(&keep)); err != nil {
+			return err
+		}
+		a.Other = keep
+	}
 	askOther := func(title string) error {
 		name := ""
 		if err := run(huh.NewInput().Title(title).Value(&name).Validate(reach.ValidateName)); err != nil {
@@ -587,11 +758,16 @@ func runReachForm() (*reach.Answers, error) {
 		a.Other = append(a.Other, strings.TrimSpace(name))
 		return nil
 	}
+	// one and many start on the current choice (Skip when there is none) and replace it.
 	one := func(title string, opts []reach.Option, into *string) error {
 		v := reachSkip
+		if *into != "" {
+			v = *into
+		}
 		if err := run(huh.NewSelect[string]().Title(title).Options(huhOptions(opts)...).Value(&v)); err != nil {
 			return err
 		}
+		*into = ""
 		switch v {
 		case reachSkip:
 		case reachOther:
@@ -602,10 +778,11 @@ func runReachForm() (*reach.Answers, error) {
 		return nil
 	}
 	many := func(title string, opts []reach.Option, into *[]string) error {
-		var vs []string
+		vs := slices.Clone(*into)
 		if err := run(huh.NewMultiSelect[string]().Title(title).Options(huhOptions(opts)...).Value(&vs)); err != nil {
 			return err
 		}
+		*into = nil
 		for _, v := range vs {
 			switch v {
 			case reachSkip:
@@ -619,10 +796,6 @@ func runReachForm() (*reach.Answers, error) {
 		}
 		return nil
 	}
-	if err := run(huh.NewInput().Title("Identity email").Value(&a.Email).Validate(reach.ValidateEmail)); err != nil {
-		return nil, err
-	}
-	a.Email = strings.TrimSpace(a.Email)
 	for _, step := range []func() error{
 		func() error { return one("Git provider", reach.GitOptions, &a.Git) },
 		func() error { return many("Cloud providers", reach.CloudOptions, &a.Clouds) },
@@ -632,27 +805,63 @@ func runReachForm() (*reach.Answers, error) {
 		func() error { return one("Email provider", reach.EmailOptions, &a.EmailProvider) },
 	} {
 		if err := step(); err != nil {
-			return nil, err
+			return err
 		}
 	}
+	return nil
+}
+
+func askBrowsers(run func(huh.Field) error, a *reach.Answers) error {
+	current := map[string]string{}
 	var browsers []string
+	for _, b := range a.Browsers {
+		current[b.Name] = b.Profile
+		browsers = append(browsers, b.Name)
+	}
 	opts := make([]huh.Option[string], 0, 3)
 	for _, o := range reach.BrowserOptions {
 		opts = append(opts, huh.NewOption(o.Label, o.Value))
 	}
 	opts = append(opts, huh.NewOption("Skip", reachSkip))
 	if err := run(huh.NewMultiSelect[string]().Title("Browsers").Options(opts...).Value(&browsers)); err != nil {
-		return nil, err
+		return err
 	}
+	a.Browsers = nil
 	for _, name := range browsers {
 		if name == reachSkip {
 			continue
 		}
 		profile := "Default"
+		if p, ok := current[name]; ok {
+			profile = p
+		}
 		if err := run(huh.NewInput().Title(name + " profile for this client").Value(&profile).Validate(reach.ValidateName)); err != nil {
-			return nil, err
+			return err
 		}
 		a.Browsers = append(a.Browsers, manifest.Browser{Name: name, Profile: strings.TrimSpace(profile)})
 	}
-	return a, nil
+	return nil
+}
+
+// runReachMenu asks what to change in a client that exists. Nothing is the default.
+func runReachMenu() (string, error) {
+	v := reachPartNothing
+	err := huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title("This folder is already a client. What do you want to change?").Options(
+		huh.NewOption("Nothing, just show it", reachPartNothing),
+		huh.NewOption("Add or remove providers", reachPartProviders),
+		huh.NewOption("The browser and its profile", reachPartBrowsers),
+		huh.NewOption("The email", reachPartEmail),
+	).Value(&v))).Run()
+	return v, err
+}
+
+// runReachEditForm asks one part of the form for an existing client, starting from its answers.
+func runReachEditForm(part string, cur *reach.Answers) (*reach.Answers, error) {
+	a := *cur
+	a.Clouds, a.Team, a.Data = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data)
+	a.Browsers, a.Other = slices.Clone(cur.Browsers), slices.Clone(cur.Other)
+	if err := askReachPart(part, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
