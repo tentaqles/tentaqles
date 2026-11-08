@@ -24,8 +24,7 @@ var claudeSubcommands = []string{"agents", "attach", "auth", "auto-mode", "docto
 
 // launchClaudeArgs is the launcher's claude command line: it adds
 // --dangerously-skip-permissions (tq sets no permission mode of its own
-// beyond this skip; the identity and secret rules run in the hook in every
-// mode). A claude --permission-mode or --dangerously-skip-permissions typed
+// beyond this skip; the identity check runs in the hook in every mode). A claude --permission-mode or --dangerously-skip-permissions typed
 // on this command line replaces it, and claude's subcommands, --help and --version get
 // nothing. An agent's nested claude (agent true) never gets bypass from the
 // launcher: it keeps claude's own prompts.
@@ -48,7 +47,7 @@ func launchClaudeArgs(args []string, agent bool) []string {
 }
 
 // claudeIsSession reports whether claude's arguments start a session: not one of its
-// subcommands, and not --help or --version. Only a session needs the guard (REQ-4, REQ-6):
+// subcommands, and not --help or --version. Only a session needs the guard:
 // `claude plugin install` and `claude --version` run with none, so the fix line itself runs.
 func claudeIsSession(args []string) bool {
 	if len(args) > 0 && slices.Contains(claudeSubcommands, args[0]) {

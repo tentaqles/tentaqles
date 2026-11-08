@@ -124,6 +124,32 @@ func TestPreToolUse_GHUserStubbed(t *testing.T) {
 	}
 }
 
+// expected_user stands in for git.user only on GitHub: on Azure DevOps it is that host's
+// account, which gh never reports, so gh is not compared with it.
+func TestPreToolUse_ExpectedUserIsGitHubOnly(t *testing.T) {
+	prev := lookupGHUser
+	lookupGHUser = func(map[string]string) string { return "someone" }
+	t.Cleanup(func() { lookupGHUser = prev })
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "git:\n  provider: azure-devops\n  expected_user: dev@acme.example\n")
+	if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "gh pr list")); code != 0 {
+		t.Fatalf("azure-devops: code=%d out=%s", code, out)
+	}
+	ws = setupTrustedWorkspaceWithManifest(t, "globex", "git:\n  provider: github\n  expected_user: globex-bot\n")
+	if code, out, _ := runHook(t, []string{"claude-hook", "pre-tool-use", "--json"}, hookPayloadFor(t, ws, "gh pr list")); code != 2 || !strings.Contains(out, `"rule":"gh-user"`) {
+		t.Fatalf("github: code=%d out=%s", code, out)
+	}
+}
+
+// The Git line names only what the manifest has: no empty user.
+func TestRenderSessionStart_GitWithoutUser(t *testing.T) {
+	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{Client: "acme",
+		Git: manifest.Git{Provider: "azure-devops", Email: "dev@acme.example"}}}
+	got := renderSessionStart(doctor.CwdReport{Result: resolve.Result{Workspace: ws}}, "")
+	if !strings.Contains(got, "Git: azure-devops (dev@acme.example)\n") {
+		t.Fatalf("got:\n%s", got)
+	}
+}
+
 func TestPreToolUse_GHUserNotLookedUpForNonGH(t *testing.T) {
 	ws := setupTrustedWorkspaceWithManifest(t, "acme", "git:\n  user: acme-bot\n")
 	prev := lookupGHUser

@@ -9,8 +9,7 @@ import (
 )
 
 // The provider scope: the catalog ids an identity may touch. It is the
-// single source of truth the guard's identity category, the PATH, the environment and the
-// harness's MCP list are built from.
+// single source of truth the PATH mask and the environment of a client's terminal are built from.
 
 // gitProviderIDs maps git.provider to its catalog id.
 var gitProviderIDs = map[string]string{"github": "gh", "gitlab": "glab", "azure-devops": "azure-devops", "bitbucket": "bitbucket", "gitea": "gitea"}

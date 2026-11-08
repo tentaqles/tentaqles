@@ -236,8 +236,8 @@ func has(fs []string, code string) bool {
 // Decide applies the rules in this order:
 // blocked-command -> wrong-cloud -> neutral-remote ->
 // env-drift (non-read-only git only) ->
-// claude-config-drift (git push / gh only) ->
-// git-email-drift (inline -c user.email/--config-env override on any git, or
+// claude-config-drift (a remote command: git push/fetch/pull/clone, gh or a cloud CLI) ->
+// git-email-drift (inline -c user.email/user.name or --config-env override on any git, or
 // non-read-only git with both emails known) ->
 // gh-user (gh only, both users known).
 func Decide(in Input) Decision {
@@ -315,9 +315,8 @@ type GitInvocation struct {
 	// BaseUnknown: another cd-like step runs before this call.
 	BaseUnknown bool
 	// Loose: the safety net found the word git in a command that is not a
-	// git call (see looseGit). Hidden is set too. The commit and push rules
-	// deny on it (an incomplete scan; tq never asks); the identity
-	// rules in Decide ignore it.
+	// git call (see looseGit). Hidden is set too. The rules in Decide
+	// ignore it: it is too loose to judge.
 	Loose    bool
 	envChdir bool
 }

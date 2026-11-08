@@ -31,7 +31,7 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 	}
 	want := claudesettings.Desired(w.Manifest, "")
 	if res, err := claudesettings.Render(dir, want, true); err == nil && res.Changed {
-		add("warn", "settings-drift", w.Name, "settings.json differs from the tq baseline: "+strings.Join(res.Changes, "; "), "tentaqles settings render "+w.Name)
+		add("warn", "settings-drift", w.Name, "settings.json differs from what tentaqles settings render writes: "+strings.Join(res.Changes, "; "), "tentaqles settings render "+w.Name)
 	}
 	for _, f := range []string{"settings.json", ".claude.json"} {
 		raw, err := os.ReadFile(filepath.Join(dir, f))
@@ -210,19 +210,6 @@ func installedUnder(installPath string, pluginsFi os.FileInfo) bool {
 		dir = parent
 	}
 	return false
-}
-
-// pythonStoreAlias reports when python3 resolves to the Microsoft Store
-// alias, which adds ~150ms to every Python hook start.
-func pythonStoreAlias(lookPath func(string) (string, error), goos string, add func(level, code, ws, msg, fix string)) {
-	if goos != "windows" || lookPath == nil {
-		return
-	}
-	if p, err := lookPath("python3"); err == nil && strings.Contains(strings.ToLower(p), `\windowsapps\`) {
-		if os.Getenv("TENTAQLES_PY") == "" {
-			add("warn", "python-store-alias", "", "python3 is the Microsoft Store alias ("+p+"); Python hooks start ~150ms slower", "set TENTAQLES_PY to a python.org interpreter, or disable the alias under Settings > Apps > App execution aliases")
-		}
-	}
 }
 
 // pluginForeignPath reports plugins whose install record points outside the

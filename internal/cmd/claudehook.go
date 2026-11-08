@@ -136,7 +136,14 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	l := m.ClientLanguage()
 	fmt.Fprintf(&b, "Language: %s (%s). Write every report, document, email and message for this client's people (clients and teammates) in %s.\n", l.Name, l.Tag, l.Name)
 	if m.Git.Provider != "" || m.Git.User != "" || m.Git.Email != "" {
-		fmt.Fprintf(&b, "Git: %s as %s (%s)\n", m.Git.Provider, m.Git.User, m.Git.Email)
+		line := "Git: " + m.Git.Provider
+		if m.Git.User != "" {
+			line += " as " + m.Git.User
+		}
+		if m.Git.Email != "" {
+			line += " (" + m.Git.Email + ")"
+		}
+		b.WriteString(strings.TrimSpace(line) + "\n")
 	}
 	if p := cloudString(m.Cloud, "provider"); p != "" {
 		clouds := append([]string{p}, cloudStrings(m.Cloud, "also")...)
@@ -355,8 +362,10 @@ func gatherGuardInput(cwd, cmdline string) (guard.Input, resolve.Result, error) 
 		in.ExtraClouds = append(in.ExtraClouds, manifest.CloudProviderName(x))
 	}
 	in.Blocked = effectiveBlocked(ws)
+	// expected_user names the GitHub user only for a GitHub client: on another host it is that
+	// host's account (an Azure DevOps email, say), which gh would never report.
 	expectedGH := strings.TrimSpace(m.Git.User)
-	if expectedGH == "" {
+	if gp := strings.ToLower(strings.TrimSpace(m.Git.Provider)); expectedGH == "" && (gp == "" || gp == "github") {
 		expectedGH = strings.TrimSpace(m.Git.ExpectedUser)
 	}
 	in.ExpectedGHUser = expectedGH

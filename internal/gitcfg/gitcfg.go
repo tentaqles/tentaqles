@@ -76,7 +76,7 @@ func RunGit(args ...string) (string, error) {
 }
 
 // RunGitIn executes git with dir as the working directory and returns trimmed
-// stdout. It is RunGit scoped to a directory, so per-workspace includeIf rules
+// stdout. It is RunGit scoped to a directory, so each client's includeIf rules
 // apply.
 func RunGitIn(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)

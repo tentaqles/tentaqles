@@ -254,7 +254,7 @@ func newProvidersAddCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "display name (required)")
-	c.Flags().StringVar(&category, "category", "", "one of: cloud, vcs, data, deploy, pm, agent, other (required)")
+	c.Flags().StringVar(&category, "category", "", "one of: "+strings.Join(providers.Categories, ", ")+" (required)")
 	c.Flags().StringVar(&command, "command", "", "CLI command name")
 	c.Flags().StringSliceVar(&versionArgs, "version-args", nil, "args to print the CLI's version")
 	c.Flags().StringArrayVar(&envPairs, "env", nil, "identity env var, KEY=VALUE (repeatable)")
