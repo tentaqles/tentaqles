@@ -1,14 +1,31 @@
 version: 2
 project_name: tq
+# Two names, one program (ADR-0021): `tentaqles` is the command of docs/IDEATION.md and `tq` its
+# alias, which the plugin hook (plugin/scripts/tq_hook.sh) resolves. Both builds compile the same
+# main package with the same flags, so the two binaries are byte for byte the same program: the
+# browser shims and PATH-mask stubs copied from either one match the other
+# (TestGoreleaserBuildsOneProgramUnderTwoNames). Keep the two entries identical but for id and
+# binary.
 builds:
-  - main: ./cmd/tq
+  - id: tq
+    main: ./cmd/tentaqles
     binary: tq
     env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X github.com/tentaqles/tentaqles/internal/cmd.Version={{.Version}} -X github.com/tentaqles/tentaqles/internal/cmd.Commit={{.FullCommit}}"]
+  - id: tentaqles
+    main: ./cmd/tentaqles
+    binary: tentaqles
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags: ["-s -w -X github.com/tentaqles/tentaqles/internal/cmd.Version={{.Version}} -X github.com/tentaqles/tentaqles/internal/cmd.Commit={{.FullCommit}}"]
 archives:
-  - format_overrides: [{ goos: windows, formats: [zip] }]
+  - ids: [tq, tentaqles]
+    format_overrides: [{ goos: windows, formats: [zip] }]
 checksum: { name_template: checksums.txt }
 release:
   github: { owner: tentaqles, name: tentaqles }
@@ -16,8 +33,10 @@ release:
 # Tap/bucket publishing pushes over SSH with per-repo deploy keys (write access on
 # tentaqles/homebrew-tap and tentaqles/scoop-bucket), stored as the repository secrets
 # HOMEBREW_TAP_DEPLOY_KEY / SCOOP_BUCKET_DEPLOY_KEY. GITHUB_TOKEN cannot push cross-repo.
+# Both install every binary of the archive: tq and tentaqles.
 homebrew_casks:
-  - repository:
+  - binaries: [tq, tentaqles]
+    repository:
       owner: tentaqles
       name: homebrew-tap
       git:

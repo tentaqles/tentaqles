@@ -1,4 +1,6 @@
-// Command tentaqles is the CLI. cmd/tq builds the same program under its alias.
+// Command tentaqles is the CLI. The release builds this package under both names, tentaqles and its
+// alias tq, so the two binaries are the same bytes (ADR-0021); cmd/tq is the same program for
+// `go install .../cmd/tq`.
 package main
 
 import (

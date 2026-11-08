@@ -492,10 +492,22 @@ func (s *Set) match(p string) (Hit, bool) {
 			}
 		}
 	}
-	if s.binDir != "" && filepath.Dir(p) == s.binDir && (name == "tq" || strings.HasPrefix(name, "tq.")) {
+	if s.binDir != "" && filepath.Dir(p) == s.binDir && isTqBinaryName(name) {
 		return Hit{p, KindBinary, "a tq binary beside the running one"}, true
 	}
 	return Hit{}, false
+}
+
+// isTqBinaryName reports whether a file name is one of the program's two names (ADR-0021):
+// tq or tentaqles, bare or with an extension (tq.exe, tentaqles.exe). The release ships both,
+// side by side, so the hook running as either protects the other.
+func isTqBinaryName(name string) bool {
+	for _, n := range []string{"tq", "tentaqles"} {
+		if name == n || strings.HasPrefix(name, n+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // harnessHomes are the identity dirs that are a harness's config home,

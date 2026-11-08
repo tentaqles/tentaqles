@@ -6,6 +6,9 @@ another client. [docs/IDEATION.md](docs/IDEATION.md) is the spec.
 
 ## Install
 
+Every install puts one program on the PATH under two names: `tentaqles` and its alias `tq`,
+which the plugin's guard hook runs (ADR-0021). From source, install both.
+
 macOS / Linux:
 
 ```sh
@@ -43,7 +46,8 @@ xattr -dr com.apple.quarantine "$(brew --prefix)/Caskroom/tq"
 From source (requires Go 1.26+):
 
 ```sh
-go install github.com/tentaqles/tentaqles/cmd/tq@latest
+go install github.com/tentaqles/tentaqles/cmd/tentaqles@latest
+go install github.com/tentaqles/tentaqles/cmd/tq@latest   # the alias the plugin hook runs
 ```
 
 ## Quick start

@@ -6,6 +6,14 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+### The `tentaqles` command ships (ADR-0021)
+
+- Every release archive, the Scoop manifest, the Homebrew cask and both installers now install `tentaqles`
+  beside `tq`. Both are built from `./cmd/tentaqles` with the same flags, so they are the same bytes; `tq`
+  stays the name the plugin hook runs. The installers' next step is `tentaqles reach <client-folder>`.
+- In a shared bin folder, a `tentaqles` beside the running `tq` (and the reverse) is a protected path, as
+  `tq` beside it already was.
+
 - The onboarding skill (`/tentaqles:onboard`) drives the installs, logins and connections in order, and
   ends with a table; see [`plugin/CHANGELOG.md`](plugin/CHANGELOG.md).
 

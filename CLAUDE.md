@@ -11,7 +11,8 @@ identity is blocked with the reason.
 `docs/adr/`. `docs/prd.md` and PRD v2 are history, and some docs still describe removed commands.
 
 ## Layout
-- `cmd/tentaqles/`, `cmd/tq/`, `internal/` — the Go CLI, one program under two names. `go test ./...` must stay green.
+- `cmd/tentaqles/`, `cmd/tq/`, `internal/` — the Go CLI, one program under two names; the release builds
+  `./cmd/tentaqles` as both `tentaqles` and `tq`, the same bytes (ADR-0021). `go test ./...` must stay green.
   - `internal/guard/` — the identity-drift block, `guard.Decide` (`blocked-command`,
     `wrong-cloud`, `neutral-remote`, `untrusted`, `env-drift`, `claude-config-drift`,
     `git-email-drift`, `gh-user`) and the shell tokenizer the hook uses.
@@ -269,8 +270,8 @@ A change under `internal/guard/`, `internal/policy/`, `internal/trust/`, `intern
 `internal/markers/`, `internal/protect/`, `internal/hooks/`,
 `plugin/hooks/`, `plugin/scripts/tq_hook.sh`, `.github/workflows/`,
 `.goreleaser.yaml`, `.claude-plugin/marketplace.json` or `installers/` crosses a trust
-boundary of `docs/threat-model.md` and needs an ADR under `docs/adr/` (template:
-`plugin/templates/process/adr-0000-template.md`).
+boundary of `docs/threat-model.md` and needs an ADR under `docs/adr/` (follow the shape of the latest one there:
+Status, Date, Cites, Context, Decision, Consequences, Alternatives considered).
 
 ## Rules
 - Git identity for this repo: `reach@tentaqles.ai` (local config). Never commit secrets; manifests hold names only.

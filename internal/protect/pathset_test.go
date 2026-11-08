@@ -194,9 +194,23 @@ func TestBinaryDirectory(t *testing.T) {
 	if _, ok := s.Match(s.canon(filepath.Join(shared, "jq"))); ok {
 		t.Error("another tool in a shared bin folder is free")
 	}
-	for _, p := range []string{filepath.Join(shared, "tq"), shared, filepath.Join(shared, "tq.exe")} {
+	for _, p := range []string{filepath.Join(shared, "tq"), shared, filepath.Join(shared, "tq.exe"),
+		filepath.Join(shared, "tentaqles"), filepath.Join(shared, "tentaqles.exe")} {
 		if _, ok := s.Match(s.canon(p)); !ok {
 			t.Errorf("%s: protected", p)
+		}
+	}
+	// The release ships both names (ADR-0021): running as tentaqles protects tq beside it too.
+	s = New(Inputs{Executable: filepath.Join(shared, "tentaqles")})
+	for _, p := range []string{filepath.Join(shared, "tentaqles"), filepath.Join(shared, "tq"), filepath.Join(shared, "tq.exe")} {
+		if h, ok := s.Match(s.canon(p)); !ok || h.Kind != KindBinary {
+			t.Errorf("%s: protected beside tentaqles, got %v %q", p, ok, h.Kind)
+		}
+	}
+	// Names that only start like the program stay free.
+	for _, p := range []string{filepath.Join(shared, "tqx"), filepath.Join(shared, "tentaqles-helper"), filepath.Join(shared, "jq")} {
+		if _, ok := s.Match(s.canon(p)); ok {
+			t.Errorf("%s: another tool in a shared bin folder is free", p)
 		}
 	}
 }
