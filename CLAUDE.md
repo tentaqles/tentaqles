@@ -14,7 +14,7 @@ wrong identity.
 ## Layout
 
 - `cmd/tentaqles/`, `cmd/tq/`: one program under two names; the release builds `./cmd/tentaqles` as both.
-- `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `env`, `activate`, `hooks`, `run`, `login`,
+- `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `drop`, `env`, `activate`, `hooks`, `run`, `login`,
   `open`, `settings render`, `statusline`, `doctor`, `list`, `providers`, `version`, `claude-hook`.
   `claudehook.go` is the hook (`session-start`, `pre-tool-use`); `render.go` writes the PATH mask and the browser
   shims.
@@ -63,6 +63,8 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
   `TestReach_ConfirmsBeforeWriting`, `TestReach_ExistingClientDeclinedChangesNothing`, `TestEdit_Providers`,
   `TestEdit_NoChangeIsTheSameBytes`, `TestChange_DeclinedWritesNothing`, `TestChange_Refusals`,
   `TestEdit_DropsAnImpliedIdentity`.
+- drop deletes nothing before the client's name is typed back, deletes nothing of another client, and keeps the
+  user's files: `TestDrop_DeclinedDeletesNothing`, `TestDrop_UndoesTheClient`, `TestDrop_Refusals`.
 - A copied marker or manifest lends a folder nothing: `TestResolve_MarkerOrManifestOfAnotherClient`.
 - A client with browsers opens links in its own profile: `TestBrowserShims`, `TestOpen_UsesTheClientsProfile`,
   `TestOpen_Refusals`.

@@ -6,6 +6,11 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+- **`tentaqles drop <client>`** undoes a client as if it never existed: its identity folder (manifest, Claude config,
+  logins), its browser shims, the marker and git identity in its folder, its git rule, and the clients folder's
+  registration when no other client is left there. Your files stay; an emptied folder is deleted. It asks for the
+  client's name typed back (`--yes` skips it) and refuses to run inside Claude Code.
+
 ## [0.11.0] - 2026-11-08
 
 - **`tentaqles add` and `tentaqles remove`** change one part of a client's setup without reach's menu:

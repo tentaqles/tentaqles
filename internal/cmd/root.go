@@ -13,7 +13,7 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newReachCmd(), newAddCmd(), newRemoveCmd(), newEnvCmd(), newActivateCmd(), newListCmd(), newRunCmd(), newLoginCmd(),
+	root.AddCommand(newReachCmd(), newAddCmd(), newRemoveCmd(), newDropCmd(),newEnvCmd(), newActivateCmd(), newListCmd(), newRunCmd(), newLoginCmd(),
 		newOpenCmd(), newDoctorCmd(), newProvidersCmd(), newHooksCmd(), newClaudeHookCmd(), newSettingsCmd(),
 		newStatuslineCmd(), newVersionCmd())
 	return root

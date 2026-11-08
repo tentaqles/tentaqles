@@ -75,6 +75,28 @@ tentaqles add task            # opens the task part of the form
 
 Like reach, they refuse to run from inside a Claude Code session.
 
+### `tentaqles drop <client>`
+
+Undoes a client, as if reach had never run for it. `<client>` is its name or its folder. It deletes:
+
+- `~/.tentaqles/identities/<client>/`: the manifest, the client's Claude config (with the plugin installed in it)
+  and every CLI login there;
+- the browser shims, `~/.tentaqles/shims/<client>/`;
+- the marker and `.gitconfig-tentaqles` in the client's folder, and the client's `includeIf` rule in
+  `~/.gitconfig-tentaqles`;
+- the clients folder's registration, when no other client is left in it.
+
+The folder itself stays with your files in it, as an ordinary folder; it is deleted only when nothing else is left in
+it. The shell profile block stays: it serves every client. A client that is only partly there (its folder deleted by
+hand, say) is dropped as far as it exists.
+
+drop lists every deletion and waits for the client's name typed back (`--yes`, `-y`, skips it). The logins it
+deletes can't be restored. It refuses to run from inside a Claude Code session.
+
+```
+tentaqles drop acme
+```
+
 ### `tentaqles login <client> <cli>`
 
 Runs the CLI's own login with the client's config home, so the credentials land in
