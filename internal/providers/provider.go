@@ -57,36 +57,6 @@ type Cmd struct {
 	Args    []string `yaml:"args"`
 }
 
-// Field says how to pull one value out of a verify command's output.
-//
-// JSON names a key, optionally dotted for nesting (`user.name`), and is tried
-// first when the output parses as a JSON object. Regex is the fallback for
-// CLIs that print prose, and takes the first capture group. Declaring both is
-// deliberate: `az account show` is JSON, `gh auth status` is a sentence, and
-// a provider may change which it emits between versions.
-type Field struct {
-	JSON  string `yaml:"json,omitempty"`
-	Regex string `yaml:"regex,omitempty"`
-}
-
-// VerifyCmd asks a CLI who it is currently logged in as, inside whichever
-// config home the environment points it at.
-//
-// This is the difference between tq routing a CLI at the right config
-// directory and tq knowing the right account is actually in it: a workspace
-// can be perfectly wired up and still be logged into the wrong client.
-//
-// LoggedOutWhen is a regexp; when it matches the output, the CLI is logged
-// out and Account/Subscription are not read. Everything is optional -- a
-// verify with only Args still answers "did this command succeed", and a
-// provider that declares nothing is simply never checked.
-type VerifyCmd struct {
-	Cmd           `yaml:",inline"`
-	LoggedOutWhen string `yaml:"logged_out_when,omitempty"`
-	Account       *Field `yaml:"account,omitempty"`
-	Subscription  *Field `yaml:"subscription,omitempty"`
-}
-
 // Provider is one entry in the catalog.
 type Provider struct {
 	ID       string `yaml:"id"`
@@ -94,24 +64,17 @@ type Provider struct {
 	Category string `yaml:"category"`
 	Docs     string `yaml:"docs"`
 
-	CLI      *CLI       `yaml:"cli"`
-	Install  Install    `yaml:"install"`
-	Identity Identity   `yaml:"identity"`
-	Login    *Cmd       `yaml:"login"`
-	Verify   *VerifyCmd `yaml:"verify"`
+	CLI      *CLI     `yaml:"cli"`
+	Install  Install  `yaml:"install"`
+	Identity Identity `yaml:"identity"`
+	Login    *Cmd     `yaml:"login"`
 
-	BlockedSuggested []string `yaml:"blocked_commands_suggested"`
-
-	// MCP names the tq bundle catalog MCP entry (and the mcpServers key in the identity's
-	// .claude.json) the agent reaches this provider through. Empty means the provider id. Chat and
-	// email providers are reached this way only (spec B §3).
-	MCP string `yaml:"mcp,omitempty"`
 	// Notes is prose for onboarding and doctor: how this provider authenticates when it has no
 	// isolatable CLI login (an env var, the keychain, an MCP connector).
 	Notes string `yaml:"notes,omitempty"`
 
 	// Match is what the guard's identity category recognises as this provider when it is
-	// outside an identity's scope (PRD v2 §6.3, ADR-0007). See match.go.
+	// outside an identity's scope. See match.go.
 	Match Match `yaml:"match,omitempty"`
 
 	// Source is "embedded" for catalog entries or the file path for user
@@ -121,18 +84,6 @@ type Provider struct {
 
 // Categories is the exact set of valid provider categories.
 var Categories = []string{"cloud", "vcs", "data", "deploy", "pm", "agent", "chat", "email", "other"}
-
-// mcpNameRe is the set of names an mcp: reference may hold: an mcpServers key, never a path or a
-// command.
-var mcpNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
-// MCPName is the bundle catalog MCP entry this provider is reached through (MCP, else the id).
-func (p Provider) MCPName() string {
-	if p.MCP != "" {
-		return p.MCP
-	}
-	return p.ID
-}
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -151,7 +102,7 @@ func hasControlChars(s string) bool {
 }
 
 // ValidateEnvPair checks a single identity env key/value for injection-unsafe
-// content. It is used by Validate and by "tq providers add".
+// content. It is used by Validate and by "tentaqles providers add".
 func ValidateEnvPair(k, v string) error {
 	if !EnvKeyRe.MatchString(k) {
 		return fmt.Errorf("identity.env key %q is not a valid environment variable name (must match %s)", k, EnvKeyRe.String())
@@ -182,9 +133,6 @@ func (p Provider) Validate() error {
 	}
 	if !validCategory {
 		return fmt.Errorf("provider %q: invalid category %q (must be one of %v)", p.ID, p.Category, Categories)
-	}
-	if p.MCP != "" && !mcpNameRe.MatchString(p.MCP) {
-		return fmt.Errorf("provider %q: mcp %q is not an MCP server name (must match %s)", p.ID, p.MCP, mcpNameRe.String())
 	}
 	if hasControlChars(p.Notes) {
 		return fmt.Errorf("provider %q: notes must not contain control characters", p.ID)

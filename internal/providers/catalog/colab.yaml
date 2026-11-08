@@ -1,0 +1,7 @@
+id: colab
+name: Google Colab
+category: other
+docs: https://colab.research.google.com/
+# No official command-line client; notebooks are reached in the browser or through an MCP connector.
+cli: null
+notes: "No CLI to install or log in. A Claude session reaches Colab through an MCP server added in that client's Claude config, signed in with /mcp."

@@ -6,12 +6,10 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/tentaqles/tentaqles/internal/audit"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/shell"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 func newEnvCmd() *cobra.Command {
@@ -29,7 +27,6 @@ func newEnvCmd() *cobra.Command {
 				// nothing either.
 				return nil
 			}
-			defer trust.MemoScope()()
 			cfg, err := registry.Load()
 			if err != nil {
 				return err
@@ -37,10 +34,10 @@ func newEnvCmd() *cobra.Command {
 			cwd, _ := os.Getwd()
 			res := resolve.Resolve(cwd, cfg)
 			prev := envplan.DecodeState(os.Getenv(envplan.StateVar))
-			// guard: v2 adds the PATH and environment layer (ADR-0008): the identity PATH
+			// The guard adds the PATH and environment layer: the identity PATH
 			// and the out-of-scope variables unset, both restored on leaving.
 			senv := envplan.ShellEnv(sh)
-			// A shell whose state is gone while TQ_WS is set fails closed (ADR-0008): tq's own
+			// A shell whose state is gone while TQ_WS is set fails closed: tq's own
 			// variables and mask folders go, the folder's identity is applied afresh, and the
 			// prompt says the values from before tq are lost.
 			real, lost := senv, envplan.LostState(senv)
@@ -69,18 +66,7 @@ func newEnvCmd() *cobra.Command {
 				envplan.FinishForget(&ops, real, senv)
 				maskNotice = ops.Notice
 			}
-			if ops.Changed && ops.From != ops.To {
-				_ = audit.Append(audit.Event{Kind: "switch", From: ops.From, To: ops.To, Cwd: cwd, Reason: res.Reason})
-			}
-			// A workspace without its identity says so at every prompt, the
-			// way direnv nags until `direnv allow`, and so does one trusted
-			// through a marker of an older tq: one fixed line, the
-			// workspace name and the command to run (shell.NoticeText; the
-			// changed files are what tq hooks verify prints).
-			ops.Notice = envNotice(res)
-			if ops.Notice == nil || lost {
-				ops.Notice = maskNotice
-			}
+			ops.Notice = maskNotice
 			if asJSON {
 				notice := ""
 				if ops.Notice != nil {
@@ -117,20 +103,4 @@ func wsName(r resolve.Result) string {
 		return ""
 	}
 	return r.Workspace.Name
-}
-
-// envNotice is the per-prompt notice for the cwd: untrusted (tq allow),
-// integrity mismatch (tq hooks verify), or trusted through a legacy marker
-// (tq allow signs the hooks). A trusted workspace with a signed record and
-// a neutral folder have none.
-func envNotice(r resolve.Result) *envplan.Notice {
-	switch {
-	case r.Workspace != nil && r.Legacy:
-		return &envplan.Notice{Kind: envplan.NoticeLegacy, Workspace: r.Workspace.Name}
-	case r.Workspace == nil && r.Untrusted != nil && r.Mismatch:
-		return &envplan.Notice{Kind: envplan.NoticeMismatch, Workspace: r.Untrusted.Name}
-	case r.Workspace == nil && r.Untrusted != nil:
-		return &envplan.Notice{Kind: envplan.NoticeUntrusted, Workspace: r.Untrusted.Name}
-	}
-	return nil
 }

@@ -51,9 +51,6 @@ func (l *shLexer) live() bool {
 	return !l.comment && !l.esc && (k == 'u' || k == 'b')
 }
 
-// root reports whether the next byte is live outside every substitution.
-func (l *shLexer) root() bool { return len(l.st) == 1 && l.live() }
-
 func wordStart(prev byte) bool {
 	switch prev {
 	case 0, ' ', '\t', '\n', '\r', ';', '&', '|', '(':

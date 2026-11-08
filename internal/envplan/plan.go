@@ -19,6 +19,10 @@ func Desired(ws *resolve.Workspace) map[string]string {
 	}
 	out["TQ_WS"] = ws.Name
 	out["TQ_WS_ROOT"] = ws.Root
+	if HasBrowsers(ws) {
+		// BROWSER names the client's shim, which opens a URL in the client's profile.
+		out["BROWSER"] = BrowserVar(ws.Name)
+	}
 	provs := Providers()
 	for _, id := range ws.Manifest.IdentityNames() {
 		p, ok := provs[id]
@@ -42,7 +46,7 @@ func Desired(ws *resolve.Workspace) map[string]string {
 type State struct {
 	WS   string             `json:"ws"`
 	Prev map[string]*string `json:"prev"`
-	// PathSet is the PATH tq last wrote for a guard: v2 identity (ADR-0008), in the shell's
+	// PathSet is the PATH tq last wrote for an identity, in the shell's
 	// spelling: a PATH still equal to it needs no work at the next prompt, and one the user
 	// changed since is merged back (MergePath) on leaving.
 	PathSet string `json:"path,omitempty"`
@@ -75,7 +79,7 @@ type Ops struct {
 	From    string
 	To      string
 	// Notice is the one line the shell prints on stderr at this prompt,
-	// whether or not anything changed (tq env sets it; shell.Emit renders
+	// whether or not anything changed (tentaqles env sets it; shell.Emit renders
 	// it from fixed text, never from a path or the manifest).
 	Notice *Notice
 }
@@ -90,17 +94,9 @@ type Notice struct {
 
 // The kinds of Notice.
 const (
-	// NoticeUntrusted: never allowed, or revoked; the fix is tq allow.
-	NoticeUntrusted = "untrusted"
-	// NoticeMismatch: the integrity record does not verify or a covered
-	// file changed; the fix is tq hooks verify.
-	NoticeMismatch = "mismatch"
-	// NoticeLegacy: trusted through a marker of an older tq; tq allow signs
-	// the hooks and the manifest.
-	NoticeLegacy = "legacy"
-	// NoticeMask: a guard: v2 identity's PATH needs its mask folder (a folder
+	// NoticeMask: an identity's PATH needs its mask folder (a folder
 	// shared with other tools holds an out-of-scope CLI) and the folder is
-	// missing or changed; the fix is tq settings render (ADR-0008).
+	// missing or changed; the fix is tentaqles settings render.
 	NoticeMask = "path-mask"
 	// NoticeCmdLong: the identity PATH is longer than a cmd.exe line, so cmd.exe keeps the
 	// PATH it has (out-of-scope CLIs still resolve there); the rest of the identity applies.
@@ -110,8 +106,8 @@ const (
 	NoticeStateLost = "state-lost"
 )
 
-// Want is what a workspace wants of the environment: the variables to set and, for a
-// guard: v2 identity (ADR-0008), the variables to unset. PathSep is the shell's PATH list
+// Want is what a workspace wants of the environment: the variables to set and, for an
+// identity, the variables to unset. PathSep is the shell's PATH list
 // separator, used when a PATH tq changed is restored.
 type Want struct {
 	Set     map[string]string
@@ -122,12 +118,6 @@ type Want struct {
 	PathOrig *string
 	// MaskWanted: the PATH holds a shared folder with an out-of-scope CLI (State.MaskWanted).
 	MaskWanted bool
-}
-
-// Diff computes the shell operations to move from the current env to desired,
-// restoring anything tq previously changed that is no longer desired.
-func Diff(desired map[string]string, current func(string) (string, bool), prev State, wsName string) (Ops, State) {
-	return DiffWant(Want{Set: desired}, current, prev, wsName)
 }
 
 // DiffWant is Diff for a Want: every variable tq sets or unsets is recorded with its value
@@ -167,7 +157,7 @@ func DiffWant(want Want, current func(string) (string, bool), prev State, wsName
 		}
 		delete(next.Prev, k)
 	}
-	// 2. unset what the identity leaves out (guard: v2), remembering the value
+	// 2. unset what the identity leaves out, remembering the value
 	for _, k := range want.Unset {
 		cur, ok := current(k)
 		if !ok {

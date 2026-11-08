@@ -14,7 +14,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// Round 2 of ADR-0008's PATH layer: the state fits cmd.exe's line, the mask answers every
+// The PATH layer, round 2: the state fits cmd.exe's line, the mask answers every
 // spelling, comes back once fixed, and leaves ambiguous names and generic tools alone.
 
 // longPath is a realistic PATH of n entries (vendor folders, as a developer machine has).
@@ -72,7 +72,7 @@ func TestState_FitsCmdLine(t *testing.T) {
 func ptr(s string) *string { return &s }
 
 // The mask answers aws however it is spelled: aws, aws.exe, aws.com, aws.bat, aws.cmd,
-// aws.ps1, with PATHEXT edited too; tq run's lookup lands on it for aws.exe; a batch file
+// aws.ps1, with PATHEXT edited too; tentaqles run's lookup lands on it for aws.exe; a batch file
 // that runs aws without `call` keeps going (the .com/.exe stub is a program).
 func TestPathLayer_MaskCoversEverySpelling(t *testing.T) {
 	if runtime.GOOS != "windows" {

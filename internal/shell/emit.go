@@ -41,42 +41,26 @@ func checkOps(ops envplan.Ops) error {
 	return nil
 }
 
-// NoticeText is the fixed message of a notice: one of three sentences, with
+// NoticeText is the fixed message of a notice: one fixed sentence, with
 // the workspace name only when it is a valid workspace name
 // (workspace.NameRe: lower-case letters, digits, '.', '_', '-'), so nothing
 // a folder name, a manifest or a file path holds ever reaches the shell
-// line. The paths are what `tq hooks verify` prints. ok is false for an
-// unknown kind.
+// line. ok is false for an unknown kind.
 func NoticeText(n envplan.Notice) (string, bool) {
 	ws := n.Workspace
 	if !workspace.NameRe.MatchString(ws) {
 		ws = ""
 	}
 	switch n.Kind {
-	case envplan.NoticeUntrusted:
-		if ws == "" {
-			return "tq: untrusted: this workspace carries no identity, run tq doctor", true
-		}
-		return "tq: untrusted: run tq allow " + ws, true
-	case envplan.NoticeMismatch:
-		if ws == "" {
-			return "tq: integrity mismatch: this workspace carries no identity, run tq doctor", true
-		}
-		return "tq: integrity mismatch: run tq hooks verify " + ws, true
-	case envplan.NoticeLegacy:
-		if ws == "" {
-			return "tq: legacy trust record: run tq doctor", true
-		}
-		return "tq: legacy trust record: run tq allow " + ws + " to sign hooks and manifest", true
 	case envplan.NoticeStateLost:
 		return "tq: shell state lost: tq unset its own variables and cannot restore the values from before it; open a new terminal to get them back", true
 	case envplan.NoticeCmdLong:
 		return "tq: PATH over cmd.exe's 8191-character line: out-of-scope CLIs still resolve here, shorten PATH or use PowerShell", true
 	case envplan.NoticeMask:
 		if ws == "" {
-			return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tq doctor", true
+			return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tentaqles doctor", true
 		}
-		return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tq settings render " + ws, true
+		return "tq: PATH mask missing: out-of-scope CLIs still resolve here, run tentaqles settings render " + ws, true
 	}
 	return "", false
 }
@@ -85,7 +69,7 @@ func NoticeText(n envplan.Notice) (string, bool) {
 // the hook's own form (`@if "!!"=="" (for /f ... do @%%L) else (...)`, delayed expansion off
 // and on): a printed line of 8192 characters runs, one of 8193 is dropped together with every
 // line after it (TestEmit_Cmd_LineBudget). cmd.exe's 8191-character command line plus the `@`
-// the body adds is that budget. tq env leaves a longer PATH alone and says so (ADR-0008);
+// the body adds is that budget. tentaqles env leaves a longer PATH alone and says so;
 // Emit refuses a longer line rather than lose it silently. Bytes, not characters: cmd.exe
 // reads the UTF-8 tq prints byte by byte, so this is the conservative count.
 const CmdLineMax = 8192
@@ -96,9 +80,6 @@ type Opts struct {
 	// "!!"), which would eat a ! and, on a line holding one, a ^: those are escaped.
 	CmdDelayed bool
 }
-
-// Emit renders ops for shell sh.
-func Emit(sh string, ops envplan.Ops) (string, error) { return EmitOpts(sh, ops, Opts{}) }
 
 // cmdValue is a value as a `set "K=V"` line run from the hook's for /f must spell it: the
 // for variable's text is not parsed again for %, &, |, <, > or quotes (verified), so only

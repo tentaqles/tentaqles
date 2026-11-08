@@ -1,7 +1,7 @@
 {
   "name": "tentaqles",
   "version": "0.16.0",
-  "description": "Identity isolation for developers who work across several clients: git, cloud and AI-agent identity follow the folder, secrets stay out of transcripts and commits, plus per-client session memory, knowledge graphs and skills.",
+  "description": "The Tentaqles identity check for Claude Code: blocks a git, gh or cloud command that would run under another client's identity, and states the client at session start.",
   "author": {
     "name": "Tentaqles",
     "email": "reach@tentaqles.ai",

@@ -5,17 +5,8 @@ category: deploy
 docs: https://docs.netlify.com/cli/get-started/
 cli:
   command: netlify
-# NOT isolatable by an environment variable, deliberately:
-# Uses env-paths, which honours XDG_CONFIG_HOME on Linux only -- macOS and Windows are hardcoded. No cross-platform variable reaches the token. Auth is NETLIFY_AUTH_TOKEN, a secret.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [netlify, ntl]
   env: [NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID]
-  paths: ["~/.netlify", "~/.config/netlify", "%APPDATA%/netlify"]
-  hosts: [api.netlify.com]
-  mcp: [netlify]
-  mcp_packages: ["@netlify/mcp"]

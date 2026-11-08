@@ -5,17 +5,8 @@ category: deploy
 docs: https://docs.railway.com/guides/cli
 cli:
   command: railway
-# NOT isolatable by an environment variable, deliberately:
-# The config path is hardcoded to ~/.railway/config.json with no environment override anywhere in the resolver.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [railway]
   env: [RAILWAY_TOKEN, RAILWAY_API_TOKEN]
-  paths: ["~/.railway"]
-  hosts: [backboard.railway.app, backboard.railway.com]
-  mcp: [railway]
-  mcp_packages: ["@railway/mcp-server"]

@@ -5,16 +5,8 @@ category: data
 docs: https://planetscale.com/docs/reference/planetscale-cli
 cli:
   command: pscale
-# NOT isolatable by an environment variable, deliberately:
-# The config directory is hardcoded and the token lives in the OS keyring. PLANETSCALE_CONFIG looks like the right variable and is a trap: it moves pscale.yml, which holds org, database and branch, while the token stays shared.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [pscale]
   env: [PLANETSCALE_SERVICE_TOKEN, PLANETSCALE_SERVICE_TOKEN_ID]
-  paths: ["~/.config/planetscale"]
-  hosts: [api.planetscale.com]
-  mcp: [planetscale]

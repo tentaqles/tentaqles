@@ -1,8 +1,12 @@
 package registry
 
-import "github.com/tentaqles/tentaqles/internal/paths"
+import (
+	"os"
+	"testing"
 
-// The tests point TQ_HOME at temp dirs and often run under Claude Code, whose
-// agent marker makes paths.Home ignore TQ_HOME; allow the override for the
-// test binary (paths.AllowHomeOverride, set nowhere else).
-func init() { paths.AllowHomeOverride = true }
+	"github.com/tentaqles/tentaqles/internal/testutil"
+)
+
+// TestMain points TQ_HOME, HOME and USERPROFILE at one temp folder for the whole run, so no test
+// reads or writes the developer's own ~/.tentaqles.
+func TestMain(m *testing.M) { os.Exit(testutil.HomeRun(m)) }

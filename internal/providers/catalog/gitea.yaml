@@ -5,17 +5,8 @@ category: vcs
 docs: https://gitea.com/gitea/tea
 cli:
   command: tea
-# NOT isolatable by an environment variable, deliberately:
-# Isolatable only through the generic XDG_CONFIG_HOME, and a legacy ~/.tea/tea.yml is read outside XDG and would silently defeat it. Codeberg is this provider pointed at codeberg.org. Note the Debian package named tea is a text editor.
-# Catalogued so tq can detect whether it is installed and a workspace can
-# record that a client uses it -- but with no identity block, because
-# claiming one tq cannot honour is worse than claiming none.
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [tea]
   env: [GITEA_TOKEN, GITEA_SERVER_URL]
-  paths: ["~/.config/tea"]
-  git_hosts: [gitea.com]
-  mcp: [gitea]
-  mcp_packages: ["gitea-mcp", "docker.gitea.com/gitea-mcp-server"]

@@ -43,7 +43,7 @@ func TestShimShadow(t *testing.T) {
 			body:     "@echo off\nfor /f %%L in (`tq env --shell cmd`) do %%L\ngh.exe %*\n",
 			vars:     []string{"GH_CONFIG_DIR"},
 			want:     true,
-			wantWhy:  "it re-runs `tq env` for the current directory",
+			wantWhy:  "it re-runs `tentaqles env` for the current directory",
 		},
 		{
 			name:     "powershell shim assigning the var",

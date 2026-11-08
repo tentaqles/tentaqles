@@ -55,19 +55,19 @@ func DefaultProfiles() Profiles {
 // override it to point at temp files.
 var ProfilesFn = DefaultProfiles
 
-// activateLine returns the "tq activate <shell> ..." invocation line
+// activateLine returns the "tentaqles activate <shell> ..." invocation line
 // (without leading indentation) used both inside our block and to detect
 // hand-installed hooks.
 func activateLine(sh Shell) string {
 	switch sh {
 	case "bash", "zsh":
-		return `eval "$(tq activate ` + string(sh) + `)"`
+		return `eval "$(tentaqles activate ` + string(sh) + `)"`
 	case "fish":
-		return `tq activate fish | source`
+		return `tentaqles activate fish | source`
 	case "pwsh", "powershell":
-		return `tq activate ` + string(sh) + ` | Out-String | Invoke-Expression`
+		return `tentaqles activate ` + string(sh) + ` | Out-String | Invoke-Expression`
 	default:
-		return `tq activate ` + string(sh)
+		return `tentaqles activate ` + string(sh)
 	}
 }
 
@@ -77,11 +77,11 @@ func Block(sh Shell) string {
 	var body string
 	switch sh {
 	case "bash", "zsh":
-		body = `if [ "${TQ_ENABLED:-1}" != "0" ] && command -v tq >/dev/null 2>&1; then eval "$(tq activate ` + string(sh) + `)"; fi`
+		body = `if [ "${TQ_ENABLED:-1}" != "0" ] && command -v tentaqles >/dev/null 2>&1; then eval "$(tentaqles activate ` + string(sh) + `)"; fi`
 	case "fish":
-		body = `if test "$TQ_ENABLED" != "0"; and command -q tq; tq activate fish | source; end`
+		body = `if test "$TQ_ENABLED" != "0"; and command -q tentaqles; tentaqles activate fish | source; end`
 	case "pwsh", "powershell":
-		body = `if ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue)) { tq activate ` + string(sh) + ` | Out-String | Invoke-Expression }`
+		body = `if ($env:TQ_ENABLED -ne '0' -and (Get-Command tentaqles -ErrorAction SilentlyContinue)) { tentaqles activate ` + string(sh) + ` | Out-String | Invoke-Expression }`
 	default:
 		body = activateLine(sh)
 	}
@@ -311,11 +311,13 @@ func StatusOf(sh Shell, p Profiles) Status {
 	hasStart := strings.Contains(content, startMarker)
 	hasEnd := strings.Contains(content, endMarker)
 	switch {
+	case hasStart && hasEnd && blockText(content) != normalizeEOL(Block(sh)):
+		st.State = "outdated"
 	case hasStart && hasEnd:
 		st.State = "installed"
 	case hasStart != hasEnd:
 		st.State = "corrupt"
-	case strings.Contains(content, "tq activate "+string(sh)):
+	case strings.Contains(content, "tentaqles activate "+string(sh)) || strings.Contains(content, "tq activate "+string(sh)):
 		st.State = "present (unmanaged)"
 	default:
 		st.State = "missing"
@@ -338,8 +340,11 @@ func Install(sh Shell, p Profiles) (Status, error) {
 	if st.State == "installed" || st.State == "present (unmanaged)" {
 		return st, nil
 	}
+	if st.State == "outdated" {
+		return upgradeBlock(sh, profile)
+	}
 	if st.State == "corrupt" {
-		return st, fmt.Errorf("%s: %s contains a partial tq block; run: tq hooks remove %s", sh, profile, sh)
+		return st, fmt.Errorf("%s: %s contains a partial tq block; run: tentaqles hooks remove %s", sh, profile, sh)
 	}
 	if st.State == "unreadable" {
 		return st, fmt.Errorf("%s: cannot read %s", sh, profile)
@@ -467,4 +472,55 @@ func Remove(sh Shell, p Profiles) (Status, error) {
 		return Status{Shell: sh, Profile: profile, State: "repaired"}, nil
 	}
 	return StatusOf(sh, p), nil
+}
+
+// normalizeEOL turns CRLF into LF, so a block compares the same whatever the profile's line ends.
+func normalizeEOL(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
+
+// blockText is the managed block of content, from the start marker to the end of the end marker's
+// line, with LF line ends; "" when either marker is missing.
+func blockText(content string) string {
+	c := normalizeEOL(content)
+	i := strings.Index(c, startMarker)
+	j := strings.Index(c, endMarker)
+	if i < 0 || j < i {
+		return ""
+	}
+	end := j + len(endMarker)
+	if end < len(c) && c[end] == '\n' {
+		end++
+	}
+	return c[i:end]
+}
+
+// upgradeBlock replaces an older managed block of sh's profile with the current one, in place:
+// the rest of the profile, its line ends and its encoding stay as they were. The first change of a
+// profile is backed up, as Install does.
+func upgradeBlock(sh Shell, profile string) (Status, error) {
+	content, enc, mode, _, err := readProfile(profile)
+	if err != nil {
+		return Status{Shell: sh, Profile: profile, State: "unreadable"}, err
+	}
+	i := strings.Index(content, startMarker)
+	j := strings.Index(content, endMarker)
+	if i < 0 || j < i {
+		return Status{Shell: sh, Profile: profile, State: "corrupt"}, fmt.Errorf("%s: %s contains a partial tq block; run: tentaqles hooks remove %s", sh, profile, sh)
+	}
+	end := j + len(endMarker)
+	if strings.HasPrefix(content[end:], "\r\n") {
+		end += 2
+	} else if strings.HasPrefix(content[end:], "\n") {
+		end++
+	}
+	block := Block(sh)
+	if strings.Contains(content, "\r\n") {
+		block = strings.ReplaceAll(block, "\n", "\r\n")
+	}
+	if err := backupProfile(profile); err != nil {
+		return Status{Shell: sh, Profile: profile, State: "outdated"}, err
+	}
+	if err := writeProfile(profile, encodeProfile(content[:i]+block+content[end:], enc), mode); err != nil {
+		return Status{Shell: sh, Profile: profile, State: "outdated"}, err
+	}
+	return StatusOf(sh, Profiles{sh: profile}), nil
 }

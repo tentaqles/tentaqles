@@ -18,29 +18,8 @@ identity:
     GH_CONFIG_DIR: "{dir}"
 login:
   args: ["auth", "login"]
-verify:
-  args: ["auth", "status"]
-  # gh prints prose, and exits non-zero when logged out -- so logged_out_when
-  # has to catch that before the exit code is read:
-  #   "✓ Logged in to github.com account rndomingues (keyring)"
-  #   "You are not logged into any GitHub hosts."
-  logged_out_when: 'not logged in|You are not logged'
-  # A gh config can hold several accounts for one host and prints them all;
-  # only one is active, marked on the FOLLOWING line. Taking the first match
-  # would report a signed-in-but-inactive account as the current identity.
-  # The second alternative is the fallback for gh versions that print no
-  # active marker; Extract takes the first non-empty group.
-  account:
-    regex: 'account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)[^\n]*\n\s*- Active account: true|account ([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)'
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [gh, hub]
   env: [GH_TOKEN, GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_CONFIG_DIR, GH_HOST]
-  paths: ["~/.config/gh", "%APPDATA%/GitHub CLI"]
-  hosts: [api.github.com, uploads.github.com, github.com/login/oauth/, github.com/login/device/]
-  git_hosts: [github.com, ssh.github.com]
-  mcp: [github, gh]
-  mcp_packages: ["@modelcontextprotocol/server-github", "ghcr.io/github/github-mcp-server", "github-mcp-server", "github.com/github/github-mcp-server", "@github/", "mcp/github"]
-  images: ["mcp/github", "ghcr.io/github/github-mcp-server"]
-  mcp_hosts: [api.githubcopilot.com]

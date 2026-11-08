@@ -1,5 +1,5 @@
 # Weekly update PRs for Go modules and the pinned GitHub Actions
-# (docs/threat-model.md TM-5). Each PR runs the required checks before it can merge.
+# Each PR runs the required checks before it can merge.
 version: 2
 updates:
   - package-ecosystem: gomod

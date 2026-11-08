@@ -6,10 +6,9 @@ cli:
   command: psql
   version_args: ["--version"]
 install:
-  windows:
-    winget: "PostgreSQL.PostgreSQL"
-  macos:
-    brew: "libpq"
+  # No macOS and no Windows method. Homebrew's libpq is keg-only, so psql is never linked onto the
+  # PATH. The winget package is the EDB server installer: it sets up a service and does not put psql
+  # on the PATH, so the install could not end in "installed". Those two systems print the docs page.
   linux:
     apt: "postgresql-client"
 identity:
@@ -20,10 +19,6 @@ identity:
   env:
     PGPASSFILE: "{dir}/pgpass"
     PGSERVICEFILE: "{dir}/pg_service.conf"
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
-# A generic tool: its command talks to whatever the project configures, so it is
-# never matched by name.
-# Cross-cloud local config (kubeconfig, npmrc, docker config, ...): the developer's
-# own file, readable under any identity, so no path is claimed here.
+# A generic tool: its command talks to whatever the project configures, so a client's terminal
+# never hides it.
 match: {}

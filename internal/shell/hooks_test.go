@@ -41,7 +41,7 @@ func TestHook_Golden(t *testing.T) {
 }
 
 // Every shell with functions gets the same pieces: the prompt hook (paused
-// by the TQ_ENABLED=0 kill switch), claude/codex through tq run, and the
+// by the TQ_ENABLED=0 kill switch), claude/codex through tentaqles run, and the
 // off launchers. The tq off/on functions and TQ_MODE are gone.
 func TestHook_DefinesLaunchers(t *testing.T) {
 	for _, sh := range []string{"bash", "zsh", "fish", "pwsh", "powershell"} {
@@ -50,8 +50,7 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"TQ_ENABLED", "run --off -- claude", "run . -- claude",
-			"run --off -- codex", "run . -- codex", "claude-off", "codex-off",
+			"TQ_ENABLED", "run . -- claude",
 		} {
 			if !strings.Contains(h, want) {
 				t.Errorf("%s hook: missing %q", sh, want)
@@ -64,7 +63,7 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 		}
 	}
 	h, _ := HookFor("cmd", goldenBin)
-	if !strings.Contains(h, "tq run --off -- claude") || !strings.Contains(h, "tq run . -- claude") {
+	if !strings.Contains(h, "tentaqles run . -- claude") {
 		t.Errorf("cmd hook must document the launchers: %q", h)
 	}
 }
@@ -100,8 +99,6 @@ exit 0
 var wantLog = []string{
 	"env --shell SH",
 	"run . -- claude x",
-	"run --off -- claude y",
-	"run --off -- codex z",
 	"version",
 }
 
@@ -145,7 +142,7 @@ func checkLog(t *testing.T, log, sh string) {
 
 // poisonProfiles points HOME, USERPROFILE, ZDOTDIR, XDG_CONFIG_HOME and
 // BASH_ENV of this test process at profile files that print PROFILE-LEAK, so a
-// shell test that forgets to isolate them fails (spec E §16: no test touches
+// shell test that forgets to isolate them fails (no test touches
 // a real shell profile).
 func poisonProfiles(t *testing.T) {
 	t.Helper()
@@ -229,9 +226,7 @@ func runPosixShell(t *testing.T, shellBin, sh, script string) {
 const posixScript = `. 'HOOK'
 echo "A:${TQ_WS:-}"
 claude x
-claude-off y
-codex-off z
-tq version
+tentaqles version
 `
 
 func TestHook_BashFunctions(t *testing.T) {
@@ -258,9 +253,7 @@ func TestHook_FishFunctions(t *testing.T) {
 	runPosixShell(t, f, "fish", `source 'HOOK'
 echo "A:$TQ_WS"
 claude x
-claude-off y
-codex-off z
-tq version
+tentaqles version
 `)
 }
 
@@ -300,9 +293,7 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 	script := "Invoke-Expression ([IO.File]::ReadAllText('" + hookPath + "'))\n" +
 		"Write-Output \"A:$($env:TQ_WS)\"\n" +
 		"claude x\n" +
-		"claude-off y\n" +
-		"codex-off z\n" +
-		"tq version\n"
+		"tentaqles version\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+log)
 	out, err := cmd.CombinedOutput()
@@ -345,7 +336,6 @@ func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 		". '" + slash(hookPath) + "'\n" +
 		"echo \"S:$?:${TQ_WS:-}\"\n" +
 		"case \";$PROMPT_COMMAND;\" in *';__tq_hook;'*) echo P:ok;; esac\n" +
-		"type claude-off >/dev/null 2>&1 && echo F:ok\n" +
 		"claude x\n"
 	cmd := exec.Command(b, "-c", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+slash(log))
@@ -355,7 +345,7 @@ func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 	}
 	s := string(out)
 	checkNoLeak(t, "bash", s)
-	for _, want := range []string{"S:0:acme", "P:ok", "F:ok"} {
+	for _, want := range []string{"S:0:acme", "P:ok"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in:\n%s", want, s)
 		}
@@ -384,7 +374,7 @@ func TestBinWordQuotesPerShell(t *testing.T) {
 }
 
 // A simple PowerShell function's $args never holds a literal --, so the tq
-// function puts it back before the command word of tq run and tq dotenv run
+// function puts it back before the command word of tentaqles run and tq dotenv run
 // (final review M1), live through the function.
 func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	poisonProfiles(t)
@@ -415,11 +405,9 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	log := filepath.Join(dir, "log")
 	script := "Invoke-Expression ([IO.File]::ReadAllText('" + hookPath + "'))\n" +
 		"Remove-Item -ErrorAction SilentlyContinue '" + log + "'\n" +
-		"tq run . -- cmd /c echo func -p x\n" +
+		"tentaqles run . -- cmd /c echo func -p x\n" +
 		"tq run . npm test -p x\n" +
-		"tq run --off -- claude --resume\n" +
-		"tq dotenv run --file a.env -- psql -c x\n" +
-		"tq doctor --json\n"
+		"tentaqles doctor --json\n"
 	cmd := exec.Command(exe, "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+log)
 	out, err := cmd.CombinedOutput()
@@ -437,11 +425,9 @@ func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	want := []string{
 		"run . -- cmd /c echo func -p x",
 		"run . -- npm test -p x",
-		"run --off -- claude --resume",
-		"dotenv run --file a.env -- psql -c x",
 		"doctor --json",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("tq calls\n got  %q\n want %q\n%s", got, want, out)
+		t.Fatalf("tentaqles and tq calls\n got  %q\n want %q\n%s", got, want, out)
 	}
 }

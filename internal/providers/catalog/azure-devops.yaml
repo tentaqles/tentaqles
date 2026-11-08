@@ -24,20 +24,9 @@ identity:
 # `az devops login` only stores a PAT; `az login` is the account login the token comes from.
 login:
   args: ["login"]
-verify:
-  args: ["account", "show"]
-  # Logged out, az prints "Please run 'az login' to setup account." and exits non-zero.
-  logged_out_when: "az login"
-  account: { json: user.name }
-  subscription: { json: name }
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
-# Note: azure-devops owns only the `az devops|repos|pipelines|boards|artifacts|login|extension` subcommands; the rest of `az` and ~/.azure belong to the az provider.
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   subcommands:
     az: [devops, repos, pipelines, boards, artifacts, login, extension, account, config, version]
   env: [AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_ORG]
-  hosts: [dev.azure.com]
-  git_hosts: [dev.azure.com, ssh.dev.azure.com, vs-ssh.visualstudio.com]
-  mcp: [devops, ado, azuredevops]
-  mcp_packages: ["@azure-devops/"]

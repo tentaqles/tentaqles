@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 // claudeSubcommands are claude's subcommands (claude --help, "Commands:").
@@ -47,57 +47,52 @@ func launchClaudeArgs(args []string, agent bool) []string {
 	return append([]string{"--dangerously-skip-permissions"}, args...)
 }
 
-// offClaudeSettings switches the tentaqles plugin off for an off launch
-// (--settings merges enabledPlugins per key).
-const offClaudeSettings = `{"enabledPlugins":{"tentaqles@tentaqles":false}}`
+// claudeIsSession reports whether claude's arguments start a session: not one of its
+// subcommands, and not --help or --version. Only a session needs the guard (REQ-4, REQ-6):
+// `claude plugin install` and `claude --version` run with none, so the fix line itself runs.
+func claudeIsSession(args []string) bool {
+	if len(args) > 0 && slices.Contains(claudeSubcommands, args[0]) {
+		return false
+	}
+	for _, a := range args {
+		if a == "--help" || a == "-h" || a == "--version" || a == "-v" {
+			return false
+		}
+	}
+	return true
+}
 
-// offBanner is printed on stderr by every off launch.
-const offBanner = "tq: off — main logins, no identity, no guard (git, cloud and MCP use your default accounts)"
+// guardRefusal is the refusal of a session that would start with no tentaqles guard:
+// the reason in one line, then the fix to run, one copyable line each, in order. It is the error of
+// tentaqles run, not of claude.
+func guardRefusal(ws string, g guardplugin.GuardHook) error {
+	return fmt.Errorf("claude won't start a session for %s without the tentaqles guard: %s\n  %s",
+		ws, g.Why, fixBlock(guardplugin.GuardHookFix(ws, g)))
+}
 
-// agentProg names the agent a program is: "claude" or "codex" for those
-// names, with or without a directory and a .exe/.cmd/.bat/.ps1 extension,
-// and "" for any other program.
+// fixBlock is the fix of a refusal: one line after "fix:", or the lines after "fix, in this order:".
+func fixBlock(lines []string) string {
+	if len(lines) == 1 {
+		return "fix: " + lines[0]
+	}
+	return "fix, in this order:\n    " + strings.Join(lines, "\n    ")
+}
+
+// agentProg names the agent a program is: "claude" for that name, with or
+// without a directory and a .exe/.cmd/.bat/.ps1 extension, and "" for any other.
 func agentProg(name string) string {
 	b := strings.ToLower(filepath.Base(strings.ReplaceAll(name, `\`, "/")))
 	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1"} {
 		b = strings.TrimSuffix(b, ext)
 	}
-	if b == "claude" || b == "codex" {
+	if b == "claude" {
 		return b
 	}
 	return ""
 }
 
-// offArgs is an off launch's command line: claude in bypass with the plugin
-// switched off, codex with approvals and sandbox bypassed. A permission flag
-// the user typed replaces the bypass flag; subcommands get nothing.
-func offArgs(name string, args []string) []string {
-	switch agentProg(name) {
-	case "claude":
-		if len(args) > 0 && slices.Contains(claudeSubcommands, args[0]) {
-			return args
-		}
-		pre := []string{"--settings", offClaudeSettings}
-		if !slices.ContainsFunc(args, func(a string) bool {
-			return a == "--permission-mode" || strings.HasPrefix(a, "--permission-mode=") || a == "--dangerously-skip-permissions"
-		}) {
-			pre = append([]string{"--dangerously-skip-permissions"}, pre...)
-		}
-		return append(pre, args...)
-	case "codex":
-		if slices.ContainsFunc(args, func(a string) bool {
-			return a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo"
-		}) {
-			return args
-		}
-		return append([]string{"--dangerously-bypass-approvals-and-sandbox"}, args...)
-	}
-	return args
-}
-
 // execCommand runs name+args with env and the process's stdio, and exits
-// with the child's code when it fails. Tests replace it, so no real claude or
-// codex ever runs.
+// with the child's code when it fails. Tests replace it, so no real claude ever runs.
 var execCommand = func(name string, args, env []string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Env = env
@@ -110,39 +105,39 @@ var execCommand = func(name string, args, env []string) error {
 	return err
 }
 
-// launch is one tq run: ws (nil: neutral) and the command.
+// launch is one tentaqles run: ws (nil: neutral) and the command.
 type launch struct {
 	ws   *resolve.Workspace
 	name string
 	args []string
 }
 
-// run starts the launch with ws's environment (envplan.Environ): claude
-// through launchClaudeArgs, codex with the pinned Codex flags when the
-// workspace isolates a codex identity.
+// run starts the launch with ws's environment (envplan.Environ), claude
+// through launchClaudeArgs.
 func (l launch) run() error {
-	_, agent := agentSession()
+	agent := insideAgent()
 	args := l.args
 	switch agentProg(l.name) {
 	case "claude":
-		args = launchClaudeArgs(args, agent)
-	case "codex":
-		if codexIsolated(l.ws) {
-			// Codex's hooks.json runs a bare `tq claude-hook pre-tool-use
-			// --agent codex`; a tq Codex cannot find runs no guard at all,
-			// so the launch is refused (ADR-0006).
-			if err := codexHookResolves(envplan.Environ(l.ws, os.Environ())); err != nil {
-				return err
+		// A session in an identity's folder starts only with the guard: the plugin's PreToolUse
+		// hook in the Claude config the session will run with, CLAUDE_CONFIG_DIR as the identity
+		// environment sets it, and no project settings of the folders it starts in switching it
+		// off. A neutral folder is unchanged.
+		if l.ws != nil && claudeIsSession(args) {
+			// A working folder that cannot be read (Getwd fails: cwd is "") is refused by the check itself.
+			cwd, _ := os.Getwd()
+			if g := guardplugin.CheckSessionGuard(envplan.Desired(l.ws)["CLAUDE_CONFIG_DIR"], cwd, l.ws.Root); !g.OK {
+				return guardRefusal(l.ws.Name, g)
 			}
 		}
-		args = codexArgs(l.ws, args)
+		args = launchClaudeArgs(args, agent)
 	}
 	env := envplan.Environ(l.ws, os.Environ())
 	name := l.name
 	if layer := envplan.LayerFor(l.ws); layer != nil {
-		// guard: v2 (ADR-0008): an out-of-scope CLI is refused however it is spelled (aws,
+		// An out-of-scope CLI is refused however it is spelled (aws,
 		// aws.exe, its install path); anything else resolves on the identity PATH, not on tq's
-		// own, so tq run <ws> -- aws from outside the folder does not find the aws it dropped.
+		// own, so tentaqles run <ws> -- aws from outside the folder does not find the aws it dropped.
 		if layer.IsMasked(name) {
 			return fmt.Errorf("%s: command not found on the PATH of identity %s (outside its scope)", name, l.ws.Name)
 		}
@@ -155,25 +150,8 @@ func (l launch) run() error {
 	return execCommand(name, args, env)
 }
 
-// runOff is tq run --off: the main install and logins, no tq. The plugin is
-// switched off and the identity environment cleaned; no variable marks the
-// launch. It is human-only: refused from a session, confirmed by the human.
-func runOff(c *cobra.Command, name string, args []string, errw func(string)) error {
-	if err := refuseAgent("tq run --off"); err != nil {
-		return err
-	}
-	if agentProg(name) == "" {
-		return fmt.Errorf("tq run --off starts claude or codex only, not %q: tq run --off -- <claude|codex> [args]", name)
-	}
-	if err := humanGate(c, "tq run --off", "tq run --off: about to start "+name+" with no identity and no guard (your main logins, the plugin off)"); err != nil {
-		return err
-	}
-	errw(offBanner)
-	return execCommand(name, offArgs(name, args), envplan.OffEnviron(os.Environ()))
-}
-
 // execIn runs name+args with ws's environment. applyClaudeArgs must be false for
-// flows that drive claude's own subcommands (e.g. `tq login <ws> claude`), where
+// flows that drive claude's own subcommands (e.g. `tentaqles login <ws> claude`), where
 // injecting --dangerously-skip-permissions is wrong; true is the launcher
 // (launch.run).
 func execIn(ws *resolve.Workspace, name string, args []string, applyClaudeArgs bool, errw func(string)) error {
@@ -183,53 +161,61 @@ func execIn(ws *resolve.Workspace, name string, args []string, applyClaudeArgs b
 	return execCommand(name, args, envplan.Environ(ws, os.Environ()))
 }
 
-// cwdWorkspace resolves `.`: the current folder's trusted workspace, or nil
-// when the folder is neutral. A folder that is a workspace but untrusted
-// is refused (PRD v2 §8.3): the reason names the first changed file and
-// the command that fixes it (tq hooks verify after a mismatch, tq allow
-// for a never-trusted one). Nothing launches without the identity.
+// cwdWorkspace resolves `.`: the current folder's client, or nil when the folder is neutral.
 func cwdWorkspace() (*resolve.Workspace, error) {
 	cfg, err := registry.Load()
 	if err != nil {
 		return nil, err
 	}
 	cwd, _ := os.Getwd()
-	res := resolve.Resolve(cwd, cfg)
-	if res.Workspace == nil && res.Untrusted != nil {
-		return nil, fmt.Errorf("workspace %s is %s", res.Untrusted.Name, res.Reason)
-	}
-	return res.Workspace, nil
+	return resolve.Resolve(cwd, cfg).Workspace, nil
 }
 
+// findWorkspace is the client named name.
+func findWorkspace(name string) (*resolve.Workspace, error) {
+	cfg, err := registry.Load()
+	if err != nil {
+		return nil, err
+	}
+	return resolve.Find(cfg, name)
+}
+
+// insideAgent reports whether tq runs inside a Claude Code session (Claude Code sets CLAUDECODE
+// for the commands it runs). It is a convenience check, not a boundary: a session can unset it.
+func insideAgent() bool { return os.Getenv("CLAUDECODE") != "" }
+
+// refuseOtherWorkspace refuses tentaqles run <name> from inside a Claude Code session unless name is the
+// client of the folder the command runs in: a session runs the identity of its own folder, never
+// another client's. A developer's own terminal runs any client.
+func refuseOtherWorkspace(name string) error {
+	if !insideAgent() {
+		return nil
+	}
+	if cw, err := cwdWorkspace(); err == nil && cw != nil && cw.Name == name {
+		return nil
+	}
+	return errors.New("tentaqles run: " + name + " is another client. A Claude Code session can only run under the client of its own folder.")
+}
 func newRunCmd() *cobra.Command {
-	var off bool
 	c := &cobra.Command{
-		Use:   "run <workspace>|. -- <command> [args...]",
-		Short: "Run a command with a workspace's identity without cd-ing into it",
-		Long: "Run a command with a workspace's identity. `.` is the current folder's workspace (neutral when none).\n" +
-			"For claude, the launcher starts in bypass (tq's guard is the hook: identity drift and secrets, in every\n" +
-			"permission mode). `tq run --off -- <claude|codex>` starts it with no tq at all: the main install and\n" +
-			"logins, no identity, the plugin switched off.",
-		Example: "  tq run acme -- claude\n  tq run . -- claude -p \"...\"\n  tq run --off -- claude",
+		Use:   "run <client>|. -- <command> [args...]",
+		Short: "Run a command with a client's identity without cd-ing into its folder",
+		Long: "Run a command with a client's identity. `.` is the current folder's client (none in a neutral folder).\n" +
+			"For claude, the launcher starts in bypass, and refuses to start a session without the tentaqles plugin.\n" +
+			"From inside a Claude Code session, only the client of the current folder runs.",
+		Example: "  tentaqles run acme -- claude\n  tentaqles run . -- claude -p \"...\"",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			defer trust.MemoScope()()
-			if off {
-				if c.ArgsLenAtDash() > 0 {
-					return errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
-				}
-				return runOff(c, args[0], args[1:], func(s string) { fmt.Fprintln(c.ErrOrStderr(), s) })
-			}
 			// Flags are not interspersed: after <workspace> only an optional
 			// -- may come before the command word, and everything after it
 			// is the command's own.
-			rest, err := runTail(args[1:])
-			if err != nil {
-				return err
+			rest := args[1:]
+			if len(rest) > 0 && rest[0] == "--" {
+				rest = rest[1:]
 			}
 			args = append(args[:1:1], rest...)
 			if len(args) < 2 {
-				return errors.New("usage: tq run <workspace>|. -- <command> [args...]")
+				return errors.New("usage: tentaqles run <client>|. -- <command> [args...]")
 			}
 			var ws *resolve.Workspace
 			if args[0] == "." {
@@ -239,33 +225,18 @@ func newRunCmd() *cobra.Command {
 				}
 				ws = w
 			} else {
+				if err := refuseOtherWorkspace(args[0]); err != nil {
+					return err
+				}
 				w, err := findWorkspace(args[0])
 				if err != nil {
 					return err
-				}
-				if v := trust.Check(w.Name, w.Hash); !v.OK {
-					return fmt.Errorf("workspace %s is %s", w.Name, v.Reason)
 				}
 				ws = w
 			}
 			return launch{ws: ws, name: args[1], args: args[2:]}.run()
 		},
 	}
-	c.Flags().BoolVar(&off, "off", false, "start claude or codex with no tq: main install and logins, no identity, the plugin off (human only)")
 	c.Flags().SetInterspersed(false)
 	return c
-}
-
-// runTail reads what follows <workspace> in tq run: an optional --, then
-// the command and its args.
-func runTail(args []string) ([]string, error) {
-	if len(args) > 0 {
-		switch a := args[0]; {
-		case a == "--":
-			return args[1:], nil
-		case a == "--off" || strings.HasPrefix(a, "--off="):
-			return nil, errors.New("tq run --off takes no workspace: tq run --off -- <claude|codex> [args]")
-		}
-	}
-	return args, nil
 }

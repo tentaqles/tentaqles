@@ -1,7 +1,7 @@
 // Package claudesettings renders the tq-managed part of a Claude identity's
 // settings.json: a few env vars and the status line. Every identity gets the
 // same baseline plus what its manifest adds, so identities stop drifting
-// apart. tq writes no permission setting (PRD v2 §13: permission modes of
+// apart. tq writes no permission setting (permission modes of
 // any kind are a non-goal); its hook only denies.
 //
 // tq only touches what it owns. What it wrote last time is recorded in
@@ -19,6 +19,7 @@ package claudesettings
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tentaqles/tentaqles/internal/bundle"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 )
 
@@ -75,19 +75,6 @@ type Owned struct {
 // removes defaultMode or skipDangerousModePermissionPrompt.
 func (o Owned) legacyRender() bool { return o.found && o.Schema < stateSchema }
 
-// oldModeFor is what an older render wrote as permissions.defaultMode for
-// a manifest's claude.permission_mode, on every render: "auto" for none or
-// auto, "bypassPermissions" for bypass, any other value as it was.
-func oldModeFor(m string) string {
-	switch m {
-	case "", "auto":
-		return "auto"
-	case "bypass":
-		return "bypassPermissions"
-	}
-	return m
-}
-
 // baselineEnv tunes plugins that otherwise cost a lot: the security-guidance
 // plugin's Stop review ran a headless Opus session after every file-changing
 // turn (373 in 90 days). Commit/push reviews stay on, on Sonnet: they use the
@@ -102,7 +89,7 @@ var baselineEnv = map[string]string{
 // Desired computes the managed settings for a workspace manifest. tqExe is
 // the tq binary the status line should call ("" to leave it alone).
 func Desired(m *manifest.Manifest, tqExe string) Managed {
-	want := Managed{Env: map[string]string{}, OldDefaultMode: oldModeFor(m.OldPermissionMode)}
+	want := Managed{Env: map[string]string{}}
 	for k, v := range baselineEnv {
 		want.Env[k] = v
 	}
@@ -227,7 +214,7 @@ func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Ow
 // packages (they re-resolve @latest on every refresh) and older tq ones.
 func replaceableStatusLine(sl map[string]any) bool {
 	cmd, _ := sl["command"].(string)
-	isTq := strings.Contains(cmd, "tq") && strings.HasSuffix(strings.TrimSpace(cmd), " statusline")
+	isTq := (strings.Contains(cmd, "tq") || strings.Contains(cmd, "tentaqles")) && strings.HasSuffix(strings.TrimSpace(cmd), " statusline")
 	return strings.Contains(cmd, "@latest") || strings.Contains(cmd, "ccstatusline") || isTq
 }
 
@@ -243,7 +230,7 @@ type Result struct {
 func Render(dir string, want Managed, dryRun bool) (Result, error) {
 	path := filepath.Join(dir, "settings.json")
 	res := Result{Path: path}
-	current, err := bundle.ReadJSONMap(path)
+	current, err := readJSONMap(path)
 	if err != nil {
 		return res, err
 	}
@@ -264,7 +251,7 @@ func Render(dir string, want Managed, dryRun bool) (Result, error) {
 		return res, err
 	}
 	if res.Changed {
-		if err := bundle.WriteJSONAtomic(path, next); err != nil {
+		if err := writeJSONAtomic(path, next); err != nil {
 			return res, err
 		}
 	}
@@ -305,7 +292,7 @@ func summarize(cur, next map[string]any) []string {
 		out = append(out, "env: updated")
 	}
 	if !reflect.DeepEqual(normalize(cur["statusLine"]), normalize(next["statusLine"])) {
-		out = append(out, "statusLine: tq statusline")
+		out = append(out, "statusLine: tentaqles statusline")
 	}
 	return out
 }
@@ -378,15 +365,6 @@ func minus(a, b []string) []string {
 	return out
 }
 
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
 func deepCopy(m map[string]any) map[string]any {
 	raw, _ := json.Marshal(m)
 	out := map[string]any{}
@@ -399,4 +377,65 @@ func normalize(v any) any {
 	var out any
 	_ = json.Unmarshal(raw, &out)
 	return out
+}
+
+// readJSONMap reads a JSON object file; a missing or empty file is an empty map.
+func readJSONMap(path string) (map[string]any, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return map[string]any{}, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	return m, nil
+}
+
+// WriteJSONAtomic writes m to path as indented JSON via a temp file + rename,
+// so readers never observe a partially-written file.
+func writeJSONAtomic(path string, m map[string]any) error {
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+
+	tmp := fmt.Sprintf("%s.tmp-%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		if errors.Is(err, os.ErrExist) || os.IsExist(err) {
+			if rmErr := os.Remove(path); rmErr != nil {
+				os.Remove(tmp)
+				return rmErr
+			}
+			if err := os.Rename(tmp, path); err != nil {
+				os.Remove(tmp)
+				return err
+			}
+			return nil
+		}
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }

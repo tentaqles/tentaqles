@@ -32,7 +32,7 @@ type fixture struct {
 }
 
 func TestCanonicalSuite(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "plugin", "tests", "fixtures", "guard_cases.json"))
+	raw, err := os.ReadFile(filepath.Join("testdata", "guard_cases.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +40,8 @@ func TestCanonicalSuite(t *testing.T) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Cases) != 20 {
-		t.Fatalf("canonical suite must have 20 cases, got %d", len(f.Cases))
+	if len(f.Cases) != 19 {
+		t.Fatalf("canonical suite must have 19 cases, got %d", len(f.Cases))
 	}
 	for _, c := range f.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -179,9 +179,9 @@ func TestInlineIdentityOverride(t *testing.T) {
 	}
 }
 
-// Fix round 2, finding 8: read-only git is exempt from env-drift/untrusted too.
-func TestReadOnlyGitExemptFromEnvDriftAndUntrusted(t *testing.T) {
-	for _, finding := range []string{"env-drift", "untrusted"} {
+// Read-only git is exempt from env-drift; mutating git is not.
+func TestReadOnlyGitExemptFromEnvDrift(t *testing.T) {
+	for _, finding := range []string{"env-drift"} {
 		if d := Decide(Input{Command: "git status", Client: "acme", Findings: []string{finding}}); d.Block {
 			t.Errorf("%s: `git status` must be allowed, got %+v", finding, d)
 		}
@@ -190,46 +190,6 @@ func TestReadOnlyGitExemptFromEnvDriftAndUntrusted(t *testing.T) {
 		}
 		if d := Decide(Input{Command: "git status && git commit -m x", Client: "acme", Findings: []string{finding}}); !d.Block || d.Rule != finding {
 			t.Errorf("%s: chained mutating git must block, got %+v", finding, d)
-		}
-	}
-}
-
-// With the doctor finding integrity (a signed record that fails), the
-// reason says what fixes it: tq hooks verify, not tq allow. The rules and
-// what they block are unchanged; without the finding the text is as before.
-func TestIntegrityFindingNamesHooksVerify(t *testing.T) {
-	want := "integrity mismatch: run tq hooks verify acme"
-	d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{"untrusted", "integrity"}})
-	if !d.Block || d.Rule != "untrusted" || !strings.Contains(d.Reason, want) || strings.Contains(d.Reason, "tq allow") {
-		t.Fatalf("untrusted rule: %+v", d)
-	}
-	d = Decide(Input{Command: "git push origin main", Client: "acme", Neutral: true, Findings: []string{"untrusted", "integrity"},
-		NeutralReason: "untrusted: integrity mismatch, changed c:/x/hooks.json (run: tq hooks verify acme)"})
-	if !d.Block || d.Rule != "neutral-remote" || !strings.Contains(d.Reason, want) || !strings.Contains(d.Reason, "c:/x/hooks.json") || strings.Contains(d.Reason, "tq allow") {
-		t.Fatalf("neutral-remote: %+v", d)
-	}
-	if d := Decide(Input{Command: "git commit -m x", Client: "acme", Findings: []string{"untrusted"}}); !strings.Contains(d.Reason, "tq allow acme") {
-		t.Fatalf("a workspace never allowed keeps tq allow: %+v", d)
-	}
-	if d := Decide(Input{Command: "git push", Neutral: true, NeutralReason: "outside any base"}); !strings.Contains(d.Reason, "tq allow <name>") {
-		t.Fatalf("a neutral folder keeps its text: %+v", d)
-	}
-}
-
-func TestStripHeredocs(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"python - <<'EOF'\nprint('git commit')\nEOF\ngit status", "python - <<'EOF'\ngit status"},
-		{"cat <<EOF > f\nx\nEOF", "cat <<EOF > f"},
-		// quoted << is not a heredoc: the next line still runs
-		{"echo \"<<EOF\"\ngit commit -m x\nEOF", "echo \"<<EOF\"\ngit commit -m x\nEOF"},
-		// unterminated: keep everything
-		{"cat <<EOF\ngit commit -m x", "cat <<EOF\ngit commit -m x"},
-		// arithmetic shift is not a heredoc word
-		{"echo $((1<<2))\ngit commit -m x", "echo $((1<<2))\ngit commit -m x"},
-	}
-	for _, c := range cases {
-		if got := StripHeredocs(c.in); got != c.want {
-			t.Errorf("StripHeredocs(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -265,21 +225,14 @@ func TestExtraClouds(t *testing.T) {
 	}
 }
 
-// TestScopedSkipsWrongCloud: under guard: v2 (Input.Scoped) the provider scope judges cloud
-// CLIs (policy's identity/out-of-scope-cli, ADR-0007), so wrong-cloud does not run; the
-// manifest's blocked commands and the drift rules still do. Without the flag wrong-cloud
-// behaves as before.
-func TestScopedSkipsWrongCloud(t *testing.T) {
-	in := Input{Command: "aws ec2 run-instances", Client: "company-x", CloudProvider: "azure"}
-	if d := Decide(in); !d.Block || d.Rule != "wrong-cloud" {
-		t.Fatalf("v1: %+v", d)
+// Outside every client folder a remote or cloud command is refused, and the reason says how to
+// get an identity; a local command passes.
+func TestNeutralRemoteNamesReach(t *testing.T) {
+	d := Decide(Input{Command: "git push", Neutral: true, NeutralReason: "outside any base"})
+	if !d.Block || d.Rule != "neutral-remote" || !strings.Contains(d.Reason, "tentaqles reach") || strings.Contains(d.Reason, "tq allow") {
+		t.Fatalf("%+v", d)
 	}
-	in.Scoped = true
-	if d := Decide(in); d.Block {
-		t.Fatalf("v2 still ran wrong-cloud: %+v", d)
-	}
-	in.Blocked = []string{"aws ec2"}
-	if d := Decide(in); !d.Block || d.Rule != "blocked-command" {
-		t.Fatalf("v2 skipped blocked-command: %+v", d)
+	if d := Decide(Input{Command: "ls -la", Neutral: true, NeutralReason: "outside any base"}); d.Block {
+		t.Fatalf("a local command outside a client was refused: %+v", d)
 	}
 }

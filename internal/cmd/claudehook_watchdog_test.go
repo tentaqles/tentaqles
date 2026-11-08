@@ -16,7 +16,7 @@ import (
 var spin atomic.Bool
 
 // spinChild is the child half of TestHookStall_*: it runs the real RunMain of
-// `tq claude-hook pre-tool-use` with a tight loop injected (no calls, no allocation, so only
+// `tentaqles claude-hook pre-tool-use` with a tight loop injected (no calls, no allocation, so only
 // an asynchronous preemption can stop it) and a goroutine forcing garbage collections, which
 // stop the world and so must preempt the loop, then exits with RunMain's code or the
 // watchdog's.
@@ -81,7 +81,7 @@ func TestHookStall_SpinningDecisionIsDenied(t *testing.T) {
 		return
 	}
 	code, stderr, took := runSpinChild(t, "TestHookStall_SpinningDecisionIsDenied", "decision")
-	if code != 2 || !strings.Contains(stderr, "BLOCKED [tq/guard-error]") || !strings.Contains(stderr, "did not decide within") {
+	if code != 2 || !strings.Contains(stderr, "BLOCKED [tq/guard-error]") || !strings.Contains(stderr, "did not finish within") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
 	if took > 5*time.Second {

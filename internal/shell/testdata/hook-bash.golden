@@ -5,8 +5,6 @@
 function __tq_hook { [ "${TQ_ENABLED:-1}" = "0" ] && return 0; local __o; __o="$(MSYS2_ENV_CONV_EXCL=__TQ_SH_PATH __TQ_SH_PATH="$PATH" '/opt/tq/bin/tq' env --shell bash 2>/dev/null)"; if [ -n "$__o" ]; then eval "$__o"; fi; return 0; }
 case ";${PROMPT_COMMAND:-};" in *";__tq_hook;"*) ;; *) PROMPT_COMMAND="__tq_hook${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
 __tq_hook
+function tentaqles { '/opt/tq/bin/tq' "$@"; }
 function tq { '/opt/tq/bin/tq' "$@"; }
 function claude { '/opt/tq/bin/tq' run . -- claude "$@"; }
-function codex { '/opt/tq/bin/tq' run . -- codex "$@"; }
-function claude-off { '/opt/tq/bin/tq' run --off -- claude "$@"; }
-function codex-off { '/opt/tq/bin/tq' run --off -- codex "$@"; }

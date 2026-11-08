@@ -6,8 +6,6 @@ function __tq_hook { [ "${TQ_ENABLED:-1}" = "0" ] && return 0; local __o; __o="$
 autoload -Uz add-zsh-hook 2>/dev/null
 if (( ${precmd_functions[(I)__tq_hook]} == 0 )); then precmd_functions+=(__tq_hook); fi
 __tq_hook
+function tentaqles { {{.Bin}} "$@"; }
 function tq { {{.Bin}} "$@"; }
 function claude { {{.Bin}} run . -- claude "$@"; }
-function codex { {{.Bin}} run . -- codex "$@"; }
-function claude-off { {{.Bin}} run --off -- claude "$@"; }
-function codex-off { {{.Bin}} run --off -- codex "$@"; }

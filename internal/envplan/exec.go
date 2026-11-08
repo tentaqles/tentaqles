@@ -169,10 +169,10 @@ func lookup(env []string, k string) string {
 
 // Environ returns base cleaned of any other workspace's shell state (see
 // Clean) with the workspace's desired vars applied. A stale TQ_WS /
-// TQ_WS_ROOT is dropped too. For a guard: v2 identity (ADR-0008) the
+// TQ_WS_ROOT is dropped too. For an identity the
 // out-of-scope variables are removed and PATH is the identity PATH
 // (FilterPath of the cleaned PATH), so a launch from outside the folder
-// (tq run <ws>, an editor) gets the same layer as the identity terminal.
+// (tentaqles run <ws>, an editor) gets the same layer as the identity terminal.
 //
 // The launch carries a __TQ_STATE of what it changed (launchState), so a shell started in it
 // (the harness's Bash tool, a terminal from an editor) can leave the identity and is never
@@ -215,7 +215,7 @@ func environOf(ws *resolve.Workspace, base []string) []string {
 	return out
 }
 
-// environ is Environ for a guard: v2 layer: cleaned without the out-of-scope variables and
+// environ is Environ for a layer: cleaned without the out-of-scope variables and
 // the workspace markers, PATH filtered (its key keeps its spelling, Path on Windows), then
 // desired applied.
 func (l *Layer) environ(desired map[string]string, cleaned []string) []string {
@@ -251,3 +251,6 @@ func (l *Layer) environ(desired map[string]string, cleaned []string) []string {
 	}
 	return out
 }
+
+// wsVars are the workspace markers Desired sets.
+var wsVars = []string{"TQ_WS", "TQ_WS_ROOT"}

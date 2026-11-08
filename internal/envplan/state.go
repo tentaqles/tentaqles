@@ -101,6 +101,12 @@ func compactPath(orig, set, sep string) ([]int, string, bool) {
 			return drop, s[0], true
 		}
 	}
+	// The shims folder and the mask folder, both first: spelled as one prefix.
+	if len(s) > 1 && s[0] != "" && s[1] != "" {
+		if drop, ok := try(s[0]+sep+s[1], s[2:]); ok {
+			return drop, s[0] + sep + s[1], true
+		}
+	}
 	return nil, "", false
 }
 

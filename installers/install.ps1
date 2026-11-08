@@ -40,10 +40,14 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
 }
 Expand-Archive $zip -DestinationPath $binDir -Force
 Remove-Item $zip
+# One program under two names: tentaqles.exe, and tq.exe, which the plugin hook runs.
+foreach ($b in 'tentaqles.exe', 'tq.exe') {
+  if (-not (Test-Path (Join-Path $binDir $b))) { throw "the archive has no $b; tq is not fully installed" }
+}
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $binDir) {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$binDir", 'User')
   Write-Host "Added $binDir to your user PATH (open a new terminal)."
 }
-Write-Host "Installed tq $ver to $binDir\tq.exe"
-Write-Host 'Next: tq init <base-folder>'
+Write-Host "Installed tentaqles $ver to $binDir\tentaqles.exe (alias: $binDir\tq.exe)"
+Write-Host 'Next: tentaqles reach <client-folder>'

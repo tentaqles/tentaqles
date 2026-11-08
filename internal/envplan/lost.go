@@ -9,7 +9,7 @@ import (
 
 // A shell whose __TQ_STATE is gone (unset, truncated, edited) while TQ_WS says an identity is
 // active cannot be restored: tq no longer knows the values from before it. It fails closed
-// (ADR-0008): every variable tq sets for any identity and every mask folder on PATH are
+//: every variable tq sets for any identity and every mask folder on PATH are
 // removed, everything else stays, the identity of the folder (if any) is applied afresh, and
 // the prompt says the old values are lost and that a new terminal has them.
 
@@ -40,6 +40,7 @@ func tqVars() map[string]bool {
 	for _, k := range AllProviderVars() {
 		m[envKey(k)] = true
 	}
+	m[envKey("BROWSER")] = true // a client's shim (tqOwned says whose)
 	return m
 }
 
@@ -54,6 +55,11 @@ func tqOwned(drop map[string]bool, name, value string) bool {
 	if k == envKey(StateVar) || k == envKey("TQ_WS") || k == envKey("TQ_WS_ROOT") {
 		return true
 	}
+	if k == envKey("BROWSER") {
+		// the user's own BROWSER stays; one that names a program of the shims folder is tq's
+		v := strings.TrimSpace(strings.Trim(strings.TrimSpace(value), `"`))
+		return v != "" && isAnyShims(filepath.Dir(filepath.FromSlash(v)))
+	}
 	root := filepath.Clean(paths.IdentitiesRoot())
 	v := filepath.Clean(value)
 	return samePath(v, root) || strings.HasPrefix(strings.ToLower(v), strings.ToLower(root)+string(filepath.Separator))
@@ -65,11 +71,11 @@ func isAnyMask(p string) bool {
 	return filepath.Base(p) == MaskDirName && samePath(filepath.Dir(filepath.Dir(p)), filepath.Clean(paths.IdentitiesRoot()))
 }
 
-// stripMasks removes every identity's mask folder from a PATH in syn's spelling.
+// stripMasks removes every identity's mask folder and shims folder from a PATH in syn's spelling.
 func stripMasks(path string, syn PathSyntax) string {
 	var kept []string
 	for _, e := range strings.Split(path, syn.Sep) {
-		if e != "" && isAnyMask(syn.ToOS(e)) {
+		if e != "" && (isAnyMask(syn.ToOS(e)) || isAnyShims(syn.ToOS(e))) {
 			continue
 		}
 		kept = append(kept, e)

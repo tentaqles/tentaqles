@@ -6,7 +6,7 @@ import "github.com/tentaqles/tentaqles/internal/providers"
 type Provider struct {
 	Name      string
 	Vars      func(dir string) map[string]string
-	LoginCmd  string // executable to run for `tq login`
+	LoginCmd  string // executable to run for `tentaqles login`
 	LoginArgs []string
 }
 

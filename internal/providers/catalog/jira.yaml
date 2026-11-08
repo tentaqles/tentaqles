@@ -16,15 +16,9 @@ install:
 # verified, so tq does not claim to isolate it.
 login:
   args: ["jira", "auth", "login"]
-verify:
-  args: ["jira", "auth", "status"]
-mcp: atlassian
-notes: "acli keeps one global login, not one per workspace: run acli jira auth login yourself. Without acli, store an API token with tq secret set <ws> jira, or name a tracker.env variable for tq dotenv."
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+notes: "acli keeps one global login, not one per client: run acli jira auth login yourself. A Claude session can reach Jira through the Atlassian MCP server added in that client's Claude config."
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [acli, jira]
   env: [JIRA_API_TOKEN, ATLASSIAN_API_TOKEN]
-  hosts: [atlassian.net, api.atlassian.com]
-  mcp: [atlassian, jira]
-  mcp_hosts: [mcp.atlassian.com]

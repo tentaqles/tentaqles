@@ -30,7 +30,8 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   echo "Verified build provenance for $ARCHIVE"
 fi
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
-install -m 755 "$TMP/tq" "$BIN_DIR/tq"
-echo "Installed tq $VER to $BIN_DIR/tq"
+# One program under two names: tentaqles, and tq, which the plugin hook runs.
+for b in tentaqles tq; do install -m 755 "$TMP/$b" "$BIN_DIR/$b"; done
+echo "Installed tentaqles $VER to $BIN_DIR/tentaqles (alias: $BIN_DIR/tq)"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Add $BIN_DIR to your PATH";; esac
-echo 'Next: tq init <base-folder>'
+echo 'Next: tentaqles reach <client-folder>'

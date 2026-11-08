@@ -7,7 +7,7 @@ cli:
   version_args: ["--version"]
 install:
   windows:
-    winget: "HashiCorp.Terraform"
+    winget: "Hashicorp.Terraform"
   macos:
     brew: "terraform"
   linux:
@@ -24,11 +24,7 @@ identity:
     settings and provider mirrors are isolated, but the token from
     `terraform login` is not: it goes to the shared terraform.d directory
     regardless of TF_CLI_CONFIG_FILE
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
-# A generic tool: its command talks to whatever the project configures, so it is
-# never matched by name.
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   env: ["TF_TOKEN_*"]
-  hosts: [app.terraform.io]
-  mcp_packages: ["hashicorp/terraform-mcp-server"]

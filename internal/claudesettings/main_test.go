@@ -3,8 +3,6 @@ package claudesettings
 import (
 	"os"
 	"testing"
-
-	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 // Point TQ_HOME at an empty folder so no test reads the developer's real state.
@@ -16,7 +14,6 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("TQ_HOME", dir)
-	paths.AllowHomeOverride = true
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

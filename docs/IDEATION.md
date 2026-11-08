@@ -1,57 +1,88 @@
-The product is an identity manager for developers who work for multiple companies or
-clients. It isolates each client's data and tools from the others by giving each client an
-isolated development environment. For each company or client, the identity holds:
-- An isolated terminal (PowerShell, pwsh, Git Bash and others) with specific tools; a client
-  that works with AWS only, does not get the Azure CLI installed or reachable through that
-  terminal.
-- Isolated logins and sessions for agentic AIs (Claude Code, OpenAI Codex, OpenCode, Kimi
-  Code and others). Two companies the developer works for may each provide their own Claude
-  Code subscription, so each identity terminal is logged in to its own Claude Code account.
-- Isolated platform connections: git providers (GitHub, GitLab, Azure DevOps, Bitbucket),
-  cloud providers (AWS, Azure, GCP), data platforms (Databricks, Snowflake), email providers
-  (Google, Microsoft) and the rest.
-- Isolated tech stack and preferences.
-- Isolated Chrome or Edge profiles, so whenever a terminal or an agent interacts with a
-  browser it opens the correct browser and profile.
+# Tentaqles: what it is for
 
-How it should work
+Tentaqles is an identity manager for developers who work for several clients. It gives each client an isolated
+development environment, tied to a folder. For each client, the identity holds:
 
-A developer starts working with a new client. They create a folder with the client's name
-under the main clients folder, open a terminal and type a tentaqles command that makes that
-folder run with its own terminal, Claude Code account, Codex account, GitHub CLI, Azure CLI,
-AWS CLI and every other identity-bound CLI and tool. The command (`tq init` and `tq add`)
-asks for what it needs with checkboxes, text inputs or single and multiple selections:
-- The identity email: text input.
-- The git provider: single choice (GitHub, GitLab, Bitbucket, Azure DevOps), Other, Skip.
-- Cloud providers: multiple choice (Azure, AWS, Google Cloud Platform, others, skip).
-- Team and meeting platforms: multiple choice (Microsoft Teams, Slack, Discord, Zoom, Google
-  Meet, others, skip).
-- Data platforms: multiple choice (Databricks, Snowflake, Google Colab, others, skip).
-- AI harness providers: multiple choice (Claude Code, OpenAI Codex, Kimi Code, OpenCode,
-  others, skip).
-- Task management provider: single choice (Asana, Linear, GitHub Projects, Azure DevOps,
-  Trello, Jira, others, skip); only its login is managed, nothing is mirrored.
-- Browser and profile (Google Chrome, Microsoft Edge, Safari, Opera and others).
-- Anything else meaningful to the day-to-day developer workflow.
+- an isolated terminal, with the client's tools only: a client that works with AWS only does not get the Azure CLI
+  reachable through that terminal;
+- its own Claude Code login: two companies may each provide their own Claude Code subscription, so each client's
+  terminal starts Claude Code logged in to that client's account;
+- its own logins for the platforms the client uses: git hosts (GitHub, GitLab, Azure DevOps, Bitbucket), clouds
+  (AWS, Azure, GCP), data platforms (Databricks, Snowflake) and the other CLIs of a development stack;
+- its own git name and email;
+- its own Chrome or Edge profile, so a link a terminal or an agent opens lands in the right browser profile.
 
-The system prepares the manifest and the other settings for the selections, installs the
-CLIs for the selected providers and their dependencies, then starts a new terminal session
-with the correct identity and closes the terminal where the setup was started.
+## How it works
 
-The developer then starts the AI harness of choice, Claude Code for example, and is
-prompted to log in to the client's account. Inside Claude Code under the client's root
-folder, the tentaqles plugin is already installed for that harness, or the developer
-installs it. An onboarding skill then drives the login to each configured provider: Slack
-MCP, Linear, Asana, Azure DevOps, Azure CLI, GitHub CLI and so on, by OAuth, token or MCP.
-The developer is then fully connected to the client's stack through the agent: messages,
-email, task management, git, cloud, under that client's identity and no other.
+The developer starts working with a new client. They create a folder with the client's name under their clients
+folder, open a terminal there, and run `tentaqles reach` (or `tentaqles reach <path>` from anywhere). That makes the
+folder an isolated identity:
 
-Then, say the developer gets confused and asks an agent running for company X, which
-has an Azure subscription, to create a virtual machine in AWS. Claude Code should know
-that this identity runs on Azure, not AWS, and not call the AWS CLI, MCPs or tools. If
-during reasoning and research Claude finds those tools through another company's
-identity, a hook blocks it from using them, based on the settings. Mistakes are guarded
-by deterministic scripts, routes and hooks, not by stochastic LLM reasoning alone.
+- Any terminal started in that folder, or in a subfolder, is the client's terminal. It reaches only the client's
+  tools: the CLIs of providers the client doesn't use are not on its PATH, and their variables are unset.
+- Claude Code started in that terminal uses the client's own Claude config home, and so the client's account.
+- A CLI run in that terminal, by the developer or by Claude Code, uses the client's own login for it: every `az`
+  command runs against the client's Azure subscription, every `gh` command as the client's GitHub user. The same
+  goes for the other git hosts, the clouds and the data platforms.
+- git commits there with the client's name and email.
 
-AI agents must not be able to overwrite the hooks, the guards or the identities unless
-a human allows it.
+## `tentaqles reach`
+
+`tentaqles reach` opens with the banner below, as one text asset the developer can replace.
+
+Default (UTF-8 terminals; 77 columns, fits an 80-column cmd.exe window):
+
+```text
+████████╗███████╗███╗   ██╗████████╗ █████╗  ██████╗ ██╗     ███████╗███████╗
+╚══██╔══╝██╔════╝████╗  ██║╚══██╔══╝██╔══██╗██╔═══██╗██║     ██╔════╝██╔════╝
+   ██║   █████╗  ██╔██╗ ██║   ██║   ███████║██║   ██║██║     █████╗  ███████╗
+   ██║   ██╔══╝  ██║╚██╗██║   ██║   ██╔══██║██║▄▄ ██║██║     ██╔══╝  ╚════██║
+   ██║   ███████╗██║ ╚████║   ██║   ██║  ██║╚██████╔╝███████╗███████╗███████║
+   ╚═╝   ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚══▀▀═╝ ╚══════╝╚══════╝╚══════╝
+
+  tentaqles 0.1.0  ·  identity: dirtybird  ·  guard: on
+  C:\clients\dirtybird
+```
+
+Fallback (terminal reports no UTF-8):
+
+```text
+  ______           __              __
+ /_  __/__  ____  / /_____ _____ _/ /__  _____
+  / / / _ \/ __ \/ __/ __ `/ __ `/ / _ \/ ___/
+ / / /  __/ / / / /_/ /_/ / /_/ / /  __(__  )
+/_/  \___/_/ /_/\__/\__,_/\__, /_/\___/____/
+                            /_/
+```
+
+- The status line under the banner shows the version, the identity name and the working directory.
+- `--no-banner` and `TQ_NO_BANNER=1` turn it off for scripts and non-interactive use.
+
+For a new client, `reach` asks, with checkboxes, text inputs and single or multiple choices:
+
+- the identity email (checked for a valid format);
+- the git provider: GitHub, GitLab, Bitbucket, Azure DevOps, other, skip;
+- the cloud providers: Azure, AWS, Google Cloud, other, skip;
+- the team and meeting platforms: Microsoft Teams, Slack, Discord, Zoom, Google Meet, other, skip;
+- the data platforms: Databricks, Snowflake, Google Colab, other, skip;
+- the task management provider: Asana, Linear, GitHub Projects, Azure DevOps, Trello, Jira, other, skip;
+- the email provider: Google, Microsoft, other, skip;
+- the browsers and the profile for each: Google Chrome, Microsoft Edge, skip.
+
+The answers go to the client's manifest: the list of tools the developer set for that identity. After the
+developer types `yes`, `reach` writes the manifest and the folder's git identity, prepares the client's Claude
+settings, PATH and browser profile, installs the tentaqles plugin into the client's Claude config, and adds the
+shell activation to the developer's shell profiles.
+
+In a folder that already is a client, `reach` shows the client and offers to change its providers, its browser and
+profile, or its email, through the same questions.
+
+## Claude Code
+
+The developer opens a new terminal in the client's folder and starts Claude Code, which asks them to log in to the
+client's account the first time. From then on, every session started under that folder is that client's.
+
+The tentaqles plugin adds one small check: before Claude Code runs a shell command, the plugin compares it with the
+folder's client and blocks a `git`, `gh` or cloud command that would run under the wrong identity (another git
+email, another GitHub user, a cloud the client doesn't use), with the reason. It reads the command's text only:
+it prevents mistakes, it is not a sandbox.

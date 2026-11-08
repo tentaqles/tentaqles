@@ -6,22 +6,14 @@ cli:
   command: supabase
   version_args: ["--version"]
 install:
-  windows:
-    npm: "supabase"
+  # Only the Homebrew tap. The npm package refuses global installs ("npm install -g supabase"
+  # always fails), so Windows and Linux have no method and print the docs page.
   macos:
     brew: "supabase/tap/supabase"
-    npm: "supabase"
-  linux:
-    npm: "supabase"
 login:
   args: ["login"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [supabase]
   env: [SUPABASE_ACCESS_TOKEN]
-  paths: ["~/.supabase"]
-  hosts: [api.supabase.com, supabase.co]
-  mcp: [supabase]
-  mcp_packages: ["@supabase/mcp-server-supabase", "mcp/supabase"]
-  mcp_hosts: [mcp.supabase.com]

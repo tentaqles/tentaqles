@@ -21,7 +21,7 @@ type PathSyntax struct {
 	FromOS func(string) string
 }
 
-// ShellPathVar carries a POSIX shell's own PATH spelling to tq env on Windows (the bash and
+// ShellPathVar carries a POSIX shell's own PATH spelling to tentaqles env on Windows (the bash and
 // zsh hooks set it for the one call, with MSYS2_ENV_CONV_EXCL so the MSYS runtime leaves it
 // as the shell spells it).
 const ShellPathVar = "__TQ_SH_PATH"
@@ -72,12 +72,12 @@ func isLetter(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 type PathReport struct {
 	Dropped []string // entries removed: every executable in them is out of scope
 	Shared  []string // entries kept that hold an out-of-scope executable beside others
-	// MaskMissing: a shared entry needs the mask folder but it is not ready (tq settings
+	// MaskMissing: a shared entry needs the mask folder but it is not ready (tentaqles settings
 	// render writes it); the out-of-scope CLI there still resolves.
 	MaskMissing bool
 }
 
-// FilterPath is the identity PATH built from path (layer 2, ADR-0008), in syn's spelling:
+// FilterPath is the identity PATH built from path (layer 2), in syn's spelling:
 //
 //   - an entry whose executables are all out-of-scope CLIs (an AWS CLI install folder for an
 //     Azure-only identity) is dropped: the CLI resolves to nothing;
@@ -85,9 +85,11 @@ type PathReport struct {
 //     Links, /usr/local/bin, ~/.local/bin) is kept, and the mask folder goes first on the
 //     PATH, where a stub of each out-of-scope name answers "command not found", exit 127;
 //   - every other entry, an empty one, one tq cannot map to an OS path, and on Windows any
-//     folder under %SystemRoot% are kept as they are, in order.
+//     folder under %SystemRoot% are kept as they are, in order;
+//   - for a client that lists a browser, its shims folder (xdg-open, open) goes first of all
+//     .
 //
-// A mask entry already there is removed before the result is built, so filtering is
+// A mask or shims entry already there is removed before the result is built, so filtering is
 // idempotent.
 func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 	var rep PathReport
@@ -98,7 +100,7 @@ func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 		if e != "" {
 			osp = syn.ToOS(e)
 		}
-		if osp != "" && l.isMaskEntry(osp) {
+		if osp != "" && (l.isMaskEntry(osp) || shimsEntry(osp, l.Identity)) {
 			continue
 		}
 		switch l.classify(osp) {
@@ -117,6 +119,11 @@ func (l *Layer) FilterPath(path string, syn PathSyntax) (string, PathReport) {
 		} else {
 			rep.MaskMissing = true
 		}
+	}
+	if l.shims != "" {
+		// The client's xdg-open and open come first, so a tool that opens a page
+		// reaches the client's browser profile and not the system's default handler.
+		kept = append([]string{syn.FromOS(l.shims)}, kept...)
 	}
 	return strings.Join(kept, syn.Sep), rep
 }
@@ -292,7 +299,7 @@ func MergePath(orig, set, cur, sep string) string {
 var ErrNotInPath = errors.New("executable file not found in the identity PATH")
 
 // LookPath resolves a command name against the PATH (and on Windows PATHEXT) of env, the
-// environment a launch runs with, not tq's own: tq run <ws> -- aws from a shell outside the
+// environment a launch runs with, not tq's own: tentaqles run <ws> -- aws from a shell outside the
 // identity must not find the aws the identity PATH dropped. A name with a path separator is
 // returned as it is.
 func LookPath(name string, env []string) (string, error) {

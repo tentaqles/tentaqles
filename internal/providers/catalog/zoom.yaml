@@ -1,0 +1,11 @@
+id: zoom
+name: Zoom
+category: chat
+docs: https://developers.zoom.us/docs/api/
+# No official command-line client; reached through the REST API or an MCP connector only.
+cli: null
+notes: "No CLI to install or log in. A Claude session reaches Zoom through an MCP server added in that client's Claude config."
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
+match:
+  env: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET]

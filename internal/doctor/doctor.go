@@ -7,9 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
-	"github.com/tentaqles/tentaqles/internal/bundle"
 	"github.com/tentaqles/tentaqles/internal/detect"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
@@ -17,7 +15,6 @@ import (
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
 type Finding struct {
@@ -60,13 +57,13 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 
 	if len(cfg.Bases) == 0 {
 		providerFileFindings(add, nil)
-		add("error", "no-bases", "", "no base folders registered", "tq init <folder>")
+		add("error", "no-bases", "", "no clients yet", "tentaqles reach <client folder>")
 		return fs
 	}
 	all, errs := resolve.ListWorkspaces(cfg)
 	providerFileFindings(add, all)
 	for _, e := range errs {
-		add("error", "manifest-invalid", "", e.Error(), "fix the manifest, then tq allow <name>")
+		add("error", "manifest-invalid", "", e.Error(), "fix the client's manifest under ~/.tentaqles/identities")
 	}
 	provs := envplan.Providers()
 	provCat := providers.MustLoad()
@@ -76,105 +73,35 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		Run:      func(context.Context, string, ...string) (string, error) { return "", nil },
 		GOOS:     runtime.GOOS,
 	}
-	var cat *bundle.Catalog
-	catalogWarned := false
 	// Registered workspaces' .gitconfig-tentaqles paths, so the global-config
 	// section below can tell a hand-written includeIf that duplicates tq's
 	// managed include file from an unrelated one.
 	wsGitFile := map[string]string{}
-	mode := d.VerifyMode
-	if mode == "" {
-		mode = VerifyAuto
-	}
 	pythonStoreAlias(d.LookPath, runtime.GOOS, add)
-	var verifyJobs []verifyJob
-	verifyCovers := map[string]bool{}
 	for _, w := range all {
-		trusted := trust.IsTrusted(w.Name, w.Hash)
-		if !trusted {
-			untrustedFindings(w.Name, w.Hash, add)
-		} else {
-			integrityLegacy(w.Name, w.Hash, add)
-		}
-		memoryStale(w.Name, w.Root, time.Now(), add)
-		manifestDroppedBlock(w.Name, w.Manifest.Ignored, add)
-		manifestLayout(&w, add)
-		if trusted && w.Manifest.Claude.Bundle != nil {
-			if cat == nil {
-				c, err := bundle.LoadCatalog()
-				if err != nil {
-					add("error", "bundle-catalog-error", w.Name, err.Error(), "")
-				} else {
-					cat = c
-				}
-			}
-			if cat != nil {
-				ww := w
-				if drifts, err := bundle.Diff(&ww, cat); err != nil {
-					add("error", "bundle-diff-error", w.Name, err.Error(), "")
-				} else if len(drifts) > 0 {
-					parts := make([]string, len(drifts))
-					for i, dr := range drifts {
-						parts[i] = dr.Kind + ":" + dr.Name
-						if dr.Kind == "marketplace-source" {
-							parts[i] += " (" + dr.Detail + "; sync would write the catalog's)"
-						}
-					}
-					add("warn", "bundle-drift", w.Name, "bundle drift: "+strings.Join(parts, ", "), "tq bundle sync "+w.Name)
-				}
-				if !catalogWarned {
-					catalogWarned = true
-					for _, cw := range cat.Validate() {
-						add("warn", "bundle-catalog-warning", "", cw, "")
-					}
-				}
-			}
-		}
-		if trusted {
-			claudeChecks(&w, add)
-			runWorkspaceChecks(&w, d, add)
-			mcpServiceChecks(&w, add)
-		}
+		browserChecks(&w, add)
+		claudeChecks(&w, add)
+		guardHookCheck(&w, add)
+		runWorkspaceChecks(&w, d, add)
 		wf := gitcfg.WorkspaceFile(w.Root)
 		wsGitFile[normPath(wf)] = w.Name
 		if raw, err := os.ReadFile(wf); err != nil {
-			add("error", "git-ws-file-missing", w.Name, "missing "+wf, "tq add would have created it; re-run tq allow after restoring")
+			add("error", "git-ws-file-missing", w.Name, "missing "+wf, "tentaqles reach "+w.Root+" rewrites it")
 		} else if bad := tamperReason(string(raw)); bad != "" {
-			add("error", "git-ws-file-tampered", w.Name, wf+": "+bad, "delete it and re-run tq add, or restore the tq-managed contents")
-		}
-		if trusted && d.RunCLI != nil {
-			jobs := planVerify(mode, &w, w.Manifest.IdentityNames(), provCat, environFor(d, &w))
-			for _, j := range jobs {
-				if _, err := os.Stat(paths.IdentityDir(w.Name, j.job.Identity)); err != nil {
-					continue // nothing to sign in to yet; identity-dir-missing covers it
-				}
-				verifyJobs = append(verifyJobs, j)
-				verifyCovers[j.job.Key()] = true
-			}
+			add("error", "git-ws-file-tampered", w.Name, wf+": "+bad, "delete it, then tentaqles reach "+w.Root+" rewrites it")
 		}
 		for _, id := range w.Manifest.IdentityNames() {
 			dir := paths.IdentityDir(w.Name, id)
-			if tgt, linked := linkTarget(dir); linked {
-				msg := dir + " is a link"
-				if tgt != "" {
-					msg += " to " + tgt
-				}
-				add("warn", "identity-dir-linked", w.Name, msg+": the identity data lives outside tq", "tq migrate --steps identity")
-			}
 			if _, err := os.Stat(dir); err != nil {
-				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "mkdir it or re-run tq add")
-			} else if id == "claude" && runtime.GOOS != "darwin" && !verifyCovers[w.Name+"/"+id] {
-				// Cheap fallback for when nobody asked for a verify: the
-				// credentials file is enough to answer "signed in?" off macOS.
-				// Skipped when a verify run will answer the same question
-				// better, so the two cannot both report it.
+				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "mkdir it")
+			} else if id == "claude" && runtime.GOOS != "darwin" {
 				if _, err := os.Stat(filepath.Join(dir, ".credentials.json")); err != nil {
-					add("warn", "claude-not-logged-in", w.Name, "no Claude credentials in "+dir, "tq login "+w.Name+" claude")
+					add("warn", "claude-not-logged-in", w.Name, "no Claude credentials in "+dir, "tentaqles login "+w.Name+" claude")
 				}
 			}
 			if p, ok := provs[id]; ok && p.LoginCmd != "" && !seenCLI[p.LoginCmd] {
 				seenCLI[p.LoginCmd] = true
-				fix := "install it or drop the identity from the manifest"
+				fix := "install it or drop the provider from the client"
 				if cp, ok := provCat.Get(id); ok && cp.CLI != nil {
 					if r := detect.Check(cp, detectDeps); !r.Installed {
 						if hints := detect.Hints(cp, runtime.GOOS); len(hints) > 0 {
@@ -186,38 +113,36 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 					add("warn", "cli-missing", "", p.LoginCmd+" not found on PATH", fix)
 				}
 				// A script earlier on PATH than the real CLI can overwrite the
-				// identity tq just exported, which makes `tq run` and
-				// `tq login` act on the wrong workspace without saying so.
+				// identity tq just exported, which makes `tentaqles run` and
+				// `tentaqles login` act on the wrong workspace without saying so.
 				if resolved, err := d.LookPath(p.LoginCmd); err == nil {
 					if why, shadowed := shimShadow(resolved, identityVars(p), d.ReadFile); shadowed {
 						add("warn", "cli-shadowed", "",
 							p.LoginCmd+" on PATH resolves to "+resolved+", and "+why+
-								": that overrides the identity tq exports, so tq run and tq login can act on the wrong workspace",
+								": that overrides the identity tq exports, so tentaqles run and tentaqles login can act on the wrong workspace",
 							"put the real "+p.LoginCmd+" ahead of "+filepath.Dir(resolved)+" on PATH, or remove that directory")
 					}
 				}
 			}
 		}
-	}
-	// git global — only meaningful if git is actually installed.
+	} // git global — only meaningful if git is actually installed.
 	if _, err := d.LookPath("git"); err != nil {
-		add("error", "git-missing", "", "git not found on PATH: tq cannot enforce per-workspace git identity", "install git, then re-run tq doctor")
+		add("error", "git-missing", "", "git not found on PATH: tq cannot enforce per-workspace git identity", "install git, then re-run tentaqles doctor")
 	} else {
 		inc, _ := d.RunGit("config", "--global", "--get-all", "include.path")
 		if !strings.Contains(filepath.ToSlash(inc), filepath.ToSlash(gitcfg.IncludeFile())) {
-			add("error", "git-include-missing", "", "~/.gitconfig does not include "+gitcfg.IncludeFile(), "tq init <base>")
+			add("error", "git-include-missing", "", "~/.gitconfig does not include "+gitcfg.IncludeFile(), "git config --global --add include.path "+gitcfg.IncludeFile())
 		}
 		if v, _ := d.RunGit("config", "--global", "user.useConfigOnly"); strings.TrimSpace(v) != "true" {
-			add("error", "git-useconfigonly", "", "global user.useConfigOnly is not true (commits outside workspaces will use a guessed identity)", "tq init <base>")
+			add("error", "git-useconfigonly", "", "global user.useConfigOnly is not true (commits outside client folders will use a guessed identity)", "git config --global user.useConfigOnly true")
 		}
-		// Drift that `tq migrate --steps git` formalizes.
 		if email, present, _ := gitcfg.GetGlobal(d.RunGit, "user.email"); present {
-			add("error", "global-email-set", "", "global user.email is set: commits outside workspaces will silently use "+email, "tq migrate --steps git")
+			add("error", "global-email-set", "", "global user.email is set: commits outside workspaces will silently use "+email, "remove it from ~/.gitconfig")
 		}
 		includeIfs, _ := gitcfg.ListIncludeIf(d.RunGit)
 		for _, inc := range includeIfs {
 			if ws, ok := wsGitFile[normPath(gitcfg.ExpandPath(inc.Path))]; ok {
-				add("warn", "includeif-unmanaged", ws, "~/.gitconfig has a hand-written includeIf \""+inc.Cond+"\" → "+inc.Path+", which tq's include file already covers", "tq migrate --steps git")
+				add("warn", "includeif-unmanaged", ws, "~/.gitconfig has a hand-written includeIf \""+inc.Cond+"\" → "+inc.Path+", which tq's include file already covers", "remove it from ~/.gitconfig")
 			}
 		}
 		includes, _ := gitcfg.ListIncludes(d.RunGit)
@@ -232,24 +157,12 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 			}
 			seenInc[normPath(ep)] = true
 			if _, err := os.Stat(ep); err != nil {
-				add("warn", "include-orphan", "", "global git config includes "+p+", which does not exist", "tq migrate --steps git")
+				add("warn", "include-orphan", "", "global git config includes "+p+", which does not exist", "remove it from ~/.gitconfig")
 			}
 		}
 	}
 	runGlobalChecks(d, add)
-	stateDirUnused(paths.Home(), add)
-	// The pre-tq shell branch is active, so nothing tq sets is in effect here.
-	if d.Env != nil {
-		if v, ok := d.Env("TQ_ENABLED"); ok && strings.TrimSpace(v) == "0" {
-			add("warn", "legacy-active", "", "TQ_ENABLED=0: this shell runs the legacy pre-tq identity branch, not tq", "unset TQ_ENABLED and open a new shell")
-		}
-	}
-	// Account verification runs here, after every cheap check: it forks a
-	// process per identity and several of those CLIs make a network call, so
-	// it is the one part of doctor that can be slow or offline-sensitive.
-	fs = append(fs, runVerify(d, verifyJobs)...)
-
-	// env vs cwd — shared with tq claude-hook so both agree. RunForCwd is the
+	// env vs cwd — shared with tentaqles claude-hook so both agree. RunForCwd is the
 	// hook path; it deliberately does not verify.
 	cwd := RunForCwd(cfg, d)
 	// Run already walks every workspace, so a cwd finding may repeat one it
@@ -284,27 +197,6 @@ func Exit(fs []Finding) int {
 	return 0
 }
 
-// linkTarget reports whether path is a symlink or (on Windows) a directory
-// junction, and where it points. A path that does not exist, or is a plain
-// file or directory, reports false.
-//
-// os.Readlink resolves both symlinks and junctions, so it is the check rather
-// than the mode bits, which have not carried os.ModeSymlink for junctions on
-// every Go version. This duplicates a little of migrate.IsLink on purpose:
-// doctor must not import internal/migrate, whose own tests assert against
-// doctor.Run and would form an import cycle.
-func linkTarget(path string) (string, bool) {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return "", false
-	}
-	if tgt, err := os.Readlink(path); err == nil {
-		// Reparse points sometimes carry the NT object-namespace prefix.
-		return strings.TrimPrefix(tgt, `\??\`), true
-	}
-	return "", fi.Mode()&os.ModeSymlink != 0
-}
-
 // normPath makes two spellings of the same path comparable as map keys:
 // cleaned, forward slashes, case-folded on Windows.
 func normPath(p string) string {
@@ -334,4 +226,14 @@ func tamperReason(body string) string {
 		}
 	}
 	return ""
+}
+
+// finish adds "all checks passed" when nothing but ok findings were reported.
+func finish(fs []Finding) []Finding {
+	for _, f := range fs {
+		if f.Level != "ok" {
+			return fs
+		}
+	}
+	return append(fs, Finding{"ok", "ok", "", "all checks passed", ""})
 }

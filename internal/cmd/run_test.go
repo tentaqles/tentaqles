@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"errors"
-	"github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,38 +13,30 @@ import (
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
 )
 
-// isolateHome points TQ_HOME and the OS home at temp dirs so tests never touch
-// the real developer home (in particular ~/.gitconfig-tentaqles).
+// isolateHome points TQ_HOME and the OS home at temp dirs so tests never touch the real
+// developer home (in particular ~/.gitconfig-tentaqles), and clears the identity a surrounding
+// tq-managed shell may carry.
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	home := testutil.TempDir(t)
 	t.Setenv("TQ_HOME", filepath.Join(home, ".tentaqles"))
-	// Git for Windows reads HOME before USERPROFILE, and a Git Bash or Claude
-	// Code session sets HOME: isolate both so no test reaches ~/.gitconfig.
 	t.Setenv("HOME", home)
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
 	}
-	// The test binary may itself run inside a tq-managed shell (a Claude Code
-	// session, `tq run`), which carries the state of the last switch in
-	// __TQ_STATE. `tq env` would then "restore" that shell's variables and
-	// emit unsets for a neutral cwd, so start every test from a clean slate.
 	unsetenv(t, envplan.StateVar)
-	// And the workspace markers it carries: TQ_WS without a state is a lost state (ADR-0008).
 	unsetenv(t, "TQ_WS")
 	unsetenv(t, "TQ_WS_ROOT")
-	keyring.MockInit() // never the real OS keychain in tests
-	// Nor from a shell with the activation kill switch set.
 	unsetenv(t, "TQ_ENABLED")
+	unsetenv(t, "CLAUDECODE")
+	unsetenv(t, "CLAUDE_CONFIG_DIR")
 	return home
 }
 
-// unsetenv removes k from the process environment for the duration of the
-// test (t.Setenv can only set, and an empty value is still "present" to
-// os.LookupEnv).
+// unsetenv removes k from the process environment for the duration of the test (t.Setenv can
+// only set, and an empty value is still "present" to os.LookupEnv).
 func unsetenv(t *testing.T, k string) {
 	t.Helper()
 	v, ok := os.LookupEnv(k)
@@ -59,9 +49,8 @@ func unsetenv(t *testing.T, k string) {
 	t.Cleanup(func() { _ = os.Setenv(k, v) })
 }
 
-// mkUntrusted registers a base and writes a workspace manifest by hand, without
-// ever calling tq allow.
-func mkUntrusted(t *testing.T, name string) string {
+// newBase registers a fresh clients folder in a fresh home and returns it.
+func newBase(t *testing.T) string {
 	t.Helper()
 	isolateHome(t)
 	base := testutil.TempDir(t)
@@ -72,57 +61,18 @@ func mkUntrusted(t *testing.T, name string) string {
 	if err := cfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(base, name)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, manifest.FileName),
-		[]byte("schema: tentaqles-client-v2\nclient: "+name+"\ngit: { email: "+name+"@x.io }\nidentities: { gh: {} }\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return root
+	return base
 }
 
-func TestRun_RefusesUntrusted(t *testing.T) {
-	mkUntrusted(t, "evil")
-	root := NewRoot()
-	var out bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&out)
-	root.SetArgs([]string{"run", "evil", "--", "cmd"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected an error for an untrusted workspace")
-	}
-	if !strings.Contains(err.Error(), "untrusted") {
-		t.Fatalf("error must mention untrusted: %v", err)
-	}
-}
-
-func TestLogin_RefusesUntrusted(t *testing.T) {
-	mkUntrusted(t, "evil")
-	root := NewRoot()
-	var out bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&out)
-	root.SetArgs([]string{"login", "evil", "gh"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected an error for an untrusted workspace")
-	}
-	if !strings.Contains(err.Error(), "untrusted") {
-		t.Fatalf("error must mention untrusted: %v", err)
-	}
-}
-
-// --- the launcher ---------------------------------------------------------
-
-// clearAgentMarkers unsets every agent marker (the test binary may run under Claude Code).
-func clearAgentMarkers(t *testing.T) {
+// writeClient writes client name in base as reach leaves it on disk: the marker in the folder and
+// the manifest (body after the schema and client lines) under paths.ManifestPath. It returns the
+// folder.
+func writeClient(t *testing.T, base, name, body string) string {
 	t.Helper()
-	for _, k := range agentMarkers {
-		unsetenv(t, k)
-	}
+	root := filepath.Join(base, name)
+	writeTB(t, filepath.Join(root, manifest.FileName), string(manifest.MarkerBytes(name)))
+	writeTB(t, paths.ManifestPath(name), "schema: tentaqles-client-v2\nclient: "+name+"\n"+body)
+	return root
 }
 
 // launched is one call of the execCommand seam.
@@ -132,17 +82,27 @@ type launched struct {
 	env  map[string]string
 }
 
-// String names the call without its env: a failure message must never print
-// the environment (it carries the developer's tokens).
-func (l launched) String() string {
-	return l.name + " " + strings.Join(l.args, " ")
-}
+// String names the call without its env: a failure message must never print the environment.
+func (l launched) String() string { return l.name + " " + strings.Join(l.args, " ") }
+
+// prog is a launched command's program name: tentaqles run resolves the command on the identity PATH.
+func prog(name string) string { return strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)) }
 
 // fakeExec replaces execCommand for the test and returns the recorded calls.
 func fakeExec(t *testing.T) *[]launched {
 	t.Helper()
 	var calls []launched
 	prev := execCommand
+	bin := testutil.TempDir(t)
+	for _, n := range []string{"claude", "npm", "gh"} {
+		if runtime.GOOS == "windows" {
+			n += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(bin, n), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	execCommand = func(name string, args []string, env []string) error {
 		m := map[string]string{}
 		for _, kv := range env {
@@ -156,48 +116,24 @@ func fakeExec(t *testing.T) *[]launched {
 	return &calls
 }
 
-// mkLaunchWS writes and trusts a workspace with claude and codex identities,
-// in the old layout (the manifest in the root); it returns the root. A
-// non-empty permMode writes the claude.permission_mode an older manifest
-// carried, which tq no longer reads.
-func mkLaunchWS(t *testing.T, name, permMode string) string {
+// mkLaunchWS writes client name with a claude identity and its guard plugin installed, as reach
+// leaves it; it returns the folder.
+func mkLaunchWS(t *testing.T, name string) string {
 	t.Helper()
-	root, _ := mkLaunchWSLayout(t, name, permMode, false)
-	return root
+	return mkWorkspacesInOneBase(t, name)[name]
 }
 
-// mkLaunchWSLayout is mkLaunchWS with a choice of layout: protected writes
-// the name-only marker in the root and the manifest under
-// paths.ManifestPath(name) (ADR-0002). It returns the root and the file the
-// trust hash is taken from.
-func mkLaunchWSLayout(t *testing.T, name, permMode string, protected bool) (string, string) {
+// mkWorkspacesInOneBase writes one client per name in one clients folder, each with a claude
+// identity and its guard plugin. It returns each folder by name.
+func mkWorkspacesInOneBase(t *testing.T, names ...string) map[string]string {
 	t.Helper()
-	root := mkUntrusted(t, name)
-	body := "schema: tentaqles-client-v2\nclient: " + name + "\ngit: { email: tester@example.com }\nidentities: { claude: {}, codex: {} }\n"
-	if permMode != "" {
-		body += "claude: { permission_mode: " + permMode + " }\n"
+	base := newBase(t)
+	roots := map[string]string{}
+	for _, name := range names {
+		roots[name] = writeClient(t, base, name, "git: { email: "+name+"@example.com }\nidentities: { claude: {} }\n")
+		writeGuard(t, name, guardOpts{})
 	}
-	mp := filepath.Join(root, manifest.FileName)
-	if protected {
-		if err := os.WriteFile(mp, manifest.MarkerBytes(name), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		mp = paths.ManifestPath(name)
-		if err := os.MkdirAll(filepath.Dir(mp), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(mp, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, err := trust.HashFile(mp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := trust.Allow(name, h); err != nil {
-		t.Fatal(err)
-	}
-	return root, mp
+	return roots
 }
 
 func runTq(t *testing.T, args ...string) (string, error) {
@@ -226,7 +162,7 @@ func TestLaunchClaudeArgs(t *testing.T) {
 		{[]string{"-h"}, false, "-h"},
 		{[]string{"mcp", "list"}, false, "mcp list"},
 		{[]string{"update"}, false, "update"},
-		// An agent's nested claude never gets bypass from the launcher.
+		// A nested claude, started from a Claude Code session, never gets bypass from the launcher.
 		{[]string{"-p", "hi"}, true, "-p hi"},
 		// A prompt that happens to say "update" is not a subcommand.
 		{[]string{"-p", "update the docs"}, false, "--dangerously-skip-permissions -p update the docs"},
@@ -239,34 +175,37 @@ func TestLaunchClaudeArgs(t *testing.T) {
 	}
 }
 
-// The launcher starts claude in bypass, also for an older manifest that
-// still carries a claude.permission_mode (ignored, manifest.DroppedClaudeKeys).
-func TestRunClaudeAlwaysBypass(t *testing.T) {
-	for _, pm := range []string{"", "default", "acceptEdits", "plan", "auto", "dontAsk", "bypass"} {
-		t.Run("mode="+pm, func(t *testing.T) {
-			mkLaunchWS(t, "acme", pm)
-			clearAgentMarkers(t)
-			calls := fakeExec(t)
-			if out, err := runTq(t, "run", "acme", "--", "claude", "-p", "hi"); err != nil {
-				t.Fatalf("%v: %s", err, out)
-			}
-			if len(*calls) != 1 || (*calls)[0].name != "claude" {
-				t.Fatalf("calls %+v", *calls)
-			}
-			if got := strings.Join((*calls)[0].args, " "); got != "--dangerously-skip-permissions -p hi" {
-				t.Fatalf("args %q", got)
-			}
-			if (*calls)[0].env["TQ_WS"] != "acme" || (*calls)[0].env["CLAUDE_CONFIG_DIR"] == "" {
-				t.Fatalf("identity env missing: TQ_WS=%q", (*calls)[0].env["TQ_WS"])
-			}
-		})
+// tentaqles run <client> -- claude starts claude with the client's identity: its own Claude config home.
+func TestRunClaudeHasTheClientsIdentity(t *testing.T) {
+	mkLaunchWS(t, "acme")
+	calls := fakeExec(t)
+	if out, err := runTq(t, "run", "acme", "--", "claude", "-p", "hi"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(*calls) != 1 || prog((*calls)[0].name) != "claude" {
+		t.Fatalf("calls %+v", *calls)
+	}
+	c := (*calls)[0]
+	if got := strings.Join(c.args, " "); got != "--dangerously-skip-permissions -p hi" {
+		t.Fatalf("args %q", got)
+	}
+	if c.env["TQ_WS"] != "acme" || !samePathT(c.env["CLAUDE_CONFIG_DIR"], paths.IdentityDir("acme", "claude")) {
+		t.Fatalf("identity env: TQ_WS=%q CLAUDE_CONFIG_DIR=%q", c.env["TQ_WS"], c.env["CLAUDE_CONFIG_DIR"])
 	}
 }
 
+func samePathT(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+// tentaqles run . is the client of the folder (any subfolder), and in a neutral folder no client: no
+// other client's Claude config home leaks into it.
 func TestRunDotResolvesCwd(t *testing.T) {
-	root := mkLaunchWS(t, "acme", "")
-	clearAgentMarkers(t)
-	sub := filepath.Join(root, "app")
+	root := mkLaunchWS(t, "acme")
+	sub := filepath.Join(root, "app", "src")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +218,6 @@ func TestRunDotResolvesCwd(t *testing.T) {
 		t.Fatalf("want acme's identity: TQ_WS=%q", (*calls)[0].env["TQ_WS"])
 	}
 
-	// neutral folder: no identity, still the launcher
 	chdir(t, t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", "/other/client")
 	calls = fakeExec(t)
@@ -288,142 +226,33 @@ func TestRunDotResolvesCwd(t *testing.T) {
 	}
 	c := (*calls)[0]
 	if _, ok := c.env["TQ_WS"]; ok {
-		t.Fatalf("neutral run carries a workspace: TQ_WS=%q", c.env["TQ_WS"])
+		t.Fatalf("neutral run carries a client: TQ_WS=%q", c.env["TQ_WS"])
 	}
 	if _, ok := c.env["CLAUDE_CONFIG_DIR"]; ok {
 		t.Fatalf("another client's config dir leaked")
 	}
-	if strings.Join(c.args, " ") != "--dangerously-skip-permissions" {
-		t.Fatalf("args %q", c.args)
-	}
 }
 
-// tq run . in an untrusted workspace refuses: nothing launches, with or
-// without an identity (PRD v2 §8.3). A never-trusted folder names tq allow;
-// a mismatch names the changed file and tq hooks verify
-// (TestRun_RefusesOnIntegrityMismatch).
-func TestRunDotUntrustedRefuses(t *testing.T) {
-	root := mkUntrusted(t, "evil")
-	clearAgentMarkers(t)
+// From a Claude Code session in the client's folder, tentaqles run <its name> and tentaqles run . launch with
+// its identity and without the bypass flag.
+func TestRunFromAgentSession(t *testing.T) {
+	root := mkLaunchWS(t, "acme")
+	t.Setenv("CLAUDECODE", "1")
 	chdir(t, root)
 	calls := fakeExec(t)
-	_, err := runTq(t, "run", ".", "--", "claude")
-	if err == nil || !strings.Contains(err.Error(), "workspace evil is untrusted (run: tq allow evil)") {
-		t.Fatalf("want the refusal, got %v", err)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("nothing may launch: %+v", *calls)
-	}
-}
-
-func TestRunOff(t *testing.T) {
-	mkLaunchWS(t, "acme", "acceptEdits")
-	clearAgentMarkers(t)
-	st := envplan.State{WS: "acme", Prev: map[string]*string{"TQ_WS": nil, "CLAUDE_CONFIG_DIR": nil}}
-	t.Setenv(envplan.StateVar, st.Encode())
-	t.Setenv("TQ_WS", "acme")
-	t.Setenv("CLAUDE_CONFIG_DIR", "/id/acme/claude")
-	t.Setenv("CODEX_HOME", "/id/acme/codex")
-
-	calls := fakeExec(t)
-	out, err := runTq(t, "run", "--off", "--", "claude", "-p", "x")
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
-	if !strings.Contains(out, "tq: off") || !strings.Contains(out, "main logins") {
-		t.Fatalf("missing the off banner: %q", out)
-	}
-	c := (*calls)[0]
-	want := `--dangerously-skip-permissions --settings {"enabledPlugins":{"tentaqles@tentaqles":false}} -p x`
-	if c.name != "claude" || strings.Join(c.args, " ") != want {
-		t.Fatalf("claude off args: %q", c.args)
-	}
-	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "TQ_WS", envplan.StateVar} {
-		if _, ok := c.env[k]; ok {
-			t.Errorf("%s must be removed in off", k)
+	for i, arg := range []string{"acme", "."} {
+		if _, err := runTq(t, "run", arg, "--", "claude", "-p", "x"); err != nil {
+			t.Fatal(err)
+		}
+		if c := (*calls)[i]; strings.Join(c.args, " ") != "-p x" || c.env["TQ_WS"] != "acme" {
+			t.Fatalf("agent launch %s: %+v", arg, c)
 		}
 	}
-	// An off launch sets no variable of its own: every key comes from the
-	// parent environment (no mode marker, no identity).
-	parent := map[string]bool{}
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		parent[strings.ToUpper(k)] = true
-	}
-	for k := range c.env {
-		if !parent[k] {
-			t.Errorf("an off launch sets no variable, got %s", k)
-		}
-	}
-
-	calls = fakeExec(t)
-	if _, err := runTq(t, "run", "--off", "--", "codex", "exec", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; strings.Join(c.args, " ") != "--dangerously-bypass-approvals-and-sandbox exec x" {
-		t.Fatalf("codex off: %+v", c)
-	}
-
-	// --off takes no workspace
-	fakeExec(t)
-	if _, err := runTq(t, "run", "acme", "--off", "--", "claude"); err == nil {
-		t.Fatal("tq run <ws> --off must be refused")
-	}
-
-	// --off starts claude or codex only; a path or an extension still
-	// names them and still gets the off flags.
-	for _, name := range []string{"bash", "pwsh", "claudex", "sh"} {
-		calls = fakeExec(t)
-		if _, err := runTq(t, "run", "--off", "--", name); err == nil || len(*calls) != 0 {
-			t.Fatalf("tq run --off -- %s must be refused, got %v %+v", name, err, *calls)
-		}
-	}
-	calls = fakeExec(t)
-	if _, err := runTq(t, "run", "--off", "--", "/opt/bin/claude.exe", "-p", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; c.name != "/opt/bin/claude.exe" || !strings.HasPrefix(strings.Join(c.args, " "), "--dangerously-skip-permissions --settings") {
-		t.Fatalf("claude by path: %+v", c)
-	}
 }
 
-func TestRunOffRefusesAgents(t *testing.T) {
-	mkLaunchWS(t, "acme", "")
-	for _, k := range agentMarkers {
-		t.Run(k, func(t *testing.T) {
-			clearAgentMarkers(t)
-			t.Setenv(k, "1")
-			calls := fakeExec(t)
-			_, err := runTq(t, "run", "--off", "--", "claude")
-			if !errors.Is(err, errHumanOnly) || len(*calls) != 0 {
-				t.Fatalf("%s: want ErrHumanOnly and no launch, got %v %+v", k, err, *calls)
-			}
-		})
-	}
-}
-
-// An agent's nested launch gets the identity env and no bypass flag.
-func TestRunFromAgentSession(t *testing.T) {
-	mkLaunchWS(t, "acme", "")
-	clearAgentMarkers(t)
-	t.Setenv("CLAUDECODE", "1")
-	calls := fakeExec(t)
-	if _, err := runTq(t, "run", "acme", "--", "claude", "-p", "x"); err != nil {
-		t.Fatal(err)
-	}
-	if c := (*calls)[0]; strings.Join(c.args, " ") != "-p x" || c.env["TQ_WS"] != "acme" {
-		t.Fatalf("agent launch: %+v", c)
-	}
-}
-
-// The PowerShell tq function cannot pass a literal `--` (the parameter
-// binder eats it), so tq run never parses the command's own flags as its
-// own: everything after the command word belongs to the command, with or
-// without `--`.
+// Everything after the command word belongs to the command, with or without `--`.
 func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
-	isolateHome(t)
-	clearAgentMarkers(t)
-	mkLaunchWS(t, "acme", "")
+	mkLaunchWS(t, "acme")
 	for _, args := range [][]string{
 		{"run", "acme", "--", "npm", "test", "-p", "x", "--watch"},
 		{"run", "acme", "npm", "test", "-p", "x", "--watch"},
@@ -432,18 +261,104 @@ func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
 		if out, err := runTq(t, args...); err != nil {
 			t.Fatalf("%v: %v %s", args, err, out)
 		}
-		if c := (*calls)[0]; c.name != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
+		if c := (*calls)[0]; prog(c.name) != "npm" || strings.Join(c.args, " ") != "test -p x --watch" {
 			t.Fatalf("%v: %v", args, c)
 		}
 	}
+}
+
+// otherClientRefusal is the exact refusal of a session's tentaqles run <other>.
+func otherClientRefusal(name string) string {
+	return "tentaqles run: " + name + " is another client. A Claude Code session can only run under the client of its own folder."
+}
+
+// A Claude Code session launches only the client of the folder it is in: tentaqles run <other> refuses
+// and nothing launches, from another client's folder and from a neutral one.
+func TestRunOtherClient_RefusedForAgents(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	t.Setenv("CLAUDECODE", "1")
 	calls := fakeExec(t)
-	if _, err := runTq(t, "run", "--off", "claude", "--resume", "-p", "x"); err != nil {
-		t.Fatal(err)
+	for _, from := range []string{roots["alpha"], t.TempDir()} {
+		chdir(t, from)
+		_, err := runTq(t, "run", "beta", "--", "gh", "pr", "list")
+		if err == nil || err.Error() != otherClientRefusal("beta") {
+			t.Fatalf("from %s: tentaqles run beta must refuse in a session, got %v", from, err)
+		}
 	}
-	if c := (*calls)[0]; !strings.Contains(strings.Join(c.args, " "), "--resume -p x") {
-		t.Fatalf("--off without --: %v", c)
+	if len(*calls) != 0 {
+		t.Fatalf("another client launched: %+v", *calls)
 	}
-	if _, err := runTq(t, "run", "acme", "--off", "claude"); err == nil {
-		t.Fatal("--off after a workspace must be refused")
+}
+
+// A neutral folder is no client's folder: a session there refuses tentaqles run of any client.
+func TestRunOtherClient_NeutralFolderRefused(t *testing.T) {
+	mkWorkspacesInOneBase(t, "alpha", "beta")
+	t.Setenv("CLAUDECODE", "1")
+	chdir(t, t.TempDir())
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "beta", "--", "az", "group", "list"); err == nil || err.Error() != otherClientRefusal("beta") {
+		t.Fatalf("tentaqles run beta from a neutral folder must refuse, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("a neutral folder launched beta: %+v", *calls)
+	}
+}
+
+// The refusal reads the folder, not a variable a session may set: TQ_WS naming beta does not
+// help alpha's session.
+func TestRunOtherClient_InheritedEnvIgnored(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("TQ_WS", "beta")
+	t.Setenv("TQ_WS_ROOT", roots["beta"])
+	chdir(t, roots["alpha"])
+	calls := fakeExec(t)
+	if _, err := runTq(t, "run", "beta", "--", "claude"); err == nil || err.Error() != otherClientRefusal("beta") {
+		t.Fatalf("an inherited TQ_WS must not allow beta, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("beta launched: %+v", *calls)
+	}
+}
+
+// The developer's own terminal runs any client from any folder.
+func TestRunOtherClient_HumanAllowed(t *testing.T) {
+	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
+	calls := fakeExec(t)
+	for i, from := range []string{roots["alpha"], t.TempDir()} {
+		chdir(t, from)
+		if out, err := runTq(t, "run", "beta", "--", "claude", "-p", "hi"); err != nil {
+			t.Fatalf("from %s: %v %s", from, err, out)
+		}
+		if len(*calls) != i+1 || (*calls)[i].env["TQ_WS"] != "beta" {
+			t.Fatalf("from %s: %+v", from, *calls)
+		}
+	}
+}
+
+// A CLI of a provider outside the client's scope does not run through tentaqles run, however it is
+// spelled; one in scope does.
+func TestRun_OutOfScopeCLIRefused(t *testing.T) {
+	base := newBase(t)
+	writeClient(t, base, "acme", "git: { email: a@acme.test }\nidentities: { az: {} }\ncloud: { provider: azure }\n")
+	calls := fakeExec(t)
+	tools := testutil.TempDir(t)
+	for _, n := range []string{"az", "aws"} {
+		if runtime.GOOS == "windows" {
+			n += ".exe"
+		}
+		writeTB(t, filepath.Join(tools, n), "#!/bin/sh\n")
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, name := range []string{"aws", "aws.exe"} {
+		if _, err := runTq(t, "run", "acme", "--", name, "s3", "ls"); err == nil || !strings.Contains(err.Error(), "outside its scope") {
+			t.Fatalf("tentaqles run acme -- %s: %v", name, err)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("an out-of-scope CLI launched: %+v", *calls)
+	}
+	if out, err := runTq(t, "run", "acme", "--", "az", "group", "list"); err != nil || len(*calls) != 1 {
+		t.Fatalf("az in scope: %v %s %+v", err, out, *calls)
 	}
 }

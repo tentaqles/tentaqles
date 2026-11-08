@@ -11,16 +11,13 @@ install:
   macos:
     brew: "node"
   linux:
-    apt: "nodejs"
+    # Debian's and Ubuntu's nodejs package holds no npm binary; the npm package holds it.
+    apt: "npm"
 identity:
   env:
     NPM_CONFIG_USERCONFIG: "{dir}/npmrc"
 login:
   args: ["login"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
-# A generic tool: its command talks to whatever the project configures, so it is
-# never matched by name.
-# Cross-cloud local config (kubeconfig, npmrc, docker config, ...): the developer's
-# own file, readable under any identity, so no path is claimed here.
+# A generic tool: its command talks to whatever the project configures, so a client's terminal
+# never hides it.
 match: {}

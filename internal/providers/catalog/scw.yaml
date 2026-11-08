@@ -22,13 +22,8 @@ identity:
     SCW_CONFIG_PATH: "{dir}/config.yaml"
 login:
   args: ["login"]
-verify:
-  args: ["info", "-o", "json"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [scw]
   env: [SCW_ACCESS_KEY, SCW_SECRET_KEY, SCW_CONFIG_PATH, SCW_DEFAULT_PROJECT_ID]
-  paths: ["~/.config/scw"]
-  hosts: [api.scaleway.com]
-  mcp: [scaleway]

@@ -1,0 +1,11 @@
+id: discord
+name: Discord
+category: chat
+docs: https://discord.com/developers/docs
+# No official command-line client; reached through an MCP connector or the bot API only.
+cli: null
+notes: "No CLI to install or log in. A Claude session reaches Discord through an MCP server added in that client's Claude config."
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
+match:
+  env: [DISCORD_BOT_TOKEN, DISCORD_TOKEN]

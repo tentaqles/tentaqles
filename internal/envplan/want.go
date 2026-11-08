@@ -8,7 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// Env is the environment the prompt hook (tq env) reads: a variable lookup, the names it
+// Env is the environment the prompt hook (tentaqles env) reads: a variable lookup, the names it
 // holds (for the prefix entries of the match lists, TF_TOKEN_*), and how the shell spells
 // PATH. PathOK false leaves PATH alone: tq cannot spell it for that shell (fish on Windows,
 // or a bash hook from before ShellPathVar).
@@ -24,7 +24,7 @@ func OSEnv() Env {
 	return Env{Lookup: os.LookupEnv, Names: environNames(os.Environ()), Syntax: NativeSyntax(), PathOK: true}
 }
 
-// ShellEnv is the environment tq env reads for shell sh. On Windows bash and zsh spell PATH
+// ShellEnv is the environment tentaqles env reads for shell sh. On Windows bash and zsh spell PATH
 // their own way: the hook passes that spelling in ShellPathVar and tq answers in it; without it
 // PATH is left alone. fish on Windows: PATH is left alone. Every other case is OSEnv.
 func ShellEnv(sh string) Env {
@@ -63,7 +63,7 @@ func environNames(environ []string) []string {
 }
 
 // Plan is what workspace ws wants of env at this prompt, given the state the previous prompt
-// left (prev): the variables Desired sets and, for a guard: v2 identity (LayerFor), the
+// left (prev): the variables Desired sets and, for an identity (LayerFor), the
 // out-of-scope variables unset and the identity PATH (FilterPath). The notice, when not nil,
 // says the mask folder is missing.
 //
@@ -94,7 +94,7 @@ func Plan(ws *resolve.Workspace, prev State, env Env) (Want, *Notice) {
 	if !ok {
 		return w, nil
 	}
-	if prev.WS == ws.Name && prev.PathSet != "" && cur == prev.PathSet {
+	if prev.WS == ws.Name && prev.PathSet != "" && cur == prev.PathSet && l.shimsEntryCurrent(cur, env.Syntax) {
 		// The fast path: no folder is read. The mask folder is still checked (one directory
 		// read, names and sizes): on the PATH only while it is as tq wrote it, back on it as
 		// soon as it is again, and a notice at every prompt while it is wanted and missing.

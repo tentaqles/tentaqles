@@ -1,0 +1,11 @@
+id: trello
+name: Trello
+category: pm
+docs: https://developer.atlassian.com/cloud/trello/
+# Trello has no official command-line client; reached through the REST API or an MCP connector only.
+cli: null
+notes: "No CLI to install or log in. A Claude session reaches Trello through an MCP server added in that client's Claude config, signed in with /mcp."
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
+match:
+  env: [TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_TOKEN]

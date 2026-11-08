@@ -9,8 +9,6 @@ import (
 
 	"github.com/tentaqles/tentaqles/internal/shell"
 	"github.com/tentaqles/tentaqles/internal/testutil"
-	"github.com/tentaqles/tentaqles/internal/trust"
-	"github.com/zalando/go-keyring"
 )
 
 // QA round 3: PATH folders named ação, João and 中文 go through Windows PowerShell 5.1's and
@@ -22,15 +20,8 @@ func TestEnv_UnicodePathFoldersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Skip("no Windows PowerShell")
 	}
-	root, _ := setupScoped(t, "company-x", "guard: v2\n"+companyXBody)
+	root, _ := setupScoped(t, "company-x", companyXBody)
 	runEnv(t, "settings", "render", "company-x")
-	key, err := keyring.Get(trust.Service, trust.KeyAccount)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(trust.KeyFile(), []byte(key), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	fx := testutil.TempDir(t)
 	awsDir := filepath.Join(fx, "ação", "awsdir")
 	shared := filepath.Join(fx, "João", "shared")

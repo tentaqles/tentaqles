@@ -10,10 +10,8 @@ import (
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/protect"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
-	"github.com/tentaqles/tentaqles/internal/trust"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,7 +20,7 @@ import (
 var NameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type AddOptions struct {
-	Base, Name, GitName, GitEmail, GitUser, DisplayName, Color string
+	Base, Name, GitName, GitEmail, GitUser string
 	// GitProvider names the git host (github, gitlab, azure-devops, ...). It
 	// decides which CLI an expected_user is checked against, so an empty value
 	// on a GitLab workspace would have tq comparing a GitLab handle to whatever
@@ -30,17 +28,15 @@ type AddOptions struct {
 	GitProvider string
 	Identities  []string
 	RunGit      func(args ...string) (string, error)
-	// Trust says whether the workspace should be trusted (and wired into
-	// git's include chain) after scaffolding. When false, Add still creates
-	// everything on disk but leaves the workspace untrusted.
-	Trust bool
-	// Company services (spec B §6); nil / empty leaves the block out.
-	Chat         *manifest.Service
-	Email        *manifest.Service
-	DataPlatform *manifest.Service
-	Agents       []string
-	// Cloud is the cloud block ({provider, also}); nil leaves it out. tq onboard sets it.
+	// Email is the email provider block; nil leaves it out.
+	Email *manifest.Service
+	// Cloud is the cloud block ({provider, also}); nil leaves it out.
 	Cloud map[string]any
+	// ExtraScope, Browsers and OtherProviders are the scope:, browsers: and other_providers: blocks;
+	// empty leaves them out. tentaqles reach sets them.
+	ExtraScope     []string
+	Browsers       []manifest.Browser
+	OtherProviders []string
 }
 
 func Add(o AddOptions) (*resolve.Workspace, error) {
@@ -63,12 +59,12 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	services := manifest.Manifest{Chat: o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents}
+	services := manifest.Manifest{Email: o.Email}
 	if err := services.ValidateServices(); err != nil {
 		return nil, err
 	}
 	root := filepath.Join(base, o.Name)
-	// The protected layout (ADR-0002): the manifest under $TQ_HOME, a
+	// The manifest lives under $TQ_HOME, a
 	// name-only marker in the root. Either file already there is a workspace
 	// tq will not overwrite.
 	mp := filepath.Join(root, manifest.FileName)
@@ -83,11 +79,11 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 		return nil, err
 	}
 	m := manifest.Manifest{
-		Schema: "tentaqles-client-v2", Client: o.Name, DisplayName: o.DisplayName, Color: o.Color,
+		Schema: "tentaqles-client-v2", Client: o.Name,
 		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser, Provider: o.GitProvider},
 		Identities: map[string]manifest.Identity{},
-		Chat:       o.Chat, Email: o.Email, DataPlatform: o.DataPlatform, Agents: o.Agents,
-		Cloud: o.Cloud,
+		Email:      o.Email,
+		Cloud:      o.Cloud, ExtraScope: o.ExtraScope, Browsers: o.Browsers, OtherProviders: o.OtherProviders,
 	}
 	for _, id := range o.Identities {
 		m.Identities[id] = manifest.Identity{}
@@ -111,8 +107,8 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 			}
 		}
 	}
-	// 0700 / 0600: the protected area is private to the user.
-	if err := protect.MkdirPrivate(filepath.Dir(pp)); err != nil {
+	// 0700 / 0600: the state folder is private to the user.
+	if err := os.MkdirAll(filepath.Dir(pp), 0o700); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(pp, append([]byte("# tentaqles workspace manifest — names only, never secrets\n"), raw...), 0o600); err != nil {
@@ -138,33 +134,13 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}
-	h, err := trust.HashFile(pp)
-	if err != nil {
+	if err := SyncGit(cfg); err != nil {
 		return nil, err
-	}
-	if o.Trust {
-		// Trust first, then sync: SyncGit only wires trusted workspaces into git's
-		// include chain, so the new workspace must be trusted before it can appear.
-		if err := trust.Allow(o.Name, h); err != nil {
-			return nil, err
-		}
-		if err := SyncGit(cfg); err != nil {
-			return nil, err
-		}
 	}
 	if o.RunGit != nil {
 		if err := gitcfg.EnsureGlobal(o.RunGit); err != nil {
 			return nil, err
 		}
 	}
-	if !o.Trust {
-		return &resolve.Workspace{
-			Name: o.Name, Root: root, Base: base, ManifestPath: pp, Hash: h, Manifest: loaded, Protected: true,
-		}, nil
-	}
-	res := resolve.Resolve(root, cfg)
-	if res.Workspace == nil {
-		return nil, fmt.Errorf("scaffolded but cannot resolve: %s", res.Reason)
-	}
-	return res.Workspace, nil
+	return &resolve.Workspace{Name: o.Name, Root: root, Base: base, ManifestPath: pp, Manifest: loaded}, nil
 }

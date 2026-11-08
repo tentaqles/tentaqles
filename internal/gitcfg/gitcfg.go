@@ -62,7 +62,7 @@ func Sync(roots []string) error {
 		prefix = "gitdir/i:"
 	}
 	var b strings.Builder
-	b.WriteString("# managed by tq — do not edit; run `tq doctor` / `tq add`\n")
+	b.WriteString("# managed by tq — do not edit; run `tentaqles doctor` / `tq add`\n")
 	for _, r := range rs {
 		fmt.Fprintf(&b, "[includeIf \"%s%s/\"]\n\tpath = %s/%s\n", prefix, r, r, managedName)
 	}

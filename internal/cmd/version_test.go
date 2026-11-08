@@ -22,7 +22,7 @@ func TestVersionPrintsVersion(t *testing.T) {
 	}
 }
 
-// tq version names the commit it was built from, or says it is a dev build.
+// tentaqles version names the commit it was built from, or says it is a dev build.
 func TestVersionPrintsTheCommit(t *testing.T) {
 	prevV, prevC := Version, Commit
 	t.Cleanup(func() { Version, Commit = prevV, prevC })

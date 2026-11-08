@@ -35,9 +35,9 @@ func profilesOf(shells []hooks.Shell, profiles hooks.Profiles) string {
 func newHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hooks",
-		Short: "Manage tq's shell activation hook in your profile files (install and remove are human only)",
+		Short: "Manage tq's shell activation hook in your profile files",
 	}
-	cmd.AddCommand(newHooksStatusCmd(), newHooksInstallCmd(), newHooksRemoveCmd(), newHooksVerifyCmd())
+	cmd.AddCommand(newHooksStatusCmd(), newHooksInstallCmd(), newHooksRemoveCmd())
 	return cmd
 }
 
@@ -61,18 +61,12 @@ func newHooksInstallCmd() *cobra.Command {
 	var allDetected bool
 	cmd := &cobra.Command{
 		Use:   "install [shell...]",
-		Short: "Install tq's activation block into shell profile(s) (human only)",
+		Short: "Install tq's activation block into shell profile(s)",
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := refuseAgent("tq hooks install"); err != nil {
-				return err
-			}
 			profiles := hooks.ProfilesFn()
 			shells := shellArgs(args, allDetected, profiles)
 			if len(shells) == 0 {
 				return fmt.Errorf("specify one or more shells, or pass --all-detected")
-			}
-			if err := humanGate(c, "tq hooks install", "tq hooks install: about to write the tq activation block into "+profilesOf(shells, profiles)); err != nil {
-				return err
 			}
 			w := c.OutOrStdout()
 			for _, sh := range shells {
@@ -93,18 +87,12 @@ func newHooksRemoveCmd() *cobra.Command {
 	var allDetected bool
 	cmd := &cobra.Command{
 		Use:   "remove [shell...]",
-		Short: "Remove tq's activation block from shell profile(s) (human only)",
+		Short: "Remove tq's activation block from shell profile(s)",
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := refuseAgent("tq hooks remove"); err != nil {
-				return err
-			}
 			profiles := hooks.ProfilesFn()
 			shells := shellArgs(args, allDetected, profiles)
 			if len(shells) == 0 {
 				return fmt.Errorf("specify one or more shells, or pass --all-detected")
-			}
-			if err := humanGate(c, "tq hooks remove", "tq hooks remove: about to remove the tq activation block from "+profilesOf(shells, profiles)); err != nil {
-				return err
 			}
 			w := c.OutOrStdout()
 			for _, sh := range shells {

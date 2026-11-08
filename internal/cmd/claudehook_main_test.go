@@ -12,16 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tentaqles/tentaqles/internal/codexcfg"
-	"github.com/tentaqles/tentaqles/internal/policy"
-	"github.com/tentaqles/tentaqles/internal/registry"
-	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/guard"
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
 // The deadlines are ordered under the shortest harness hook timeout (Claude
-// Code 15 s in the plugin's hooks.json, Codex codexcfg.HookTimeoutSeconds):
-// scan budget < decision deadline < process watchdog < tq_hook.sh's
+// Code 15 s in the plugin's hooks.json):
+// decision deadline < process watchdog < tq_hook.sh's
 // watchdog (+1 s for its kill) < the harness timeout, with a margin. A
 // harness kills a slow hook and RUNS the call, so raising any of these past
 // the harness timeout must fail here.
@@ -54,9 +51,6 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 		t.Fatal("no tq_hook.sh PreToolUse timeout in hooks.json")
 	}
 	harness := time.Duration(claude) * time.Second
-	if c := time.Duration(codexcfg.HookTimeoutSeconds) * time.Second; c < harness {
-		harness = c
-	}
 	sh, err := os.ReadFile(filepath.Join(root, "plugin", "scripts", "tq_hook.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +67,6 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 		name string
 		d    time.Duration
 	}{
-		{"maxScanBudget", maxScanBudget},
 		{"hookDeadline", hookDeadline},
 		{"hookWatchdog", hookWatchdog},
 		{"tq_hook.sh _tq_deadline (+1 s)", wrapper},
@@ -83,9 +76,6 @@ func TestHookDeadlinesUnderHarnessTimeouts(t *testing.T) {
 		if steps[i-1].d >= steps[i].d {
 			t.Errorf("%s (%s) must be below %s (%s)", steps[i-1].name, steps[i-1].d, steps[i].name, steps[i].d)
 		}
-	}
-	if scanBudget > maxScanBudget {
-		t.Errorf("scanBudget %s over maxScanBudget %s", scanBudget, maxScanBudget)
 	}
 }
 
@@ -123,23 +113,18 @@ func repoRoot(t *testing.T) string {
 }
 
 // A pre-tool-use run that never reaches a decision is a deny with exit 2,
-// for both agents: an unknown flag, a stray argument.
+// an unknown flag, a stray argument.
 func TestRunMainHookErrorsDeny(t *testing.T) {
 	isolateHome(t)
 	for _, args := range [][]string{
 		{"claude-hook", "pre-tool-use", "--no-such-flag"},
-		{"claude-hook", "pre-tool-use", "--agent", "codex", "--no-such-flag"},
+		{"claude-hook", "pre-tool-use", "--agent", "codex"}, // an old Codex hook file
 		{"claude-hook", "pre-tool-use", "--json=maybe"},
 	} {
 		var out, errOut bytes.Buffer
 		code := RunMain(args, &out, &errOut)
 		if code != 2 || !strings.Contains(errOut.String(), "BLOCKED [tq/guard-error]: tq could not run the hook") {
 			t.Errorf("%v: code=%d err=%q", args, code, errOut.String())
-		}
-		if strings.Contains(strings.Join(args, " "), "codex") {
-			if dec, _ := codexAnswerJSON(t, out.String()); dec != "deny" {
-				t.Errorf("%v: codex answer %q", args, out.String())
-			}
 		}
 	}
 	// Any other command keeps exit 1 for an error.
@@ -154,18 +139,18 @@ func TestRunMainHookErrorsDeny(t *testing.T) {
 // decision deadline set far out).
 func TestRunMainWatchdogDenies(t *testing.T) {
 	isolateHome(t)
-	prevW, prevD, prevE, prevP := hookWatchdog, hookDeadline, hookExit, hookPolicyDecision
+	prevW, prevD, prevE, prevP := hookWatchdog, hookDeadline, hookExit, hookGuardDecide
 	release := make(chan struct{})
 	hookWatchdog, hookDeadline = 150*time.Millisecond, time.Hour
-	hookPolicyDecision = func(string, *resolve.Workspace, *registry.Config, policy.ToolCall, time.Time) policy.Decision {
+	hookGuardDecide = func(guard.Input) guard.Decision {
 		<-release
-		return policy.Decision{}
+		return guard.Decision{}
 	}
 	codes := make(chan int, 1)
 	hookExit = func(c int) { codes <- c }
 	t.Cleanup(func() {
 		close(release)
-		hookWatchdog, hookDeadline, hookExit, hookPolicyDecision = prevW, prevD, prevE, prevP
+		hookWatchdog, hookDeadline, hookExit, hookGuardDecide = prevW, prevD, prevE, prevP
 	})
 	prevExit := exitFunc
 	exitFunc = func(int) {}
@@ -184,14 +169,11 @@ func TestRunMainWatchdogDenies(t *testing.T) {
 	t.Cleanup(func() { os.Stdin = prevIn })
 
 	var out, errOut syncBuffer
-	go RunMain([]string{"claude-hook", "pre-tool-use", "--agent", "codex"}, &out, &errOut)
+	go RunMain([]string{"claude-hook", "pre-tool-use"}, &out, &errOut)
 	select {
 	case code := <-codes:
 		if code != 2 || !strings.Contains(errOut.String(), "tq did not answer within") {
 			t.Fatalf("code=%d err=%q", code, errOut.String())
-		}
-		if dec, _ := codexAnswerJSON(t, out.String()); dec != "deny" {
-			t.Fatalf("codex answer %q", out.String())
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the watchdog did not fire")

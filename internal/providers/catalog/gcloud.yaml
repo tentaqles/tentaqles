@@ -18,18 +18,8 @@ identity:
     CLOUDSDK_CONFIG: "{dir}"
 login:
   args: ["auth", "login"]
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [gcloud, gsutil, bq]
-  images: ["google/cloud-sdk", "cloudsdktool/google-cloud-cli"]
   env: [CLOUDSDK_CONFIG, GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLOUD_PROJECT, CLOUDSDK_CORE_PROJECT, CLOUDSDK_AUTH_ACCESS_TOKEN_FILE]
-  paths: ["~/.config/gcloud", "%APPDATA%/gcloud"]
-  modules: [google.cloud]
-  psmodules: [GoogleCloud]
-  cmdlets: ["*-Gcs*", "*-Gce*"]
-  hosts: [googleapis.com, storage.googleapis.com/storage/, storage.googleapis.com/upload/,
-    storage.googleapis.com/download/, storage.googleapis.com/batch/, gcr.io]
-  public: [fonts.googleapis.com, ajax.googleapis.com, storage.googleapis.com/]
-  mcp: [gcloud, gcp, googlecloud, bigquery]
-  mcp_packages: ["@google-cloud/", "google-cloud-", "gcloud-mcp", "@googlecloud/", "us-docker.pkg.dev/cloud-run/mcp/", "gcp-mcp", "mcp/gcp", "mcp/google"]

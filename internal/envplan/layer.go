@@ -10,20 +10,18 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/paths"
-	"github.com/tentaqles/tentaqles/internal/policy"
 	"github.com/tentaqles/tentaqles/internal/providers"
 	"github.com/tentaqles/tentaqles/internal/resolve"
+	"github.com/tentaqles/tentaqles/internal/scope"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
 
-// The PATH and environment layer of an identity whose manifest sets guard: v2 (PRD v2 §6.1
-// step 2, §6.2 rows PATH and Environment; ADR-0008). It is built from the same compiled scope
-// the hook judges by (policy.ScopeFor): an out-of-scope provider's CLI does not resolve by name
-// on the identity PATH, and its variables are unset in the identity environment. Without the
-// flag nothing here runs.
+// The PATH and environment layer of an identity, built from its compiled scope (scope.For): an
+// out-of-scope provider's CLI does not resolve by name on the identity PATH, and its variables
+// are unset in the identity environment.
 
 // MaskDirName is the per-identity folder, under the identity's folder in the tq home, that
-// holds one stub per out-of-scope executable name (ADR-0008): it goes first on the identity
+// holds one stub per out-of-scope executable name: it goes first on the identity
 // PATH when a PATH folder that tq cannot drop (one shared with other tools) holds an
 // out-of-scope CLI. A stub prints "<name>: command not found" and exits 127.
 const MaskDirName = "path-mask"
@@ -34,26 +32,30 @@ func MaskDir(ws string) string { return filepath.Join(paths.IdentitiesRoot(), ws
 // Layer is one identity's compiled PATH and environment layer.
 type Layer struct {
 	Identity string
-	scope    *policy.Scope
+	scope    *scope.Scope
 	exes     map[string]string // out-of-scope executable name -> provider id
 	maskDir  string
-	ready    *bool // memoized MaskReady
+	shims    string // the identity's shims folder when it lists a browser, else ""
+	ready    *bool  // memoized MaskReady
 }
 
-// LayerFor is ws's layer, or nil when the v1 behaviour applies: no workspace, or a manifest
-// without guard: v2. ws is a trusted workspace (resolve hands an untrusted one out apart).
+// LayerFor is ws's layer, or nil with no workspace. ws is a trusted workspace (resolve hands an untrusted one out apart).
 func LayerFor(ws *resolve.Workspace) *Layer {
-	if ws == nil || ws.Manifest == nil || !ws.Manifest.GuardV2() {
+	if ws == nil || ws.Manifest == nil {
 		return nil
 	}
-	s := policy.ScopeFor(ws.Name, ws.Manifest.Scope(), ws.Manifest.BundleMCP(), ws.Manifest.MCPAllow())
+	s := scope.For(ws.Name, ws.Manifest.Scope())
 	exes := s.OutOfScopeExecutables()
 	for n := range exes {
 		if providers.AmbiguousExecutable(n) {
 			delete(exes, n) // never dropped nor masked: another program may own the name
 		}
 	}
-	return &Layer{Identity: ws.Name, scope: s, exes: exes, maskDir: MaskDir(ws.Name)}
+	l := &Layer{Identity: ws.Name, scope: s, exes: exes, maskDir: MaskDir(ws.Name)}
+	if HasBrowsers(ws) {
+		l.shims = ShimsDir(ws.Name)
+	}
+	return l
 }
 
 // IsMasked reports whether a file or command name is one the layer hides: an out-of-scope
@@ -62,9 +64,6 @@ func (l *Layer) IsMasked(name string) bool {
 	_, ok := l.scope.OutOfScopeExecutable(name)
 	return ok && !providers.AmbiguousExecutable(filepath.Base(name))
 }
-
-// Scope is the compiled scope the layer was built from.
-func (l *Layer) Scope() *policy.Scope { return l.scope }
 
 // MaskDir is the layer's mask folder.
 func (l *Layer) MaskDir() string { return l.maskDir }
@@ -96,7 +95,7 @@ func (l *Layer) UnsetNames(names []string, desired map[string]string) []string {
 	return out
 }
 
-// RemoveMask removes identity ws's mask folder (guard: v2 turned off, or nothing to mask). It
+// RemoveMask removes identity ws's mask folder (nothing to mask). It
 // reports whether there was one.
 func RemoveMask(ws string) (bool, error) {
 	if !workspace.NameRe.MatchString(ws) {

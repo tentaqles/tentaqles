@@ -26,28 +26,8 @@ identity:
     AWS_SHARED_CREDENTIALS_FILE: "{dir}/credentials"
 login:
   args: ["configure"]
-# verify asks for the default profile (or AWS_PROFILE); an `aws configure sso`
-# setup that only created a named profile reads as logged out until it is set.
-verify:
-  args: ["sts", "get-caller-identity", "--output", "json"]
-  # Expired or missing credentials make the CLI exit non-zero with prose; the
-  # pattern has to catch that before the exit code is read.
-  logged_out_when: 'Token has expired|Unable to locate credentials|Error loading SSO Token|SSO session .* expired|The SSO session associated with this profile has expired|ExpiredToken|security token included in the request is expired|InvalidClientTokenId'
-  # {"UserId": "...", "Account": "123456789012", "Arn": "..."}
-  account:
-    json: Account
-# match: what the guard's identity category recognises as this provider when an
-# identity's scope leaves it out (ADR-0007; docs/PROVIDERS.md, "Match lists").
+# match: what a client's terminal hides when this provider is outside the client's scope: its
+# CLIs (masked on the client's PATH) and its variables (unset).
 match:
   executables: [aws, aws_completer, sam, eksctl, cdk, aws-cdk, amplify]
-  images: ["amazon/aws-cli"]
-  modules: [awscli, boto3, botocore]
-  psmodules: [AWS.Tools, AWSPowerShell, AWSPowerShell.NetCore]
-  cmdlets: ["*-AWS*", "*-S3*", "*-EC2*", "*-IAM*", "*-STS*", "*-CFN*", "*-DDB*", "*-SQS*", "*-SNS*", "*-KMS*",
-    "*-ECS*", "*-EKS*", "*-ECR*", "*-SSM*", "*-RDS*", "*-R53*", "*-LM*", "*-CW*"]
   env: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_SECURITY_TOKEN, AWS_PROFILE, AWS_DEFAULT_PROFILE, AWS_CONFIG_FILE, AWS_SHARED_CREDENTIALS_FILE, AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE, AWS_CONTAINER_CREDENTIALS_FULL_URI, AWS_REGION, AWS_DEFAULT_REGION]
-  paths: ["~/.aws"]
-  hosts: [amazonaws.com, amazonaws.com.cn, api.aws]
-  public: [awscli.amazonaws.com, s3.amazonaws.com/aws-cli/]
-  mcp: [aws, awslabs, amazonq, bedrock, s3]
-  mcp_packages: ["awslabs.", "@awslabs/", "@aws/", "@aws-sdk/", "public.ecr.aws/awslabs/", "public.ecr.aws/awslabs-mcp/", "aws-mcp", "mcp-proxy-for-aws", "aws-api-mcp-server", "github.com/awslabs/", "mcp/aws"]

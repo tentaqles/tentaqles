@@ -102,7 +102,7 @@ func loadEmbedded() (*Catalog, error) {
 // FileError is a user provider file (~/.tentaqles/providers/<id>.yaml) that tq did not load:
 // it cannot be read, does not parse or validate, collides with another provider's identity
 // variable, or (a new id) claims an entry a built-in provider lists. The file contributes
-// nothing; for a built-in id the built-in entry stays in force (ADR-0007 round 3).
+// nothing; for a built-in id the built-in entry stays in force.
 type FileError struct {
 	Path    string // the full path of the file
 	ID      string // the id the file is named for (its basename without .yaml)
@@ -121,7 +121,7 @@ func (e *FileError) First() string {
 
 // Fix is what the developer does about it; the message has already named the file.
 func (e *FileError) Fix() string {
-	return "fix or delete it, then run tq providers list"
+	return "fix or delete it, then run tentaqles providers list"
 }
 
 // Detail is the file (with the line and column of a schema error: path:5:3) and the first
@@ -242,8 +242,8 @@ func Load() (*Catalog, error) {
 
 // LoadAll is Load but never stops at the first bad user file: it loads every readable, valid
 // user file over the embedded catalog and returns one error per file it did not load (a
-// *FileError) plus any error reading the folder, so `tq providers list` and `tq doctor` can
-// report them all and the hook can decide per workspace (ADR-0007 round 3). The embedded
+// *FileError) plus any error reading the folder, so `tentaqles providers list` and `tentaqles doctor` can
+// report them all and the hook can decide per workspace. The embedded
 // catalog alone still errors with a nil catalog.
 func LoadAll() (*Catalog, []error) {
 	c, err := loadEmbedded()
@@ -266,7 +266,7 @@ func LoadAll() (*Catalog, []error) {
 
 // claimConflict refuses a user provider with a new id that claims anything a built-in
 // provider lists: an in-scope provider's claims come from the embedded catalog, so a new id
-// in scope would otherwise allow a built-in's CLI, variable, path or host (ADR-0007 round 3).
+// in scope would otherwise unmask a built-in's CLI or variable.
 // To extend a built-in, a file named for its id is used instead.
 func claimConflict(p Provider, builtin map[string]Provider) error {
 	ids := make([]string, 0, len(builtin))
@@ -294,89 +294,11 @@ func claimConflict(p Provider, builtin map[string]Provider) error {
 				}
 			}
 		}
-		for _, img := range m.Images {
-			for _, bi := range b.Images {
-				if strings.EqualFold(img, bi) || strings.EqualFold(imageBasename(img), imageBasename(bi)) {
-					return refuse("images", img, id)
-				}
-			}
-		}
-		for _, mod := range m.Modules {
-			for _, bm := range b.Modules {
-				if DottedCovers(bm, mod) || DottedCovers(mod, bm) {
-					return refuse("modules", mod, id)
-				}
-			}
-		}
-		for _, mod := range m.PSModules {
-			for _, bm := range b.PSModules {
-				if DottedCovers(bm, mod) || DottedCovers(mod, bm) {
-					return refuse("psmodules", mod, id)
-				}
-			}
-		}
-		for _, c := range m.Cmdlets {
-			for _, bc := range b.Cmdlets {
-				if cmdletsOverlap(c, bc) {
-					return refuse("cmdlets", c, id)
-				}
-			}
-		}
 		for _, e := range m.Env {
 			for _, be := range b.Env {
 				if envOverlap(e, be) {
 					return refuse("env", e, id)
 				}
-			}
-		}
-		for _, pth := range m.Paths {
-			for _, bp := range b.Paths {
-				if pathsOverlap(pth, bp) {
-					return refuse("paths", pth, id)
-				}
-			}
-		}
-		for _, h := range m.Hosts {
-			for _, bh := range b.Hosts {
-				if HostsOverlap(h, bh) {
-					return refuse("hosts", h, id)
-				}
-			}
-		}
-		for _, h := range m.Hosts {
-			for _, bh := range b.MCPHosts {
-				if HostsOverlap(h, bh) {
-					return refuse("hosts", h, id)
-				}
-			}
-		}
-		for _, h := range m.GitHosts {
-			for _, bh := range b.GitHosts {
-				if HostsOverlap(h, bh) {
-					return refuse("git_hosts", h, id)
-				}
-			}
-		}
-		// An in-scope mcp_hosts entry is judged before the out-of-scope API hosts.
-		for _, h := range m.MCPHosts {
-			for _, bh := range append(append([]string{}, b.MCPHosts...), b.Hosts...) {
-				if HostsOverlap(h, bh) {
-					return refuse("mcp_hosts", h, id)
-				}
-			}
-		}
-		for _, pkg := range m.MCPPackages {
-			n := PkgNorm(pkg)
-			for _, bp := range append(append([]string{}, b.MCPPackages...), b.Images...) {
-				bn := PkgNorm(bp)
-				if strings.HasPrefix(n, bn) || strings.HasPrefix(bn, n) {
-					return refuse("mcp_packages", pkg, id)
-				}
-			}
-		}
-		for _, t := range m.MCP {
-			if contains(b.MCP, t) {
-				return refuse("mcp", t, id)
 			}
 		}
 	}
@@ -388,31 +310,6 @@ func containsFold(xs []string, x string) bool {
 		if strings.EqualFold(v, x) {
 			return true
 		}
-	}
-	return false
-}
-
-func imageBasename(img string) string {
-	img = strings.SplitN(strings.SplitN(img, "@", 2)[0], ":", 2)[0]
-	return img[strings.LastIndex(img, "/")+1:]
-}
-
-// cmdletsOverlap reports whether two cmdlets entries can match one name.
-func cmdletsOverlap(a, b string) bool {
-	if CmdletMatches(a, b) || CmdletMatches(b, a) {
-		return true
-	}
-	_, an, _ := strings.Cut(strings.ToLower(a), "-")
-	_, bn, _ := strings.Cut(strings.ToLower(b), "-")
-	ap, aw := strings.CutSuffix(an, "*")
-	bp, bw := strings.CutSuffix(bn, "*")
-	switch {
-	case aw && bw:
-		return strings.HasPrefix(ap, bp) || strings.HasPrefix(bp, ap)
-	case aw:
-		return strings.HasPrefix(bn, ap)
-	case bw:
-		return strings.HasPrefix(an, bp)
 	}
 	return false
 }
@@ -433,15 +330,8 @@ func envOverlap(a, b string) bool {
 	return a == b
 }
 
-// pathsOverlap reports whether one path entry is the other or under it.
-func pathsOverlap(a, b string) bool {
-	a, b = strings.ToLower(strings.TrimSuffix(a, "/")), strings.ToLower(strings.TrimSuffix(b, "/"))
-	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
-}
-
 // Overlaps reports every pair of providers that claim the same executable (same first
-// subcommand or both wholesale), credential path tree, API host (the same host or one a
-// subdomain of the other), image or MCP token, so nothing is silent (ADR-0007 rounds 2 and 3).
+// subcommand or both wholesale), so nothing is silent.
 // Each string is one human-readable overlap.
 func (c *Catalog) Overlaps() []string {
 	var out []string
@@ -482,37 +372,6 @@ func (c *Catalog) Overlaps() []string {
 				if contains(a.Match.Executables, exe) {
 					for _, sub := range subs {
 						add("subcommand", a.ID, b.ID, exe+" "+sub)
-					}
-				}
-			}
-			for _, h := range a.Match.Hosts {
-				for _, bh := range b.Match.Hosts {
-					switch {
-					case h == bh:
-						add("host", a.ID, b.ID, h)
-					case HostsOverlap(h, bh):
-						add("host", a.ID, b.ID, h+" / "+bh)
-					}
-				}
-			}
-			for _, img := range a.Match.Images {
-				if containsFold(b.Match.Images, img) {
-					add("image", a.ID, b.ID, img)
-				}
-			}
-			for _, t := range a.Match.MCP {
-				if contains(b.Match.MCP, t) {
-					add("MCP token", a.ID, b.ID, t)
-				}
-			}
-			for _, p := range a.Match.Paths {
-				for _, bp := range b.Match.Paths {
-					if pathsOverlap(p, bp) {
-						what := p
-						if p != bp {
-							what = p + " / " + bp
-						}
-						add("path", a.ID, b.ID, what)
 					}
 				}
 			}
@@ -568,7 +427,7 @@ func mustLoadUncached() (*Catalog, error) {
 
 // override puts a user provider file into the catalog: a new id is appended, a known id is
 // replaced, except its match lists, which are the union of both (Match.Union): a user file
-// extends what the guard recognises and never shortens it (ADR-0007).
+// extends what the guard recognises and never shortens it.
 func (c *Catalog) override(p Provider) {
 	prev, exists := c.byID[p.ID]
 	if !exists {
