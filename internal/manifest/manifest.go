@@ -42,37 +42,26 @@ func KnownIdentities() []string {
 }
 
 type Git struct {
-	Name         string `yaml:"name"`
-	Email        string `yaml:"email"`
-	Provider     string `yaml:"provider"`
-	User         string `yaml:"user"`
-	Host         string `yaml:"host"`
-	ExpectedUser string `yaml:"expected_user"`
+	Name     string `yaml:"name,omitempty"`
+	Email    string `yaml:"email"`
+	Provider string `yaml:"provider,omitempty"`
+	// User is the GitHub user gh must be logged in as; ExpectedUser stands in when it is empty.
+	User         string `yaml:"user,omitempty"`
+	ExpectedUser string `yaml:"expected_user,omitempty"`
 	// BlockedCommands are extra command prefixes the guard refuses for this
 	// workspace, unioned with Manifest.BlockedCommands and cloud.blocked_commands.
-	BlockedCommands []string `yaml:"blocked_commands"`
+	BlockedCommands []string `yaml:"blocked_commands,omitempty"`
 }
 
-type Identity struct {
-	ShareCapabilities *bool `yaml:"share_capabilities"`
-	// ExpectedAccount is the account this identity must be logged in as --
-	// an email for Claude, a username for gh. Declaring it is what lets
-	// `tentaqles doctor` tell a correctly wired workspace signed into the wrong
-	// client from a correct one; leaving it empty means that identity is
-	// never verified, and costs nothing.
-	//
-	// For a git-provider identity it falls back to Git.ExpectedUser, which
-	// predates this field and is already enforced inside Claude sessions.
-	ExpectedAccount      string `yaml:"expected_account,omitempty"`
-	ExpectedSubscription string `yaml:"expected_subscription"`
-	Profile              string `yaml:"profile"`
-}
+// Identity is one provider with its own config home under the client's identity folder. It holds
+// nothing: the key is the provider.
+type Identity struct{}
 
 type Claude struct {
 	// Env is merged into the identity's settings.json env by
 	// `tentaqles settings render`. Values are checked like the rest of the manifest:
 	// a secret-shaped value makes the manifest fail to load.
-	Env map[string]string `yaml:"env"`
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 type Manifest struct {
@@ -83,9 +72,9 @@ type Manifest struct {
 	// DefaultLanguage.
 	Language        string              `yaml:"language,omitempty"`
 	Identities      map[string]Identity `yaml:"identities"`
-	Claude          Claude              `yaml:"claude"`
-	BlockedCommands []string            `yaml:"blocked_commands"`
-	Cloud           map[string]any      `yaml:"cloud"`
+	Claude          Claude              `yaml:"claude,omitempty"`
+	BlockedCommands []string            `yaml:"blocked_commands,omitempty"`
+	Cloud           map[string]any      `yaml:"cloud,omitempty"`
 	// Email is the client's email provider (services.go).
 	Email *Service `yaml:"email,omitempty"`
 	// ExtraScope adds catalog ids to the derived provider scope (Scope).

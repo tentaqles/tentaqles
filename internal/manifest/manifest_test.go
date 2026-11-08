@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func write(t *testing.T, body string) string {
@@ -45,8 +47,8 @@ schema: tentaqles-client-v2
 client: globex
 git: { name: Maria, email: m@globex.io }
 identities:
-  claude: { share_capabilities: false }
-  aws: { profile: globex }
+  claude: {}
+  aws: {}
 `)
 	m, err := Load(p)
 	if err != nil {
@@ -55,11 +57,19 @@ identities:
 	if got := m.IdentityNames(); !reflect.DeepEqual(got, []string{"aws", "claude"}) {
 		t.Fatalf("identities %v", got)
 	}
-	if m.Identities["aws"].Profile != "globex" {
-		t.Fatalf("%+v", m)
+}
+
+// A new client's manifest holds only what tentaqles reads: no empty keys.
+func TestManifestEncodesNoEmptyKeys(t *testing.T) {
+	m := Manifest{Schema: Schema, Client: "acme", Language: "en-US", Git: Git{Email: "a@acme.com"},
+		Identities: map[string]Identity{"claude": {}}}
+	raw, err := yaml.Marshal(&m)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if sc := m.Identities["claude"].ShareCapabilities; sc == nil || *sc {
-		t.Fatal("share_capabilities false not parsed")
+	want := "schema: tentaqles-client-v2\nclient: acme\ngit:\n    email: a@acme.com\nlanguage: en-US\nidentities:\n    claude: {}\n"
+	if string(raw) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", raw, want)
 	}
 }
 
@@ -205,7 +215,7 @@ func TestIdentityNamesCloudAlsoWithIdentitiesBlock(t *testing.T) {
 	if got := join(m); got != "aws,az,claude,doctl,gh" {
 		t.Fatalf("not declared: %s", got)
 	}
-	m.Identities["aws"] = Identity{Profile: "acme"}
+	m.Identities["aws"] = Identity{}
 	if got := join(m); got != "aws,az,claude,doctl,gh" {
 		t.Fatalf("declared: %s", got)
 	}
