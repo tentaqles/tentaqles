@@ -5,6 +5,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-08
+
 - **Each client has a language.** `tentaqles reach` asks for it after the email, from a list that starts on English
   (United States), then every language by name; typing filters the list (`por` leaves the Portuguese ones) and the
   arrows move through it. The manifest stores the tag (`language: pt-BR`). The client's Claude `settings.json` gets
