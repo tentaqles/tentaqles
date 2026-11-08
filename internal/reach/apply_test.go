@@ -168,3 +168,47 @@ func TestEdit_GitHostChange(t *testing.T) {
 		t.Fatalf("scope %v removed %v", m.Scope(), removed)
 	}
 }
+
+// language holds one value: add sets it by tag or name; it cannot be removed.
+func TestChange_Language(t *testing.T) {
+	cur := current()
+	cur.Language = "en-US"
+	for _, v := range [][]string{{"pt-BR"}, {"brasil"}, {"Portuguese", "(Brazil)"}} {
+		n, _, err := Change(cur, true, CatLanguage, v)
+		if err != nil || n.Language != "pt-BR" {
+			t.Fatalf("add language %v: %+v %v", v, n, err)
+		}
+	}
+	if _, _, err := Change(cur, true, CatLanguage, []string{"portuguese"}); err == nil {
+		t.Fatal("an ambiguous language was taken")
+	}
+	if _, _, err := Change(cur, false, CatLanguage, nil); err == nil {
+		t.Fatal("removing the language was accepted")
+	}
+}
+
+// Edit writes language: and leaves the rest; a new client with no answer gets the default.
+func TestEdit_Language(t *testing.T) {
+	before := AnswersFrom(parse(t, []byte(handManifest)))
+	if before.Language != "en-US" {
+		t.Fatalf("a manifest without language: reads as %q", before.Language)
+	}
+	next, _, err := Change(before, true, CatLanguage, []string{"pt-BR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, changes, _, _, err := Edit([]byte(handManifest), before, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := parse(t, out); m.Language != "pt-BR" || !strings.Contains(string(out), "# kept by hand") {
+		t.Fatalf("manifest:\n%s", out)
+	}
+	if !strings.Contains(strings.Join(changes, "|"), "language: English (United States) -> Portuguese (Brazil)") {
+		t.Errorf("changes %v", changes)
+	}
+	o, err := (&Answers{Email: "me@acme.test"}).AddOptions(t.TempDir(), "acme", "Me")
+	if err != nil || o.Language != "" {
+		t.Fatalf("%+v %v", o, err)
+	}
+}

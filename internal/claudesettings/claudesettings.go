@@ -1,5 +1,5 @@
 // Package claudesettings renders the tq-managed part of a Claude identity's
-// settings.json: a few env vars and the status line. Every identity gets the
+// settings.json: a few env vars, the client's language and the status line. Every identity gets the
 // same baseline plus what its manifest adds, so identities stop drifting
 // apart. tq writes no permission setting; its hook only denies.
 //
@@ -27,12 +27,15 @@ const stateFile = ".tq-settings-state.json"
 type Managed struct {
 	Env        map[string]string
 	StatusLine map[string]any // nil: leave the status line alone
+	// Language is the name Claude Code's language setting gets ("Portuguese (Brazil)"); "" leaves it.
+	Language string
 }
 
 // Owned records what tq wrote, so the next render can take it back.
 type Owned struct {
 	EnvKeys    []string `json:"env_keys,omitempty"`
 	StatusLine bool     `json:"status_line,omitempty"`
+	Language   bool     `json:"language,omitempty"`
 }
 
 // baselineEnv tunes plugins that otherwise cost a lot: the security-guidance
@@ -56,6 +59,7 @@ func Desired(m *manifest.Manifest, tqExe string) Managed {
 	for k, v := range m.Claude.Env {
 		want.Env[k] = v
 	}
+	want.Language = m.ClientLanguage().Name
 	if tqExe != "" {
 		want.StatusLine = map[string]any{
 			"type":    "command",
@@ -89,6 +93,17 @@ func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Ow
 		delete(next, "env")
 	} else {
 		next["env"] = env
+	}
+
+	// The language follows the manifest. A language the user set by hand, before tq ever wrote one,
+	// stays theirs.
+	if want.Language != "" {
+		if _, has := next["language"]; !has || prev.Language {
+			next["language"] = want.Language
+			owned.Language = true
+		}
+	} else if prev.Language {
+		delete(next, "language")
 	}
 
 	if want.StatusLine != nil {
@@ -144,6 +159,9 @@ func summarize(cur, next map[string]any) []string {
 	var out []string
 	if !reflect.DeepEqual(normalize(cur["env"]), normalize(next["env"])) {
 		out = append(out, "env: updated")
+	}
+	if !reflect.DeepEqual(cur["language"], next["language"]) {
+		out = append(out, fmt.Sprintf("language: %v", next["language"]))
 	}
 	if !reflect.DeepEqual(normalize(cur["statusLine"]), normalize(next["statusLine"])) {
 		out = append(out, "statusLine: tentaqles statusline")

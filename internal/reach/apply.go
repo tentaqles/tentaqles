@@ -11,19 +11,20 @@ import (
 
 // The categories `tentaqles add` and `tentaqles remove` take: the parts of reach's form, one at a time.
 const (
-	CatEmail   = "email"   // the identity's git email (one value)
-	CatGit     = "git"     // the git host (one value)
-	CatCloud   = "cloud"   // the clouds (a list; the first is the primary)
-	CatTeam    = "team"    // team and meeting platforms (a list)
-	CatData    = "data"    // data platforms (a list)
-	CatTask    = "task"    // the task management provider (one value)
-	CatMail    = "mail"    // the email provider (one value)
-	CatBrowser = "browser" // browsers, each with a profile (a list)
-	CatOther   = "other"   // providers tentaqles does not manage (a list of names)
+	CatEmail    = "email"    // the identity's git email (one value)
+	CatLanguage = "language" // the language the client works in (one value)
+	CatGit      = "git"      // the git host (one value)
+	CatCloud    = "cloud"    // the clouds (a list; the first is the primary)
+	CatTeam     = "team"     // team and meeting platforms (a list)
+	CatData     = "data"     // data platforms (a list)
+	CatTask     = "task"     // the task management provider (one value)
+	CatMail     = "mail"     // the email provider (one value)
+	CatBrowser  = "browser"  // browsers, each with a profile (a list)
+	CatOther    = "other"    // providers tentaqles does not manage (a list of names)
 )
 
 // Categories are the category names, in the form's order.
-var Categories = []string{CatEmail, CatGit, CatCloud, CatTeam, CatData, CatTask, CatMail, CatBrowser, CatOther}
+var Categories = []string{CatEmail, CatLanguage, CatGit, CatCloud, CatTeam, CatData, CatTask, CatMail, CatBrowser, CatOther}
 
 // aliases spell a value the way people say it: the CLI's name for a git host or a cloud.
 var aliases = map[string]map[string]string{
@@ -56,7 +57,7 @@ func OptionsOf(cat string) []Option {
 
 // Single reports whether a category holds one value: adding replaces it.
 func Single(cat string) bool {
-	return cat == CatEmail || cat == CatGit || cat == CatTask || cat == CatMail
+	return cat == CatEmail || cat == CatLanguage || cat == CatGit || cat == CatTask || cat == CatMail
 }
 
 // value is v in cat's spelling (an alias resolved), or an error naming the values cat offers.
@@ -108,6 +109,18 @@ func Change(cur *Answers, add bool, cat string, values []string) (next *Answers,
 			return nil, nil, err
 		}
 		n.Email = strings.TrimSpace(values[0])
+	case CatLanguage:
+		if !add {
+			return nil, nil, fmt.Errorf("a client always has a language: change it with tentaqles add language <name or tag>")
+		}
+		if len(values) == 0 {
+			return nil, nil, fmt.Errorf("name the language: tentaqles add language pt-BR, or tentaqles add language portuguese")
+		}
+		l, err := manifest.FindLanguage(strings.Join(values, " "))
+		if err != nil {
+			return nil, nil, err
+		}
+		n.Language = l.Tag
 	case CatGit, CatTask, CatMail:
 		field := map[string]*string{CatGit: &n.Git, CatTask: &n.Task, CatMail: &n.EmailProvider}[cat]
 		if add {

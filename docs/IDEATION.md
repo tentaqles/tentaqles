@@ -61,6 +61,9 @@ Fallback (terminal reports no UTF-8):
 For a new client, `reach` asks, with checkboxes, text inputs and single or multiple choices:
 
 - the identity email (checked for a valid format);
+- the language for the client: Claude writes the client's reports, documents, emails and messages to clients and
+  teammates in it. A list starting on English (United States), then every other language by name, filtered as the
+  developer types (`por` leaves the Portuguese ones) and moved through with the arrows;
 - the git provider: GitHub, GitLab, Bitbucket, Azure DevOps, other, skip;
 - the cloud providers: Azure, AWS, Google Cloud, other, skip;
 - the team and meeting platforms: Microsoft Teams, Slack, Discord, Zoom, Google Meet, other, skip;
@@ -75,7 +78,7 @@ settings, PATH and browser profile, installs the tentaqles plugin into the clien
 shell activation to the developer's shell profiles.
 
 In a folder that already is a client, `reach` shows the client and offers to change its providers, its browser and
-profile, or its email, through the same questions.
+profile, its email or its language, through the same questions.
 
 ## Claude Code
 

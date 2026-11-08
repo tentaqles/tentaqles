@@ -76,9 +76,12 @@ type Claude struct {
 }
 
 type Manifest struct {
-	Schema          string              `yaml:"schema"`
-	Client          string              `yaml:"client"`
-	Git             Git                 `yaml:"git"`
+	Schema string `yaml:"schema"`
+	Client string `yaml:"client"`
+	Git    Git    `yaml:"git"`
+	// Language is the BCP 47 tag of the language the client works in (language.go); empty is
+	// DefaultLanguage.
+	Language        string              `yaml:"language,omitempty"`
 	Identities      map[string]Identity `yaml:"identities"`
 	Claude          Claude              `yaml:"claude"`
 	BlockedCommands []string            `yaml:"blocked_commands"`
@@ -140,6 +143,9 @@ func Parse(raw []byte, path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.validateScope(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := m.validateLanguage(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := m.ValidateBrowsers(); err != nil {

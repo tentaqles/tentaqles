@@ -163,3 +163,33 @@ func mustRead(t *testing.T, p string) []byte {
 	}
 	return b
 }
+
+// A new client's language is English (United States) unless the form says otherwise;
+// tentaqles add language changes it, and the client's Claude settings follow.
+func TestAdd_Language(t *testing.T) {
+	dir := existingClient(t)
+	if m := readManifest(t, "acme"); m.Language != "en-US" {
+		t.Fatalf("a new client's language = %q", m.Language)
+	}
+	settings := filepath.Join(paths.IdentityDir("acme", "claude"), "settings.json")
+	if !strings.Contains(string(mustRead(t, settings)), `"language": "English (United States)"`) {
+		t.Fatalf("settings.json:\n%s", mustRead(t, settings))
+	}
+	chdir(t, dir)
+	out, err := runChange(t, "yes\n", "add", "language", "pt-BR")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if m := readManifest(t, "acme"); m.Language != "pt-BR" {
+		t.Fatalf("language = %q", m.Language)
+	}
+	if !strings.Contains(string(mustRead(t, settings)), `"language": "Portuguese (Brazil)"`) {
+		t.Fatalf("settings.json:\n%s", mustRead(t, settings))
+	}
+	if !strings.Contains(out, "language: English (United States) -> Portuguese (Brazil)") {
+		t.Errorf("the change is not listed:\n%s", out)
+	}
+	if _, err := runChange(t, "yes\n", "remove", "language"); err == nil {
+		t.Fatal("removing the language was accepted")
+	}
+}
