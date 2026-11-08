@@ -5,6 +5,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-11-08
+
 - A manifest holds only what tentaqles reads: `git.host` and the per-identity `share_capabilities`,
   `expected_account`, `expected_subscription` and `profile` are gone, and a new client's manifest has no empty keys.
 
