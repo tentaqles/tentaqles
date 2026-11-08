@@ -6,8 +6,9 @@ environment variable) and runs `tentaqles claude-hook <event>` with the hook's J
 
 ## `session-start`
 
-Prints a short preamble that Claude Code adds to the session: the folder's client, its git provider, user and
-email, its clouds, the identity and its `CLAUDE_CONFIG_DIR`, the client's tools, the findings of `tentaqles doctor` for
+Prints a short preamble that Claude Code adds to the session: the folder's client; its language, with the
+instruction to write every report, document, email and message for the client's people in it; its git provider, user
+and email; its clouds, the identity and its `CLAUDE_CONFIG_DIR`, the client's tools, the findings of `tentaqles doctor` for
 this folder, and one line on what the hook blocks. In a neutral folder it says so. It never fails: a session always
 starts.
 

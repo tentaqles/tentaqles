@@ -16,7 +16,7 @@ import (
 // write it. Scope ids the form does not offer (a provider added by hand) are not answers; Edit leaves
 // them where they are.
 func AnswersFrom(m *manifest.Manifest) *Answers {
-	a := &Answers{Email: m.Git.Email, Git: strings.ToLower(strings.TrimSpace(m.Git.Provider))}
+	a := &Answers{Email: m.Git.Email, Language: m.ClientLanguage().Tag, Git: strings.ToLower(strings.TrimSpace(m.Git.Provider))}
 	if !slices.ContainsFunc(GitOptions, func(o Option) bool { return o.Value == a.Git }) {
 		a.Git = ""
 	}
@@ -94,7 +94,7 @@ func (a *Answers) scopeIDs() []string {
 	return out
 }
 
-// Edit is the manifest raw with what the form owns changed from before to after: git.email and
+// Edit is the manifest raw with what the form owns changed from before to after: git.email, language,
 // git.provider, the identities the providers bring, the cloud block's provider and also, the form's ids
 // in scope:, email.provider, browsers: and other_providers:. Every other key, value and comment stays.
 // drop names providers to take out of the client that no answer owns (an identity or a scope: entry
@@ -120,6 +120,10 @@ func Edit(raw []byte, before, after *Answers, drop ...string) (out []byte, chang
 	if strings.TrimSpace(after.Email) != strings.TrimSpace(before.Email) {
 		setScalar(mapping(top, "git"), "email", strings.TrimSpace(after.Email))
 		changes = append(changes, fmt.Sprintf("email: %s -> %s", before.Email, strings.TrimSpace(after.Email)))
+	}
+	if after.Language != before.Language && after.Language != "" {
+		setScalar(top, "language", after.Language)
+		changes = append(changes, fmt.Sprintf("language: %s -> %s", languageName(before.Language), languageName(after.Language)))
 	}
 	if after.Git != before.Git {
 		if after.Git == "" {
@@ -348,4 +352,15 @@ func stringSeq(xs []string) *yaml.Node {
 		n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: x})
 	}
 	return n
+}
+
+// languageName is the English name of a language tag, or the tag itself when it is not known.
+func languageName(tag string) string {
+	if l, ok := manifest.LanguageOf(tag); ok {
+		return l.Name
+	}
+	if tag == "" {
+		return "none"
+	}
+	return tag
 }

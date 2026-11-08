@@ -46,8 +46,8 @@ func newReachCmd() *cobra.Command {
 		Short: "Make a folder a client identity, or change the one it already is",
 		Long: "tentaqles reach makes the current folder, or <path>, an isolated client identity. The folder's\n" +
 			"name is the client's name, and its parent folder is where your clients live. It asks for the\n" +
-			"client's email, its git host, its clouds, team, data and task tools, its email provider and its\n" +
-			"browser profile, and writes them to the client's manifest. A terminal opened in the folder, or in\n" +
+			"client's email, its language, its git host, its clouds, team, data and task tools, its email provider\n" +
+			"and its browser profile, and writes them to the client's manifest. A terminal opened in the folder, or in\n" +
 			"any subfolder, then carries that client's identity: its own Claude Code config home (and so its own\n" +
 			"subscription), its git name and email, its own login for each CLI, its browser profile, and a PATH\n" +
 			"without the CLIs of providers the client does not use.\n\n" +
@@ -55,7 +55,7 @@ func newReachCmd() *cobra.Command {
 			"installs the tentaqles plugin into the client's Claude config (--no-plugin skips this): the plugin's\n" +
 			"hook blocks a git, gh or cloud command that would run under another identity.\n\n" +
 			"In a folder that already is a client, it shows the client and offers to change its providers, its\n" +
-			"browser and profile, or its email, through the same questions.\n\n" +
+			"browser and profile, its email or its language, through the same questions.\n\n" +
 			"Nothing is written before you type yes.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -444,7 +444,7 @@ func runReachForm() (*reach.Answers, error) {
 		return nil, errNoTerminal
 	}
 	a := &reach.Answers{}
-	for _, part := range []string{reachPartEmail, reachPartProviders, reachPartBrowsers} {
+	for _, part := range []string{reachPartEmail, reachPartLanguage, reachPartProviders, reachPartBrowsers} {
 		if err := askReachPart(part, a); err != nil {
 			return nil, err
 		}
@@ -455,6 +455,7 @@ func runReachForm() (*reach.Answers, error) {
 // The parts of the form, which the menu of an existing client offers one at a time.
 const (
 	reachPartEmail     = "email"
+	reachPartLanguage  = "language"
 	reachPartProviders = "providers"
 	reachPartBrowsers  = "browsers"
 	reachPartNothing   = "nothing"
@@ -472,6 +473,8 @@ func askReachPart(part string, a *reach.Answers) error {
 		}
 		a.Email = strings.TrimSpace(email)
 		return nil
+	case reachPartLanguage:
+		return askLanguage(run, a)
 	case reachPartBrowsers:
 		return askBrowsers(run, a)
 	case reachPartProviders:
@@ -554,6 +557,32 @@ func askProviders(run func(huh.Field) error, a *reach.Answers) error {
 	return nil
 }
 
+// askLanguage asks the client's language from the full list: English (United States) first and
+// selected, then the rest by name. Typing filters the list (`por` leaves the Portuguese ones); the
+// arrows move through it.
+func askLanguage(run func(huh.Field) error, a *reach.Answers) error {
+	v := a.Language
+	if v == "" {
+		v = manifest.DefaultLanguage
+	}
+	if err := run(languageSelect(&v)); err != nil {
+		return err
+	}
+	a.Language = v
+	return nil
+}
+
+// languageSelect is the language question, writing the chosen tag into v.
+func languageSelect(v *string) *huh.Select[string] {
+	opts := make([]huh.Option[string], 0, len(manifest.Languages()))
+	for _, l := range manifest.Languages() {
+		opts = append(opts, huh.NewOption(l.Label(), l.Tag))
+	}
+	return huh.NewSelect[string]().Title("Language for this client").
+		Description("Claude writes this client's reports, documents, emails and messages in it. Type to filter, ↑/↓ to move, enter to choose.").
+		Options(opts...).Height(14).Filtering(true).Value(v)
+}
+
 func askBrowsers(run func(huh.Field) error, a *reach.Answers) error {
 	current := map[string]string{}
 	var browsers []string
@@ -597,6 +626,7 @@ func runReachMenu() (string, error) {
 		huh.NewOption("Add or remove providers", reachPartProviders),
 		huh.NewOption("The browser and its profile", reachPartBrowsers),
 		huh.NewOption("The email", reachPartEmail),
+		huh.NewOption("The language", reachPartLanguage),
 	).Value(&v))).Run()
 	return v, err
 }

@@ -34,6 +34,8 @@ type AddOptions struct {
 	Cloud map[string]any
 	// ExtraScope, Browsers and OtherProviders are the scope:, browsers: and other_providers: blocks;
 	// empty leaves them out. tentaqles reach sets them.
+	// Language is the client's language tag; empty is manifest.DefaultLanguage.
+	Language       string
 	ExtraScope     []string
 	Browsers       []manifest.Browser
 	OtherProviders []string
@@ -59,6 +61,12 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
+	if o.Language == "" {
+		o.Language = manifest.DefaultLanguage
+	}
+	if _, ok := manifest.LanguageOf(o.Language); !ok {
+		return nil, fmt.Errorf("unknown language %q", o.Language)
+	}
 	services := manifest.Manifest{Email: o.Email}
 	if err := services.ValidateServices(); err != nil {
 		return nil, err
@@ -81,6 +89,7 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	m := manifest.Manifest{
 		Schema: "tentaqles-client-v2", Client: o.Name,
 		Git:        manifest.Git{Name: o.GitName, Email: o.GitEmail, User: o.GitUser, Provider: o.GitProvider},
+		Language:   o.Language,
 		Identities: map[string]manifest.Identity{},
 		Email:      o.Email,
 		Cloud:      o.Cloud, ExtraScope: o.ExtraScope, Browsers: o.Browsers, OtherProviders: o.OtherProviders,

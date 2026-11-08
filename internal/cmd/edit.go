@@ -38,6 +38,8 @@ func newChangeCmd(add bool) *cobra.Command {
 			"  git, task and mail hold one value: add replaces it, remove clears it.\n" +
 			"  cloud, team, data, browser and other are lists: add and remove change the values named.\n" +
 			"  email is the client's git email: add sets it; it cannot be removed.\n" +
+			"  language is the language Claude writes the client's documents and messages in: add sets it,\n" +
+			"  by name or tag (tentaqles add language portuguese, tentaqles add language pt-BR).\n" +
 			"A value alone works too: tentaqles add aws, tentaqles remove gh. With no value, the category's\n" +
 			"part of the form opens with the client's current answers.\n\n" +
 			"Values: git " + strings.Join(reach.Values(reach.CatGit), ", ") + " (also gh, glab, ado);\n" +
@@ -48,7 +50,7 @@ func newChangeCmd(add bool) *cobra.Command {
 			"and waits for a typed yes (--yes skips that), then rewrites the manifest and renders the client's files.\n" +
 			"It refuses to run from inside a Claude Code session.",
 		Example: "  tentaqles add git azure-devops\n  tentaqles add cloud aws\n  tentaqles remove gh --client yduqs\n" +
-			"  tentaqles add browser chrome \"Profile 2\"\n  tentaqles add email dev@acme.example\n  tentaqles add task",
+			"  tentaqles add browser chrome \"Profile 2\"\n  tentaqles add email dev@acme.example\n  tentaqles add language pt-BR\n  tentaqles add task",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if insideAgent() {
@@ -152,6 +154,10 @@ func runCategoryForm(cat string, cur *reach.Answers) (*reach.Answers, error) {
 			return nil, err
 		}
 		*field = vs
+	case reach.CatLanguage:
+		if err := askLanguage(run, &a); err != nil {
+			return nil, err
+		}
 	case reach.CatBrowser:
 		if err := askBrowsers(run, &a); err != nil {
 			return nil, err

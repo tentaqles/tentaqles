@@ -121,7 +121,7 @@ func doctorDeps(cwd string) doctor.Deps {
 	return doctor.Deps{Env: os.LookupEnv, Cwd: cwd, RunGit: gitcfg.RunGit, RunGitIn: gitcfg.RunGitIn, LookPath: exec.LookPath}
 }
 
-// renderSessionStart is the preamble: the client, its git and cloud identity, the Claude config
+// renderSessionStart is the preamble: the client, its language, its git and cloud identity, the Claude config
 // home, and what the hook checks.
 func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	ws := rep.Result.Workspace
@@ -133,6 +133,8 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	}
 	m := ws.Manifest
 	fmt.Fprintf(&b, "Client: %s\n", m.Client)
+	l := m.ClientLanguage()
+	fmt.Fprintf(&b, "Language: %s (%s). Write every report, document, email and message for this client's people (clients and teammates) in %s.\n", l.Name, l.Tag, l.Name)
 	if m.Git.Provider != "" || m.Git.User != "" || m.Git.Email != "" {
 		fmt.Fprintf(&b, "Git: %s as %s (%s)\n", m.Git.Provider, m.Git.User, m.Git.Email)
 	}

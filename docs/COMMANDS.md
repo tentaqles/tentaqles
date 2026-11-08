@@ -13,9 +13,18 @@ Makes the current folder, or `<path>`, a client. The folder's name is the client
 digits, `.`, `_`, `-`), and its parent folder is registered as a clients folder.
 
 For a new client it prints the banner (`--no-banner` or `TQ_NO_BANNER=1` for none) and asks for the client's email,
-git provider, clouds, team, data and task tools, email provider, and browsers with a profile each. A name typed
+language, git provider, clouds, team, data and task tools, email provider, and browsers with a profile each. A name typed
 under *Other* is recorded in the manifest's `other_providers`, and reach says that tentaqles can't isolate it. It
-then prints what it is about to do and waits for a typed `yes`. Nothing is written before that. Then it:
+then prints what it is about to do and waits for a typed `yes`. Nothing is written before that.
+
+The language is the one Claude writes the client's reports, documents, emails and messages to clients and
+teammates in. The list starts on English (United States), selected; the rest follow by name. Typing filters it (`por`
+leaves Portuguese (Brazil) and Portuguese (Portugal)), the arrows move through it, and enter chooses. The manifest
+stores the tag (`language: pt-BR`); the client's Claude `settings.json` gets its name as Claude Code's `language`
+setting, and each session starts with the instruction to write in it. A manifest without `language` is English
+(United States).
+
+Then it:
 
 - writes the manifest and the marker, and a folder under `~/.tentaqles/identities/<client>/` for each identity
   (Claude Code, and each provider with its own config home);
@@ -28,7 +37,7 @@ then prints what it is about to do and waits for a typed `yes`. Nothing is writt
 - adds tq's activation block to the profile of each shell it detects, when the block isn't there yet.
 
 In a folder that already is a client, reach shows the client and what it can use, then offers a menu: nothing,
-the providers, the browser and profile, or the email. The chosen part of the form opens with the current answers.
+the providers, the browser and profile, the email, or the language. The chosen part of the form opens with the current answers.
 reach lists the changes and waits for `yes`, then rewrites only those keys of the manifest (other keys and comments
 stay), makes the folders of new identities, rewrites the folder's git email when it changed, and renders the
 client's files again. A provider taken out keeps its identity folder, with any login in it, and reach names it.
@@ -46,6 +55,7 @@ folder's git email, and render the client's files again. `tentaqles set` is the 
 | Category | Holds | `add` | `remove` |
 |---|---|---|---|
 | `email` | the client's git email | sets it | refused: a client always has one |
+| `language` | the language Claude writes in for the client: a tag (`pt-BR`) or a name (`brasil`, `japanese`) | sets it | refused: a client always has one |
 | `git` | one host: `github`, `gitlab`, `bitbucket`, `azure-devops` (also `gh`, `glab`, `ado`) | replaces it | clears it |
 | `task` | one tool: `asana`, `linear`, `gh` (GitHub Projects), `azure-devops`, `trello`, `jira` | replaces it | clears it |
 | `mail` | one email provider: `gmail`, `outlook` | replaces it | clears it |
@@ -67,6 +77,7 @@ tentaqles add git azure-devops
 tentaqles remove gh --client yduqs
 tentaqles add cloud aws
 tentaqles add browser chrome "Profile 2"
+tentaqles add language pt-BR
 tentaqles add task            # opens the task part of the form
 ```
 
@@ -170,7 +181,7 @@ that replaces tq's `claude` launcher. Exits 1 when a finding is an error.
 
 ### `tentaqles list [--json]`
 
-Lists the clients: name, git email, identities and folder.
+Lists the clients: name, git email, language, identities and folder.
 
 ### `tentaqles providers list|show <id>|check [id...]|add <id>`
 

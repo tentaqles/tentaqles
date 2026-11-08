@@ -168,6 +168,10 @@ func TestSessionStart_Workspace(t *testing.T) {
 	if !strings.Contains(out, "Identity: acme") {
 		t.Fatalf("missing Identity: acme in %q", out)
 	}
+	// A manifest that names no language gets the default.
+	if !strings.Contains(out, "Language: English (United States) (en-US).") {
+		t.Fatalf("missing the default language in %q", out)
+	}
 	if !strings.Contains(out, "tentaqles doctor:") {
 		t.Fatalf("missing tentaqles doctor: block in %q", out)
 	}
@@ -245,6 +249,7 @@ func TestRenderSessionStart_Neutral(t *testing.T) {
 func TestRenderSessionStart_Workspace(t *testing.T) {
 	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{
 		Client:     "acme",
+		Language:   "pt-BR",
 		Git:        manifest.Git{Provider: "github", User: "acme-bot", Email: "dev@acme.com"},
 		Identities: map[string]manifest.Identity{"claude": {}, "az": {}},
 		Cloud:      map[string]any{"provider": "azure", "also": []any{"aws"}},
@@ -252,6 +257,7 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 	rep := doctor.CwdReport{Result: resolve.Result{Workspace: ws}}
 	got := renderSessionStart(rep, "/home/acme/.tentaqles/identities/acme/claude")
 	want := "Client: acme\n" +
+		"Language: Portuguese (Brazil) (pt-BR). Write every report, document, email and message for this client's people (clients and teammates) in Portuguese (Brazil).\n" +
 		"Git: github as acme-bot (dev@acme.com)\n" +
 		"Cloud: azure, aws\n" +
 		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude\n" +

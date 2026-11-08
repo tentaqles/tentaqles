@@ -34,7 +34,9 @@ var (
 
 // Answers is one run of the form. An empty field or list is a skipped question.
 type Answers struct {
-	Email         string
+	Email string
+	// Language is the client's language tag (manifest.Languages).
+	Language      string
 	Git           string
 	Clouds        []string
 	Team          []string
@@ -75,6 +77,9 @@ func ValidateName(s string) error {
 func (a *Answers) Validate() error {
 	if err := ValidateEmail(a.Email); err != nil {
 		return err
+	}
+	if _, ok := manifest.LanguageOf(a.Language); a.Language != "" && !ok {
+		return fmt.Errorf("unknown language %q", a.Language)
 	}
 	for _, s := range a.Other {
 		if err := ValidateName(s); err != nil {
@@ -142,7 +147,7 @@ func (a *Answers) AddOptions(base, name, gitName string) (workspace.AddOptions, 
 	}
 	sort.Strings(ids)
 	o := workspace.AddOptions{
-		Base: base, Name: name, GitName: gitName, GitEmail: strings.TrimSpace(a.Email), GitProvider: a.Git,
+		Base: base, Name: name, GitName: gitName, GitEmail: strings.TrimSpace(a.Email), GitProvider: a.Git, Language: a.Language,
 		Identities: ids, Cloud: cloud, ExtraScope: scope, Browsers: a.Browsers, OtherProviders: a.Other,
 	}
 	if a.EmailProvider != "" {

@@ -5,6 +5,14 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **Each client has a language.** `tentaqles reach` asks for it after the email, from a list that starts on English
+  (United States), then every language by name; typing filters the list (`por` leaves the Portuguese ones) and the
+  arrows move through it. The manifest stores the tag (`language: pt-BR`). The client's Claude `settings.json` gets
+  Claude Code's `language` setting, and each session starts with the instruction to write the client's reports,
+  documents, emails and messages in that language. `tentaqles add language pt-BR` (or a name: `brasil`,
+  `japanese`) changes it, reach's menu offers it, and `tentaqles list` shows it. A manifest without `language` is
+  English (United States).
+
 ## [0.12.0] - 2026-11-08
 
 Tentaqles is an identity isolator for developers who work for several clients: one folder per client, and a terminal

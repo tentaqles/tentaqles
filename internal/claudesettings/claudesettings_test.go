@@ -134,3 +134,19 @@ func TestBaselineEnvKeepsReviewsOffOpus(t *testing.T) {
 		}
 	}
 }
+
+// The language follows the manifest; one the user set before tq wrote any stays theirs.
+func TestApplyLanguage(t *testing.T) {
+	next, owned := Apply(map[string]any{}, Managed{Language: "Portuguese (Brazil)"}, Owned{})
+	if next["language"] != "Portuguese (Brazil)" || !owned.Language {
+		t.Fatalf("%v %+v", next, owned)
+	}
+	next, owned = Apply(next, Managed{Language: "Japanese"}, owned)
+	if next["language"] != "Japanese" || !owned.Language {
+		t.Fatalf("a change of language: %v", next)
+	}
+	mine := map[string]any{"language": "klingon"}
+	if next, owned := Apply(mine, Managed{Language: "Japanese"}, Owned{}); next["language"] != "klingon" || owned.Language {
+		t.Fatalf("the user's language was replaced: %v", next)
+	}
+}
