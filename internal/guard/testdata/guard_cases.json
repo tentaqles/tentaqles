@@ -1,5 +1,5 @@
 {
-  "_doc": "Canonical guard suite. Consumed by internal/guard/guard_test.go and plugin/tests/test_identity_guard.py. Keep 20 cases. Fix round 1: replaced 'gcloud family bq on gcp ws' with a chained-git case per review finding #2 (chained git segments must all be evaluated for read-only/remote-mutation, not just the first).",
+  "_doc": "Canonical guard suite. Consumed by internal/guard/guard_test.go. Chained git segments are all evaluated for read-only and remote-mutation, not just the first.",
   "cases": [
     {"name":"plain ls allowed","command":"ls -la","client":"acme","expect":{"tq":{"block":false},"fallback":{"block":false}}},
     {"name":"blocked exact","command":"gh pr merge 12","client":"acme","blocked":["gh "],"expect":{"tq":{"block":true,"rule":"blocked-command"},"fallback":{"block":true}}},

@@ -2,8 +2,7 @@ id: slack
 name: Slack
 category: chat
 docs: https://docs.slack.dev/ai/mcp-server
-# MCP only: tq never reads Slack itself (spec B §3). Onboarding sets the connector up and doctor
-# checks that the identity's .claude.json lists it.
+# MCP only: no CLI to isolate.
 cli: null
 notes: "No CLI. A Claude session reaches Slack through an MCP server or connector added in that client's Claude config, signed in with /mcp."
 # match: what a client's terminal hides when this provider is outside the client's scope: its

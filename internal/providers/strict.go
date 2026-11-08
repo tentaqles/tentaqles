@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Strict decoding (QA round 3, item 8): a key a provider file's schema does not have is an
+// Strict decoding: a key a provider file's schema does not have is an
 // error naming its line and column and the nearest known key, so a typo such as
 // `match: { executable: [...] }` (one list silently empty) cannot load.
 

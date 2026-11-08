@@ -15,7 +15,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The reference scenario, round 2, at the PATH: through a folder shared with other
+// The reference scenario at the PATH: through a folder shared with other
 // tools (the mask answers), with aws.exe spelled out, and through cmd.exe's real hook with a
 // 3.5 KB and a 9 KB PATH; and layer 4 judging an MCP server by its config entry.
 

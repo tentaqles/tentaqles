@@ -22,7 +22,7 @@ import (
 var unpinnedRe = regexp.MustCompile(`(?i)\b(npx|bunx|pnpm\s+dlx|uvx)\b[^"]*?(@latest\b|\s-y\s+(@?[a-z0-9._-]+/)?[a-z0-9._-]+(\s|"|$))`)
 
 // claudeChecks reports identity-level Claude config problems for one
-// trusted workspace: settings drift from `tentaqles settings render`, and unpinned
+// client: settings drift from `tentaqles settings render`, and unpinned
 // packages in settings.json / .claude.json.
 func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
 	dir := paths.IdentityDir(w.Name, "claude")
@@ -46,7 +46,7 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 	}
 }
 
-// guardHookCheck reports a trusted workspace whose Claude sessions in its folder would start with no
+// guardHookCheck reports a client whose Claude sessions in its folder would start with no
 // tentaqles guard: the check tentaqles run makes before it starts claude, on the same
 // CLAUDE_CONFIG_DIR and the folder's own project settings, with the same fix line.
 func guardHookCheck(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {

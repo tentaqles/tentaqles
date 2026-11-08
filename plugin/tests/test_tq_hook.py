@@ -110,8 +110,7 @@ def test_tq_hook_passes_a_decision_through(tmp_path, status):
 @needs_bash
 @pytest.mark.parametrize("tool", ["Bash", "PowerShell", "Read", "Write", "mcp__x__y", ""])
 def test_tq_hook_denies_every_tool_when_tq_is_missing(tmp_path, tool):
-    """With no tq nothing can judge a call, so every tool is denied. This is stricter than the old
-    Python fallback, which let file tools through."""
+    """With no tq nothing can judge a call, so every tool is denied."""
     p = run("pre-tool-use", env_with(tmp_path), payload=json.dumps({"tool_name": tool}))
     assert p.returncode == 2
     assert "BLOCKED [tq/guard-error]" in p.stderr and "tq is not installed" in p.stderr

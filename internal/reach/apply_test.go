@@ -96,7 +96,7 @@ func TestChange_BareValues(t *testing.T) {
 	}
 	cur.Git = "azure-devops"
 	if n, drop, err := Change(cur, false, "gh", nil); err != nil || n.Git != "azure-devops" || !slices.Equal(drop, []string{"gh"}) {
-		t.Fatalf("remove gh implied by the manifest: %+v %v %v", n, drop, err)
+		t.Fatalf("remove gh no answer holds: %+v %v %v", n, drop, err)
 	}
 	if _, _, err := Change(cur, true, "fortran", nil); err == nil {
 		t.Fatal("an unknown provider was added")
@@ -106,28 +106,28 @@ func TestChange_BareValues(t *testing.T) {
 	}
 }
 
-// The yduqs case: an old manifest with no identities: list implies claude and gh. Dropping gh writes
-// the list out without it, and the rest of the file stays.
-const oldManifest = `schema: tentaqles-client-v1
+// A client on Azure DevOps with gh listed by hand: tentaqles remove gh drops it, and the rest of the
+// file stays.
+const handManifest = `schema: tentaqles-client-v2
 client: yduqs
 git:
     provider: azure-devops
     email: me@yduqs.example
+identities:
+    claude: {}
+    gh: {}
 cloud:
     provider: azure
     expected: DEV-BI # kept by hand
 `
 
-func TestEdit_DropsAnImpliedIdentity(t *testing.T) {
-	before := AnswersFrom(parse(t, []byte(oldManifest)))
-	if !slices.Contains(parse(t, []byte(oldManifest)).Scope(), "gh") {
-		t.Fatal("the fixture should imply gh")
-	}
+func TestEdit_DropsAHandListedIdentity(t *testing.T) {
+	before := AnswersFrom(parse(t, []byte(handManifest)))
 	next, drop, err := Change(before, false, "gh", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, changes, _, removed, err := Edit([]byte(oldManifest), before, next, drop...)
+	out, changes, _, removed, err := Edit([]byte(handManifest), before, next, drop...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestEdit_DropsAnImpliedIdentity(t *testing.T) {
 			t.Errorf("%s left the scope: %v", id, m.Scope())
 		}
 	}
-	if !slices.Equal(removed, []string{"gh"}) || !strings.Contains(strings.Join(changes, "|"), "identities written out") {
+	if !slices.Equal(removed, []string{"gh"}) || !strings.Contains(strings.Join(changes, "|"), "removed gh") {
 		t.Errorf("removed %v changes %v", removed, changes)
 	}
 	if !strings.Contains(string(out), "# kept by hand") || !strings.Contains(string(out), "DEV-BI") {
@@ -152,20 +152,19 @@ func TestEdit_DropsAnImpliedIdentity(t *testing.T) {
 	}
 }
 
-// A change of the git host on an old manifest writes the implied identities out too, so moving from
-// GitHub to Azure DevOps takes gh away.
-func TestEdit_GitHostChangeOnAnOldManifest(t *testing.T) {
-	old := strings.Replace(oldManifest, "provider: azure-devops", "provider: github", 1)
-	before := AnswersFrom(parse(t, []byte(old)))
+// Moving the git host from GitHub to Azure DevOps takes gh away and adds azure-devops.
+func TestEdit_GitHostChange(t *testing.T) {
+	src := strings.Replace(handManifest, "provider: azure-devops", "provider: github", 1)
+	before := AnswersFrom(parse(t, []byte(src)))
 	next, _, err := Change(before, true, CatGit, []string{"azure-devops"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _, _, removed, err := Edit([]byte(old), before, next)
+	out, _, _, removed, err := Edit([]byte(src), before, next)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m := parse(t, out); slices.Contains(m.Scope(), "gh") || !slices.Contains(removed, "gh") {
-		t.Fatalf("gh stayed: scope %v removed %v", m.Scope(), removed)
+	if m := parse(t, out); slices.Contains(m.Scope(), "gh") || !slices.Contains(removed, "gh") || !slices.Contains(m.Scope(), "azure-devops") {
+		t.Fatalf("scope %v removed %v", m.Scope(), removed)
 	}
 }

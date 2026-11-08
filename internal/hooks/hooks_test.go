@@ -28,7 +28,7 @@ func TestBlock_Contents(t *testing.T) {
 		if !strings.Contains(b, "# <<< tq <<<") {
 			t.Errorf("%s: missing end marker", sh)
 		}
-		if !strings.Contains(b, "tentaqles activate "+string(sh)) || strings.Contains(b, "tq activate") {
+		if !strings.Contains(b, "tentaqles activate "+string(sh)) {
 			t.Errorf("%s: the block must call tentaqles activate", sh)
 		}
 		if !strings.Contains(b, "TQ_ENABLED") {
@@ -75,7 +75,7 @@ func TestInstall_CreatesAndIsIdempotent(t *testing.T) {
 
 func TestInstall_DetectsUnmanaged(t *testing.T) {
 	p := tempProfiles(t, "pwsh")
-	unmanaged := "Write-Host 'hi'\ntq activate pwsh | Out-String | Invoke-Expression\n"
+	unmanaged := "Write-Host 'hi'\ntentaqles activate pwsh | Out-String | Invoke-Expression\n"
 	if err := os.WriteFile(p["pwsh"], []byte(unmanaged), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -515,13 +515,13 @@ func TestWriteProfile_RestoresOnFailure(t *testing.T) {
 	}
 }
 
-// A block an older tq wrote (calling tq activate) reads as outdated, and Install rewrites it in
+// A managed block that differs from the current one reads as outdated, and Install rewrites it in
 // place: the lines around it, the CRLF line ends and the backup stay; a second Install changes
 // nothing.
-func TestInstall_UpgradesAnOldBlockInPlace(t *testing.T) {
+func TestInstall_RewritesADifferentBlockInPlace(t *testing.T) {
 	dir := t.TempDir()
 	profile := filepath.Join(dir, "Microsoft.PowerShell_profile.ps1")
-	old := "# >>> tq >>>\r\nif ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue)) { tq activate pwsh | Out-String | Invoke-Expression }\r\n# <<< tq <<<\r\n"
+	old := "# >>> tq >>>\r\nif ($env:TQ_ENABLED -ne '0' -and (Get-Command tq -ErrorAction SilentlyContinue)) { tentaqles activate pwsh | Out-String | Invoke-Expression }\r\n# <<< tq <<<\r\n"
 	before := "Set-Alias ll Get-ChildItem\r\n\r\n"
 	after := "\r\nfunction prompt-extra { 'x' }\r\n"
 	if err := os.WriteFile(profile, []byte(before+old+after), 0o644); err != nil {

@@ -21,12 +21,9 @@ const ProtectedFileName = "manifest.yaml"
 type Kind int
 
 const (
-	// KindUnknown is any other schema; Load reports the exact error.
+	// KindUnknown is any file that is not a marker.
 	KindUnknown Kind = iota
-	// KindManifest is a full manifest (tentaqles-client-v1 or -v2): the old
-	// layout, read from the root.
-	KindManifest
-	// KindMarker is the name-only marker of the protected layout.
+	// KindMarker is the name-only marker.
 	KindMarker
 )
 
@@ -51,11 +48,9 @@ func MarkerBytes(ws string) []byte {
 	return append([]byte("# tentaqles workspace marker — names only, never secrets; the manifest lives under ~/.tentaqles/identities/"+ws+"/"+ProtectedFileName+"\n"), body...)
 }
 
-// Peek reads only the top-level schema and client of the file at path and
-// classifies it, so a caller can tell a marker from a manifest before
-// deciding which file to Load. It validates nothing else: a manifest's
-// errors come from Load, a marker's client is checked by the caller against
-// the folder name.
+// Peek reads only the top-level schema and client of the file at path and tells whether it is a
+// marker. It validates nothing else: a marker's client is checked by the caller against the folder
+// name.
 func Peek(path string) (Kind, string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -65,14 +60,11 @@ func Peek(path string) (Kind, string, error) {
 	if err := yaml.Unmarshal(raw, &m); err != nil {
 		return KindUnknown, "", fmt.Errorf("parse %s: %w", path, err)
 	}
-	switch m.Schema {
-	case MarkerSchema:
-		if m.Client == "" {
-			return KindMarker, "", fmt.Errorf("%s: %w", path, ErrMarkerClient)
-		}
-		return KindMarker, m.Client, nil
-	case "tentaqles-client-v1", "tentaqles-client-v2":
-		return KindManifest, m.Client, nil
+	if m.Schema != MarkerSchema {
+		return KindUnknown, m.Client, nil
 	}
-	return KindUnknown, m.Client, nil
+	if m.Client == "" {
+		return KindMarker, "", fmt.Errorf("%s: %w", path, ErrMarkerClient)
+	}
+	return KindMarker, m.Client, nil
 }

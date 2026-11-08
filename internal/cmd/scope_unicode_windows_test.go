@@ -11,7 +11,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// QA round 3: PATH folders named ação, João and 中文 go through Windows PowerShell 5.1's and
+// PATH folders named ação, João and 中文 go through Windows PowerShell 5.1's and
 // cmd.exe's real hooks (tq prints UTF-8; the hooks read it as UTF-8 and put the console
 // encoding back): inside company-x the shared folder is kept exactly and its tools resolve,
 // the AWS folder is dropped, and leaving restores PATH byte for byte.

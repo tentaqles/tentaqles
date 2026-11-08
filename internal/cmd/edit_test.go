@@ -70,18 +70,11 @@ func TestAdd_ClientFlagAndYes(t *testing.T) {
 	}
 }
 
-// The yduqs case: an old manifest implies gh; tentaqles remove gh takes it out of the scope and writes
-// the identities out, keeping the rest of the file.
-func TestRemove_ImpliedGitHubIdentity(t *testing.T) {
+// A client on Azure DevOps with gh listed by hand: tentaqles remove gh takes it out of the scope,
+// keeping the rest of the file.
+func TestRemove_HandListedIdentity(t *testing.T) {
 	base := newBase(t)
-	root := writeClient(t, base, "yduqs", "git: { provider: azure-devops, email: me@yduqs.example }\ncloud: { provider: azure }\nstack: [spark] # kept\n")
-	if err := os.WriteFile(paths.ManifestPath("yduqs"), bytes.Replace(mustRead(t, paths.ManifestPath("yduqs")),
-		[]byte("tentaqles-client-v2"), []byte("tentaqles-client-v1"), 1), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(readManifest(t, "yduqs").Scope(), "gh") {
-		t.Fatal("the fixture should imply gh")
-	}
+	root := writeClient(t, base, "yduqs", "git: { provider: azure-devops, email: me@yduqs.example }\nidentities: { claude: {}, gh: {} }\ncloud: { provider: azure }\nstack: [spark] # kept\n")
 	chdir(t, root)
 	out, err := runChange(t, "yes\n", "remove", "gh")
 	if err != nil {

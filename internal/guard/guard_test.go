@@ -77,7 +77,7 @@ func TestStartsWith(t *testing.T) {
 		{"gh", "gh", true},
 		{"git push --force", "git push --force", true},
 		{"git push --force-with-lease", "git push --force", false},
-		// Fix round 1 addendum: separators must also catch newlines and
+		// Separators must also catch newlines and
 		// common command-substitution/grouping wrappers.
 		{"echo x\ngit push", "git", true},
 		{"$(gh api user)", "gh", true},
@@ -110,7 +110,7 @@ func TestRemoteMutationChainedAndWrapped(t *testing.T) {
 	}
 }
 
-// Fix round 2, finding 2: the single `&` (background) is a separator too.
+// The single `&` (background) is a separator too.
 func TestSingleAmpersandIsSeparator(t *testing.T) {
 	for _, c := range []struct {
 		cmd, prefix string
@@ -137,7 +137,7 @@ func TestSingleAmpersandIsSeparator(t *testing.T) {
 	}
 }
 
-// Fix round 2, finding 3: inline identity overrides are blocked outright.
+// Inline identity overrides are blocked outright.
 func TestInlineIdentityOverride(t *testing.T) {
 	for _, c := range []string{
 		"git -c user.email=x@y.z commit -m x",

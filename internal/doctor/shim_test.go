@@ -2,20 +2,14 @@ package doctor
 
 import "testing"
 
-// theShimThatBitUs is the real ~/.cli-identities/shims/claude.cmd from the
-// machine this check was written for. It looks harmless -- it asks tq for the
-// identity -- but it asks for the identity of the *current directory*, so it
-// silently replaced the workspace `tq login <ws> claude` had already chosen.
+// theShimThatBitUs is a claude.cmd shim earlier on PATH. It looks harmless -- it
+// asks tq for the identity -- but it asks for the identity of the *current
+// directory*, so it silently replaces the identity `tentaqles run` already chose.
 const theShimThatBitUs = `@echo off
 setlocal
-if "%TQ_ENABLED%"=="0" goto legacy
 rem tq: resolve terminal identity for %CD% (CLAUDE_CONFIG_DIR, GH_CONFIG_DIR, AZURE_CONFIG_DIR, ...)
 for /f "usebackq delims=" %%L in ` + "`" + `"%LOCALAPPDATA%\tentaqles\bin\tq.exe" env --shell cmd` + "`" + ` do %%L
-goto run
-:legacy
-call "%~dp0_ctx.cmd"
-if "%CTX%"=="dirtybird" set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-dbi"
-:run
+if "%CLAUDE_CONFIG_DIR%"=="" set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-work"
 "%USERPROFILE%\.local\bin\claude.exe" --dangerously-skip-permissions %*
 endlocal
 `
@@ -30,8 +24,8 @@ func TestShimShadow(t *testing.T) {
 		wantWhy  string
 	}{
 		{
-			name:     "the real shim from the machine this was written for",
-			resolved: `C:\Users\x\.cli-identities\shims\claude.cmd`,
+			name:     "a shim that asks tq, then sets the variable itself",
+			resolved: `C:\Users\x\shims\claude.cmd`,
 			body:     theShimThatBitUs,
 			vars:     []string{"CLAUDE_CONFIG_DIR"},
 			want:     true,

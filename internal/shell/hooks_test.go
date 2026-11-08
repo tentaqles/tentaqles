@@ -309,8 +309,8 @@ func TestHook_PowerShellFunctions(t *testing.T) {
 
 // An alias named claude (or codex) defined before the hook must not abort
 // it: bash and zsh alias-expand the name in `claude() {`, which made the
-// whole block a syntax error, prompt hook included (final review C1). The
-// tq path is quoted per shell, so a quote or space in it is data (m5).
+// whole block a syntax error, prompt hook included. The
+// tq path is quoted per shell, so a quote or space in it is data.
 func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 	b := findBash()
 	if b == "" {
@@ -375,7 +375,7 @@ func TestBinWordQuotesPerShell(t *testing.T) {
 
 // A simple PowerShell function's $args never holds a literal --, so the tq
 // function puts it back before the command word of tentaqles run and tq dotenv run
-// (final review M1), live through the function.
+// live through the function.
 func TestHook_PowerShellRebuildsDash(t *testing.T) {
 	poisonProfiles(t)
 	sh, exe := "pwsh", ""

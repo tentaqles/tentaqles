@@ -242,7 +242,7 @@ func reachDir(args []string) (string, error) {
 }
 
 // reachShowExisting reports a folder that already is a client and offers to change its setup
-// through the same form (IDEATION: the menu differs for an existing client).
+// through the same form.
 func reachShowExisting(c *cobra.Command, name string) error {
 	w := c.OutOrStdout()
 	fmt.Fprintln(w, "This folder is already a client.")

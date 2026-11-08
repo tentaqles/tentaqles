@@ -40,7 +40,7 @@ Default (UTF-8 terminals; 77 columns, fits an 80-column cmd.exe window):
    ██║   ███████╗██║ ╚████║   ██║   ██║  ██║╚██████╔╝███████╗███████╗███████║
    ╚═╝   ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚══▀▀═╝ ╚══════╝╚══════╝╚══════╝
 
-  tentaqles 0.1.0  ·  identity: dirtybird  ·  guard: on
+  tentaqles 0.12.0  ·  identity: dirtybird
   C:\clients\dirtybird
 ```
 

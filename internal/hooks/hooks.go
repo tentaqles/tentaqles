@@ -317,7 +317,7 @@ func StatusOf(sh Shell, p Profiles) Status {
 		st.State = "installed"
 	case hasStart != hasEnd:
 		st.State = "corrupt"
-	case strings.Contains(content, "tentaqles activate "+string(sh)) || strings.Contains(content, "tq activate "+string(sh)):
+	case strings.Contains(content, "tentaqles activate "+string(sh)):
 		st.State = "present (unmanaged)"
 	default:
 		st.State = "missing"
@@ -493,7 +493,7 @@ func blockText(content string) string {
 	return c[i:end]
 }
 
-// upgradeBlock replaces an older managed block of sh's profile with the current one, in place:
+// upgradeBlock replaces a managed block that differs from the current one with the current one, in place:
 // the rest of the profile, its line ends and its encoding stay as they were. The first change of a
 // profile is backed up, as Install does.
 func upgradeBlock(sh Shell, profile string) (Status, error) {

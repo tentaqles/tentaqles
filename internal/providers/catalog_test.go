@@ -12,8 +12,7 @@ func TestCatalog_ExpectedIDs(t *testing.T) {
 		"vercel", "kube", "terraform", "npm", "jira", "asana", "linear",
 		"claude", "codex", "gemini", "cursor", "opencode",
 	}
-	// The catalog reuses legacy short ids for a few providers instead of
-	// the long-form names above (see task-2 brief): github->gh, azure->az,
+	// The catalog names a few providers by their CLI: github->gh, azure->az,
 	// gcp->gcloud, digitalocean->doctl, gitlab->glab.
 	rename := map[string]string{
 		"github":       "gh",
@@ -40,7 +39,7 @@ func TestCatalog_ExpectedIDs(t *testing.T) {
 		}
 	}
 
-	legacy := map[string]map[string]string{
+	homes := map[string]map[string]string{
 		"claude": {"CLAUDE_CONFIG_DIR": "{dir}"},
 		"codex":  {"CODEX_HOME": "{dir}"},
 		// GEMINI_CLI_HOME alone moves the displayed account and leaves the
@@ -56,10 +55,10 @@ func TestCatalog_ExpectedIDs(t *testing.T) {
 		"kube":   {"KUBECONFIG": "{dir}/config"},
 		"npm":    {"NPM_CONFIG_USERCONFIG": "{dir}/npmrc"},
 	}
-	for id, want := range legacy {
+	for id, want := range homes {
 		p, ok := c.byID[id]
 		if !ok {
-			t.Fatalf("legacy provider %q not found", id)
+			t.Fatalf("provider %q not found", id)
 		}
 		if !reflect.DeepEqual(p.Identity.Env, want) {
 			t.Errorf("provider %q Identity.Env = %v, want %v", id, p.Identity.Env, want)

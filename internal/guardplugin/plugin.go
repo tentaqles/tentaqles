@@ -23,8 +23,8 @@ func isPluginDir(dir string) bool {
 // plugins/installed_plugins.json names for tentaqles (the user-scope entry
 // first), when that folder holds .claude-plugin/plugin.json; otherwise the
 // highest version under <claudeDir>/plugins/cache/<marketplace>/tentaqles/
-// (Claude Code keeps old versions in the cache, and a text sort puts 0.10.0
-// before 0.9.0). "" when none is installed.
+// (Claude Code keeps several versions in the cache, compared by number:
+// a text sort would put 1.10.0 before 1.9.0). "" when none is installed.
 func PluginRoot(claudeDir string) string {
 	if p := installedRoot(claudeDir); p != "" {
 		return p

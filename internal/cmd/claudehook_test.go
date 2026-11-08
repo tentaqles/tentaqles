@@ -272,7 +272,7 @@ func containsStr(xs []string, s string) bool {
 	return false
 }
 
-// Fix round 2, finding 1: an oversized payload is a protocol violation.
+// An oversized payload is a protocol violation.
 // pre-tool-use must fail closed instead of silently truncating (which would
 // make the JSON unparseable and therefore "allow").
 func TestPreToolUse_OversizedPayloadFailsClosed(t *testing.T) {
@@ -315,7 +315,7 @@ func TestSessionStart_OversizedPayloadExitsZero(t *testing.T) {
 	}
 }
 
-// Fix round 2, finding 11: dropped gh env keys match case-insensitively.
+// Dropped gh env keys match case-insensitively.
 func TestGHEnv_DropsKeysCaseInsensitively(t *testing.T) {
 	base := []string{"Gh_Token=t", "github_token=t2", "gH_HoSt=h", "PATH=/bin"}
 	got := ghEnv(base, map[string]string{"GH_CONFIG_DIR": "/cfg"})

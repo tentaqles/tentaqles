@@ -7,7 +7,7 @@ import (
 )
 
 // TestScope: the provider scope is derived from what an existing manifest already declares
-// (the identities block, or claude+gh for a v1 manifest, the cloud block, the git provider,
+// (the identities block, the cloud block, the git provider,
 // the email provider) plus the optional scope: list;
 // sorted, each id once.
 func TestScope(t *testing.T) {
@@ -15,7 +15,7 @@ func TestScope(t *testing.T) {
 		name, body string
 		want       []string
 	}{
-		{"v1 defaults", "schema: tentaqles-client-v1\nclient: x\ncloud: { provider: azure }\n", []string{"az", "claude", "gh"}},
+		{"cloud", "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {} }\ncloud: { provider: azure }\n", []string{"az", "claude"}},
 		{"identities and cloud.also", "schema: tentaqles-client-v2\nclient: x\nidentities: { claude: {}, az: {} }\ncloud: { provider: azure, also: [aws] }\n", []string{"aws", "az", "claude"}},
 		{"git provider", "schema: tentaqles-client-v2\nclient: x\ngit: { provider: azure-devops }\nidentities: { az: {}, claude: {} }\n", []string{"az", "azure-devops", "claude"}},
 		{"git provider gitlab", "schema: tentaqles-client-v2\nclient: x\ngit: { provider: gitlab }\nidentities: { claude: {} }\n", []string{"claude", "glab"}},

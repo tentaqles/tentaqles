@@ -125,7 +125,7 @@ func TestRun_GitWorkspaceFileTampered(t *testing.T) {
 	}
 }
 
-// --- migration drift codes (tq migrate) -----------------------------------
+// --- git and identity findings ----------------------------------------------
 
 func findingsWith(fs []Finding, code string) []Finding {
 	var out []Finding

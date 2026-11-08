@@ -10,9 +10,8 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// Under a harness too (a shell Claude Code started from a launch of an older tq, which set
-// TQ_WS and no state) a missing state is lost: QA round 3 found company-x's homes and mask
-// carried into awsco otherwise.
+// Under a harness too (a shell that has TQ_WS and no state) a missing state is lost:
+// otherwise one client's homes and mask would carry into the next.
 func TestLostState_HarnessMissingStateIsLost(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	sh := map[string]string{"TQ_WS": "acme"}
@@ -125,7 +124,7 @@ func TestLostState_FailsClosed(t *testing.T) {
 	}
 }
 
-// A state that decodes but does not record what tq set (an older or hand-written one) leaves
+// A state that decodes but does not record what tq set (one edited by hand) leaves
 // no tq variable behind, even through an identity it re-enters; a user's own value of a
 // catalog variable is never touched, and a full state is never swept.
 func TestUnrecorded(t *testing.T) {
