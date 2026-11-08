@@ -5,6 +5,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-11-08
+
 - **Docs rebuilt.** The README says what tentaqles is for, shows it working, and gets you to a first client in three
   steps. `docs/` has an index, a getting-started tutorial, a how-it-works page, troubleshooting for every doctor
   finding, and references for commands, the manifest, providers and the Claude Code hook, all checked against the
