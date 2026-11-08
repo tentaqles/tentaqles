@@ -36,6 +36,45 @@ client's files again. A provider taken out keeps its identity folder, with any l
 reach refuses to run from inside a Claude Code session, and without a terminal on stdin and stdout: it is the
 developer's command.
 
+### `tentaqles add <category> [value...]`, `tentaqles remove <category> [value...]`
+
+Change one part of a client's setup without the menu. They work on the current folder's client, or on
+`--client <name or folder>`, list every change, and wait for a typed `yes` (`--yes`, `-y`, skips it). Then they do
+what reach's menu does: rewrite only those keys of the manifest, make the folders of new identities, update the
+folder's git email, and render the client's files again. `tentaqles set` is the same as `tentaqles add`.
+
+| Category | Holds | `add` | `remove` |
+|---|---|---|---|
+| `email` | the client's git email | sets it | refused: a client always has one |
+| `git` | one host: `github`, `gitlab`, `bitbucket`, `azure-devops` (also `gh`, `glab`, `ado`) | replaces it | clears it |
+| `task` | one tool: `asana`, `linear`, `gh` (GitHub Projects), `azure-devops`, `trello`, `jira` | replaces it | clears it |
+| `mail` | one email provider: `gmail`, `outlook` | replaces it | clears it |
+| `cloud` | a list: `azure`, `aws`, `gcp` (also `az`, `gcloud`); the first is the primary | adds the values | removes them; the next cloud becomes the primary |
+| `team` | a list: `teams`, `slack`, `discord`, `zoom`, `google-meet` | adds | removes |
+| `data` | a list: `databricks`, `snowflake`, `colab` | adds | removes |
+| `browser` | a list of browsers, each with a profile: `chrome`, `edge` | `add browser chrome "Profile 2"` adds it, or changes its profile (default `Default`) | removes it |
+| `other` | names tentaqles does not manage | adds | removes |
+
+A value alone finds its category: `tentaqles add aws`, `tentaqles remove slack`. `tentaqles remove <provider>`
+also takes out a provider no answer holds, such as a `gh` that an old manifest without an `identities:` list
+implies, or an identity listed by hand. With no value, `add <category>` (and `remove` of a list category) opens that
+category's part of the form with the current answers ticked.
+
+Adding a provider with its own login prints the next step, `tentaqles login <client> <cli>`. Removing one keeps its
+identity folder, with any login in it, and says where it is. When a manifest has no `identities:` list (the oldest
+format, which implies `claude` and `gh`), the first change writes that list out, so the git host really controls
+`gh`.
+
+```
+tentaqles add git azure-devops
+tentaqles remove gh --client yduqs
+tentaqles add cloud aws
+tentaqles add browser chrome "Profile 2"
+tentaqles add task            # opens the task part of the form
+```
+
+Like reach, they refuse to run from inside a Claude Code session.
+
 ### `tentaqles login <client> <cli>`
 
 Runs the CLI's own login with the client's config home, so the credentials land in

@@ -6,6 +6,16 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
+- **`tentaqles add` and `tentaqles remove`** change one part of a client's setup without reach's menu:
+  `tentaqles add git azure-devops`, `tentaqles add cloud aws`, `tentaqles remove gh`, `tentaqles add browser chrome
+  "Profile 2"`, `tentaqles set email dev@acme.example`. Categories: email, git, cloud, team, data, task, mail,
+  browser, other; a value alone finds its category. With no value, the category's part of the form opens. They work
+  on the current folder's client or `--client`, ask for a typed `yes` (`--yes` skips it), and refuse to run inside
+  Claude Code.
+- A manifest with no `identities:` list (the oldest format) implies `claude` and `gh`. The first change through
+  reach, `add` or `remove` now writes that list out, so changing the git host (or `tentaqles remove gh`) really takes
+  `gh` out of the client.
+
 ## [0.10.0] - 2026-11-08
 
 Tentaqles is now an identity isolator and nothing more. The work done on top of 0.9.0 toward an agent guard and

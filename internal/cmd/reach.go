@@ -268,17 +268,25 @@ func reachShowExisting(c *cobra.Command, name string) error {
 // folder's git at a new email, and renders the client's files again. Nothing is written before the
 // yes.
 func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string) error {
-	w := c.OutOrStdout()
 	cur := reach.AnswersFrom(ws.Manifest)
 	next, err := reachEditForm(part, cur)
 	if err != nil {
 		return err
 	}
+	return applyEdit(c, "tentaqles reach", ws, cur, next, nil, false)
+}
+
+// applyEdit is the shared tail of reach's menu and of tentaqles add and remove: it builds the edited
+// manifest (reach.Edit), lists every change and asks for the typed yes (skipped with yes), then
+// rewrites the manifest, makes the new identities' folders, points the folder's git at a new email and
+// renders the client's files again. Nothing is written before the yes.
+func applyEdit(c *cobra.Command, what string, ws *resolve.Workspace, cur, next *reach.Answers, drop []string, yes bool) error {
+	w := c.OutOrStdout()
 	raw, err := os.ReadFile(ws.ManifestPath)
 	if err != nil {
 		return err
 	}
-	out, changes, added, removed, err := reach.Edit(raw, cur, next)
+	out, changes, added, removed, err := reach.Edit(raw, cur, next, drop...)
 	if err != nil {
 		return err
 	}
@@ -286,9 +294,11 @@ func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string) error {
 		fmt.Fprintln(w, "Nothing changed.")
 		return nil
 	}
-	about := fmt.Sprintf("tentaqles reach: about to change the client %s (%s) and rewrite its manifest %s",
-		ws.Name, strings.Join(changes, "; "), ws.ManifestPath)
-	if err := confirm(c, about); err != nil {
+	about := fmt.Sprintf("%s: about to change the client %s (%s) and rewrite its manifest %s",
+		what, ws.Name, strings.Join(changes, "; "), ws.ManifestPath)
+	if yes {
+		fmt.Fprintln(w, about)
+	} else if err := confirm(c, about); err != nil {
 		return err
 	}
 	if err := writeFileAtomic(ws.ManifestPath, out, 0o600); err != nil {
@@ -309,13 +319,16 @@ func reachEdit(c *cobra.Command, ws *resolve.Workspace, part string) error {
 		return err
 	}
 	renderIdentityFiles(c, updated)
+	for _, id := range added {
+		fmt.Fprintf(w, "%s has its own login folder now: log in with tentaqles login %s %s\n", id, ws.Name, id)
+	}
 	for _, id := range removed {
 		fmt.Fprintf(w, "%s is no longer in this client's scope. Its folder %s stays, with any login in it; delete it if you no longer need it.\n",
 			id, paths.IdentityDir(ws.Name, id))
 	}
 	fmt.Fprintf(w, "\n%s is updated. It can use: %s\n", ws.Name, strings.Join(updated.Manifest.Scope(), ", "))
 	reachWarnOther(c, updated.Manifest)
-	fmt.Fprintf(w, "Open a new terminal in %s, and restart its claude sessions, for the change to apply.\n", ws.Root)
+	fmt.Fprintf(w, "Open a new terminal in %s (or cd out of it and back in), and restart its claude sessions, for the change to apply.\n", ws.Root)
 	return nil
 }
 

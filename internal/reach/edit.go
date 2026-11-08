@@ -97,10 +97,20 @@ func (a *Answers) scopeIDs() []string {
 // Edit is the manifest raw with what the form owns changed from before to after: git.email and
 // git.provider, the identities the providers bring, the cloud block's provider and also, the form's ids
 // in scope:, email.provider, browsers: and other_providers:. Every other key, value and comment stays.
-// It returns the new bytes, one line per change, and the identities added and removed. No change gives
-// raw back and no lines. The new manifest is checked by manifest.Parse before it is returned.
-func Edit(raw []byte, before, after *Answers) (out []byte, changes, added, removed []string, err error) {
+// drop names providers to take out of the client that no answer owns (an identity listed by hand, or
+// the gh a manifest without an identities: list implies): their identity entry and their scope: entry
+// go. It returns the new bytes, one line per change, and the identities added and removed. No change
+// gives raw back and no lines. The new manifest is checked by manifest.Parse before it is returned.
+//
+// A manifest with no identities: list (the oldest format) implies claude and gh. When Edit changes
+// anything, it writes that list out first, so the client's identities are what the file says and a
+// later change of the git host really adds or takes away gh.
+func Edit(raw []byte, before, after *Answers, drop ...string) (out []byte, changes, added, removed []string, err error) {
 	if err := after.Validate(); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	current, err := manifest.Parse(raw, "the manifest")
+	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 	var doc yaml.Node
@@ -130,7 +140,43 @@ func Edit(raw []byte, before, after *Answers) (out []byte, changes, added, remov
 	// identity entry (else the identity alone would keep it in the scope), and a newly chosen one with
 	// a login of its own gains one. claude, and every provider the form does not own, stay as they are.
 	oldIDs, newIDs := before.providerIDs(), after.providerIDs()
+	implicit := false
+	if n := lookup(top, "identities"); n == nil || n.Kind != yaml.MappingNode || len(n.Content) == 0 {
+		implicit = true
+		n := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		for _, id := range current.IdentityNames() {
+			n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: id},
+				&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: yaml.FlowStyle})
+		}
+		setNode(top, "identities", n)
+	}
 	idents := mapping(top, "identities")
+	for _, id := range drop {
+		dropped := false
+		if lookup(idents, id) != nil {
+			deleteKey(idents, id)
+			removed = append(removed, id)
+			dropped = true
+		}
+		if s := lookup(top, "scope"); s != nil && s.Kind == yaml.SequenceNode {
+			kept := s.Content[:0]
+			for _, e := range s.Content {
+				if e.Value == id {
+					dropped = true
+					continue
+				}
+				kept = append(kept, e)
+			}
+			s.Content = kept
+			if len(s.Content) == 0 {
+				deleteKey(top, "scope")
+			}
+		}
+		if !dropped {
+			return nil, nil, nil, nil, fmt.Errorf("%s is not among this client's identities or its scope: list", id)
+		}
+		changes = append(changes, "removed "+id)
+	}
 	for _, id := range oldIDs {
 		if !slices.Contains(newIDs, id) && lookup(idents, id) != nil {
 			deleteKey(idents, id)
@@ -215,6 +261,9 @@ func Edit(raw []byte, before, after *Answers) (out []byte, changes, added, remov
 
 	if len(changes) == 0 {
 		return raw, nil, nil, nil, nil
+	}
+	if implicit {
+		changes = append(changes, "identities written out (the manifest had no identities: list, which implies claude and gh)")
 	}
 	if len(added) > 0 {
 		changes = append(changes, "identities added: "+strings.Join(added, ", "))
