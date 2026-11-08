@@ -55,6 +55,28 @@ func recordFakeBrowser() {
 	}
 }
 
+// fakeBinDir is a new folder named fakebin (isFakeBrowser knows a fake by it), outside
+// t.TempDir: a fake started detached may still be running when the test ends, Windows cannot
+// delete a running program, and t.TempDir's cleanup would fail the test. Its own cleanup waits
+// and retries.
+func fakeBinDir(t *testing.T) string {
+	t.Helper()
+	top, err := os.MkdirTemp("", "tq-fake-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 100 && os.RemoveAll(top) != nil; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	dir := filepath.Join(top, "fakebin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 type fakeRun struct {
 	Exe  string   `json:"exe"`
 	Args []string `json:"args"`
@@ -74,21 +96,7 @@ func installFakeBrowsers(t *testing.T, missing ...string) *fakeBrowsers {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Not under t.TempDir: a fake browser started detached may still be running when the test ends,
-	// and Windows cannot delete a running program, which fails t.TempDir's cleanup.
-	top, err := os.MkdirTemp("", "tq-fake-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		for i := 0; i < 50 && os.RemoveAll(top) != nil; i++ {
-			time.Sleep(100 * time.Millisecond)
-		}
-	})
-	dir := filepath.Join(top, "fakebin") // isFakeBrowser knows the fake by this folder name
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	dir := fakeBinDir(t)
 	where := map[string]string{"chrome": "chrome-fake" + exeSuffix(), "edge": "msedge-fake" + exeSuffix()}
 	for name, file := range where {
 		if slices.Contains(missing, name) {
@@ -309,7 +317,7 @@ func TestBrowserShims(t *testing.T) {
 	if ok, code := runShim(filepath.Join(shims, envplan.ShimOpen+exeSuffix()), []string{"-evil"}, &stderr); !ok || code == 0 {
 		t.Fatalf("tq-open -evil: ok=%v code=%d", ok, code)
 	}
-	realDir := filepath.Join(t.TempDir(), "fakebin")
+	realDir := fakeBinDir(t)
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +396,7 @@ func TestBrowserShims_WebURLNeverReachesTheRealProgram(t *testing.T) {
 	runSettingsRender(t, "company-x")
 	shims := paths.ShimsDir("company-x")
 
-	realDir := filepath.Join(t.TempDir(), "fakebin")
+	realDir := fakeBinDir(t)
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
