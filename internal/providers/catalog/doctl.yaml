@@ -20,7 +20,7 @@ identity:
   # ("DIGITALOCEAN") + AutomaticEnv over the "config" key.
   #
   # It is UNDOCUMENTED: DigitalOcean's own docs mention only the --config flag.
-  # So it could regress without a changelog entry, and `tq doctor` proving the
+  # So it could regress without a changelog entry, and `tentaqles doctor` proving the
   # account is right matters more here than for a documented variable.
   env:
     DIGITALOCEAN_CONFIG: "{dir}/config.yaml"

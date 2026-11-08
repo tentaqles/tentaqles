@@ -172,7 +172,7 @@ func lookup(env []string, k string) string {
 // TQ_WS_ROOT is dropped too. For an identity the
 // out-of-scope variables are removed and PATH is the identity PATH
 // (FilterPath of the cleaned PATH), so a launch from outside the folder
-// (tq run <ws>, an editor) gets the same layer as the identity terminal.
+// (tentaqles run <ws>, an editor) gets the same layer as the identity terminal.
 //
 // The launch carries a __TQ_STATE of what it changed (launchState), so a shell started in it
 // (the harness's Bash tool, a terminal from an editor) can leave the identity and is never

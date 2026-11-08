@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Checks about the claude launcher tq activate defines.
+// Checks about the claude launcher tentaqles activate defines.
 
 func init() {
 	Register(Check{Name: "launcher", Global: claudeAliasShadow})
@@ -30,7 +30,7 @@ var shellFuncRe = map[string]*regexp.Regexp{
 	"powershell": regexp.MustCompile(`(?mi)^[ \t]*function[ \t]+(?:global:|script:)?(claude|codex)(?:[ \t({]|$)`),
 }
 
-// activationRe finds the line that runs tq activate (or tq's managed block).
+// activationRe finds the line that runs tentaqles activate (or tq's managed block).
 var activationRe = regexp.MustCompile(`(?m)^.*(?:tq(?:\.exe)?["']?[ \t]+activate\b|# <<< tq <<<).*$`)
 
 // legacyBlockRe is a preserved pre-tq setup an older tq left in a profile; it runs only
@@ -74,7 +74,7 @@ func homes(d Deps) []string {
 }
 
 // claudeAliasShadow reports what in a shell profile stands in for the
-// claude launcher `tq activate` defines:
+// claude launcher `tentaqles activate` defines:
 //   - a PowerShell alias (aliases resolve before functions): warn;
 //   - a function named claude or codex defined after tq's activation, such
 //     as a wrapper an older tq carried over: warn;
@@ -102,7 +102,7 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 				if pf[1] == "powershell" {
 					add("warn", "claude-alias-shadow", "",
 						fmt.Sprintf("alias %s replaces tq's %s launcher: PowerShell resolves aliases before functions (%s)", name, name, pf[0]),
-						fmt.Sprintf("delete the %s alias from %s; tq activate defines %s", name, pf[0], name))
+						fmt.Sprintf("delete the %s alias from %s; tentaqles activate defines %s", name, pf[0], name))
 					continue
 				}
 				if f := strings.Fields(m[2]); len(f) > 0 && f[0] == name {
@@ -113,7 +113,7 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 				}
 				add("warn", "claude-alias-shadow", "",
 					fmt.Sprintf("alias %s runs %q instead of tq's %s launcher (%s)", name, m[2], name, pf[0]),
-					fmt.Sprintf("delete the %s alias from %s; tq activate defines %s", name, pf[0], name))
+					fmt.Sprintf("delete the %s alias from %s; tentaqles activate defines %s", name, pf[0], name))
 			}
 			after := -1
 			if loc := activationRe.FindAllStringIndex(text, -1); len(loc) > 0 {
@@ -134,7 +134,7 @@ func claudeAliasShadow(d Deps, add AddFunc) {
 					}
 				}
 				first := strings.Count(text[:loc[0]], "\n") + 1
-				fix := fmt.Sprintf("delete lines %d-%d of %s (function %s) by hand; tq activate defines %s", first, funcEndLine(text, loc[0], pf[1]), pf[0], name, name)
+				fix := fmt.Sprintf("delete lines %d-%d of %s (function %s) by hand; tentaqles activate defines %s", first, funcEndLine(text, loc[0], pf[1]), pf[0], name, name)
 				add("warn", "claude-alias-shadow", "",
 					fmt.Sprintf("function %s, defined after tq's activation, replaces tq's %s launcher (%s)", name, name, pf[0]),
 					fix)

@@ -10,7 +10,7 @@ import (
 
 // RunMain is the tq binary's entry point and returns its exit code.
 //
-// For `tq claude-hook pre-tool-use` it guarantees an answer of 0 (allow) or
+// For `tentaqles claude-hook pre-tool-use` it guarantees an answer of 0 (allow) or
 // 2 (deny) and nothing else, whatever goes wrong
 // outside the decision itself: Claude Code runs a call whose hook
 // exits with any other status, or that they kill at their own hook timeout.
@@ -68,6 +68,6 @@ func hookInvocation(args []string) bool {
 // hookStartupDeny is the deny of a pre-tool-use run that never reached a decision: the reason on
 // stderr, exit code 2.
 func hookStartupDeny(stderr io.Writer, why string) int {
-	fmt.Fprintln(stderr, "BLOCKED ["+guardErrorID+"]: "+why+"; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tq doctor` shows what is wrong")
+	fmt.Fprintln(stderr, "BLOCKED ["+guardErrorID+"]: "+why+"; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tentaqles doctor` shows what is wrong")
 	return 2
 }

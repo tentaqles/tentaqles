@@ -70,7 +70,7 @@ provider and browser profile. After you type `yes` it:
 5. adds tq's activation block to your shell profiles, if it isn't there yet.
 
 Then open a new terminal in `~/clients/acme`, start `claude` and log in with the client's account. Log each CLI in
-once inside that terminal, or with `tq login acme gh`, and the login stays the client's.
+once inside that terminal, or with `tentaqles login acme gh`, and the login stays the client's.
 
 Run `tentaqles reach` again in the same folder to change the client's providers, browser or email.
 

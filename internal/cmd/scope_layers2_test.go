@@ -35,8 +35,8 @@ func fakeIn(t *testing.T, dir string, names ...string) {
 }
 
 // TestEnv_ScopeReferenceScenario_SharedFolder: aws.exe sits in a folder with node and git; the
-// folder stays, tq settings render writes the mask, and on the identity PATH aws, aws.exe and
-// tq run all reach the stub (command not found, exit 127), never the real one.
+// folder stays, tentaqles settings render writes the mask, and on the identity PATH aws, aws.exe and
+// tentaqles run all reach the stub (command not found, exit 127), never the real one.
 func TestEnv_ScopeReferenceScenario_SharedFolder(t *testing.T) {
 	root, _ := setupScoped(t, "company-x", companyXBody)
 	shared := filepath.Join(testutil.TempDir(t), "shared")
@@ -82,11 +82,11 @@ func TestEnv_ScopeReferenceScenario_SharedFolder(t *testing.T) {
 	if !errors.As(err, &ee) || ee.ExitCode() != 127 || !strings.Contains(string(out), "aws: command not found (outside the scope of identity company-x)") || strings.Contains(string(out), "REAL-") {
 		t.Fatalf("aws: %v %q", err, out)
 	}
-	// tq run, spelled any way: refused, nothing launched.
+	// tentaqles run, spelled any way: refused, nothing launched.
 	calls := fakeExec(t)
 	for _, n := range []string{"aws", "aws.exe", filepath.Join(shared, "aws.exe"), "AWS.EXE"} {
 		if err := runCmdErr(t, "run", ".", "--", n, "ec2"); err == nil || !strings.Contains(err.Error(), "command not found on the PATH of identity company-x") {
-			t.Fatalf("tq run -- %s: %v", n, err)
+			t.Fatalf("tentaqles run -- %s: %v", n, err)
 		}
 	}
 	if len(*calls) != 0 {

@@ -18,7 +18,7 @@ func providerFileFindings(add func(level, code, ws, msg, fix string), all []reso
 	for _, e := range errs {
 		var fe *providers.FileError
 		if !errors.As(e, &fe) {
-			add("error", "provider-file-invalid", "", e.Error(), "fix the files under ~/.tentaqles/providers, then run tq providers list")
+			add("error", "provider-file-invalid", "", e.Error(), "fix the files under ~/.tentaqles/providers, then run tentaqles providers list")
 			continue
 		}
 		msg := fe.Detail()

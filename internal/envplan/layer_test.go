@@ -151,7 +151,7 @@ func TestPathLayer_SharedDirIsMasked(t *testing.T) {
 	l := LayerFor(companyX(t, true))
 
 	// No mask folder yet: the shared folder stays, aws still resolves there, and the
-	// report says the mask is missing (tq env prints the notice).
+	// report says the mask is missing (tentaqles env prints the notice).
 	got, rep := l.FilterPath(join(shared, azDir, toolsDir), NativeSyntax())
 	if got != join(shared, azDir, toolsDir) || !rep.MaskMissing || !reflect.DeepEqual(rep.Shared, []string{shared}) {
 		t.Fatalf("without the mask: %q %+v", got, rep)
@@ -455,7 +455,7 @@ func TestLayer_SwitchIdentityRebuildsFromOriginal(t *testing.T) {
 	}
 }
 
-// A launch (tq run, an editor) gets the same layer: Environ filters PATH, keeps its key's
+// A launch (tentaqles run, an editor) gets the same layer: Environ filters PATH, keeps its key's
 // spelling (Path on Windows), removes the out-of-scope variables and restores what an
 // earlier identity of the shell changed.
 func TestEnviron_V2Layer(t *testing.T) {

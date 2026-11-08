@@ -2,12 +2,12 @@
 
 The tentaqles plugin (`plugin/`) registers two hooks in a client's Claude Code config. Both run
 `plugin/scripts/tq_hook.sh`, which finds the `tq` binary (on PATH, then in the install folders; never from an
-environment variable) and runs `tq claude-hook <event>` with the hook's JSON on stdin.
+environment variable) and runs `tentaqles claude-hook <event>` with the hook's JSON on stdin.
 
 ## `session-start`
 
 Prints a short preamble that Claude Code adds to the session: the folder's client, its git provider, user and
-email, its clouds, the identity and its `CLAUDE_CONFIG_DIR`, the client's tools, the findings of `tq doctor` for
+email, its clouds, the identity and its `CLAUDE_CONFIG_DIR`, the client's tools, the findings of `tentaqles doctor` for
 this folder, and one line on what the hook blocks. In a neutral folder it says so. It never fails: a session always
 starts.
 
@@ -43,7 +43,7 @@ past it. It catches mistakes, not intent.
 
 ## The plugin is required
 
-`tq run <client> -- claude` refuses to start a session when the client's Claude config has no enabled tentaqles
+`tentaqles run <client> -- claude` refuses to start a session when the client's Claude config has no enabled tentaqles
 plugin whose PreToolUse hook runs `tq_hook.sh pre-tool-use` for Bash and PowerShell, or when `disableAllHooks` is
-set in the client's settings or in the folder's `.claude/settings.json`. `tq doctor` reports the same state as
+set in the client's settings or in the folder's `.claude/settings.json`. `tentaqles doctor` reports the same state as
 `guard-hook-missing`. `tentaqles reach` installs the plugin for a new client.

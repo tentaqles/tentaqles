@@ -72,7 +72,7 @@ func TestState_FitsCmdLine(t *testing.T) {
 func ptr(s string) *string { return &s }
 
 // The mask answers aws however it is spelled: aws, aws.exe, aws.com, aws.bat, aws.cmd,
-// aws.ps1, with PATHEXT edited too; tq run's lookup lands on it for aws.exe; a batch file
+// aws.ps1, with PATHEXT edited too; tentaqles run's lookup lands on it for aws.exe; a batch file
 // that runs aws without `call` keeps going (the .com/.exe stub is a program).
 func TestPathLayer_MaskCoversEverySpelling(t *testing.T) {
 	if runtime.GOOS != "windows" {

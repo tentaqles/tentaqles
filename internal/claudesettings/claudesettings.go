@@ -214,7 +214,7 @@ func Apply(current map[string]any, want Managed, prev Owned) (map[string]any, Ow
 // packages (they re-resolve @latest on every refresh) and older tq ones.
 func replaceableStatusLine(sl map[string]any) bool {
 	cmd, _ := sl["command"].(string)
-	isTq := strings.Contains(cmd, "tq") && strings.HasSuffix(strings.TrimSpace(cmd), " statusline")
+	isTq := (strings.Contains(cmd, "tq") || strings.Contains(cmd, "tentaqles")) && strings.HasSuffix(strings.TrimSpace(cmd), " statusline")
 	return strings.Contains(cmd, "@latest") || strings.Contains(cmd, "ccstatusline") || isTq
 }
 
@@ -292,7 +292,7 @@ func summarize(cur, next map[string]any) []string {
 		out = append(out, "env: updated")
 	}
 	if !reflect.DeepEqual(normalize(cur["statusLine"]), normalize(next["statusLine"])) {
-		out = append(out, "statusLine: tq statusline")
+		out = append(out, "statusLine: tentaqles statusline")
 	}
 	return out
 }

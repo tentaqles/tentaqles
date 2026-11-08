@@ -6,8 +6,9 @@ are described on the [GitHub releases page](https://github.com/tentaqles/tentaql
 
 ## [Unreleased]
 
-Tentaqles is now an identity isolator and nothing more ([ADR-0001](docs/adr/0001-identity-isolator.md)). The work
-done on top of 0.9.0 toward an agent guard and tool onboarding was cut before it was released.
+Tentaqles is now an identity isolator and nothing more. The work done on top of 0.9.0 toward an agent guard and
+tool onboarding was cut before it was released: connecting each client's tools through the agent could not keep up
+with how often vendors change their URLs and sign-in methods.
 
 ### What it does
 
@@ -20,7 +21,9 @@ done on top of 0.9.0 toward an agent guard and tool onboarding was cut before it
 - **A client's terminal**, in its folder and every subfolder, carries `CLAUDE_CONFIG_DIR` (its own Claude account),
   each CLI's config home, `BROWSER`, and a PATH without the CLIs of providers outside its scope, whose variables are
   unset. Leaving the folder restores what was there.
-- **The release ships `tentaqles` beside `tq`**, the same bytes; the installers install both.
+- **Every command is `tentaqles <command>`**, with `tq <command>` as its alias: the release ships both binaries
+  (the same bytes), the installers install both, the shell hook defines both functions, and every help text,
+  message and fix line names the `tentaqles` form.
 - **The plugin's hook** runs on Bash and PowerShell calls only, and blocks a command under the wrong identity: a
   manifest's blocked commands, the wrong cloud, a remote command outside every client folder, a stale shell, the
   wrong `CLAUDE_CONFIG_DIR`, git email or gh user.
@@ -38,7 +41,10 @@ done on top of 0.9.0 toward an agent guard and tool onboarding was cut before it
   `mcp` and `blocked_commands_suggested`. From the manifest: `display_name`, `language`, `color`, `database`,
   `stack`, `chat`, `data_platform`, `agents`, `claude.bundle` and `mcp`, which tq no longer reads.
 - A client whose full manifest still sits in its folder (the layout before 0.9.0) is no longer read: run
-  `tentaqles reach` for it, or see ADR-0001.
+  `tentaqles reach` for it, or move the manifest to `~/.tentaqles/identities/<client>/manifest.yaml` and leave in
+  the folder a `.tentaqles.yaml` that reads `schema: tentaqles-marker-v1` and `client: <client>`.
+- Files an earlier version wrote under `~/.tentaqles` and no longer read (`trust/`, `denials.jsonl`, `bundles/`,
+  `mcp-out-of-scope.json` and the like) can be deleted.
 
 ## [0.9.0] — 2026-11-04
 

@@ -104,7 +104,7 @@ func known(name string) bool {
 	return false
 }
 
-// UserDataRoot is the folder a browser keeps its profiles in, for tq doctor: the default user
+// UserDataRoot is the folder a browser keeps its profiles in, for tentaqles doctor: the default user
 // data folder of the OS. "" when it cannot be told (no home folder).
 var UserDataRoot = defaultUserDataRoot
 

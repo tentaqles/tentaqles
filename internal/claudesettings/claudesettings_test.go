@@ -34,7 +34,7 @@ func TestApplyKeepsUserEntries(t *testing.T) {
 		"statusLine": map[string]any{"type": "command", "command": "npx -y ccstatusline@latest"},
 	}
 	prev := Owned{Schema: stateSchema, EnvKeys: []string{"OLD_TQ"}, found: true}
-	want := Managed{Env: map[string]string{"ENABLE_STOP_REVIEW": "0"}, StatusLine: map[string]any{"type": "command", "command": "tq statusline"}}
+	want := Managed{Env: map[string]string{"ENABLE_STOP_REVIEW": "0"}, StatusLine: map[string]any{"type": "command", "command": "tentaqles statusline"}}
 
 	next, owned := Apply(current, want, prev)
 	env := next["env"].(map[string]any)
@@ -44,7 +44,7 @@ func TestApplyKeepsUserEntries(t *testing.T) {
 	if _, ok := env["OLD_TQ"]; ok {
 		t.Error("previously owned env key not removed")
 	}
-	if next["statusLine"].(map[string]any)["command"] != "tq statusline" || !owned.StatusLine {
+	if next["statusLine"].(map[string]any)["command"] != "tentaqles statusline" || !owned.StatusLine {
 		t.Error("unpinned ccstatusline not replaced")
 	}
 	if next["model"] != "opus" {
@@ -64,7 +64,7 @@ func TestApplyKeepsUserEntries(t *testing.T) {
 
 func TestApplyLeavesCustomStatusLine(t *testing.T) {
 	current := map[string]any{"statusLine": map[string]any{"type": "command", "command": "bash ~/.claude/statusline.sh"}}
-	next, owned := Apply(current, Managed{StatusLine: map[string]any{"command": "tq statusline"}}, Owned{})
+	next, owned := Apply(current, Managed{StatusLine: map[string]any{"command": "tentaqles statusline"}}, Owned{})
 	if next["statusLine"].(map[string]any)["command"] != "bash ~/.claude/statusline.sh" || owned.StatusLine {
 		t.Error("custom status line was replaced")
 	}

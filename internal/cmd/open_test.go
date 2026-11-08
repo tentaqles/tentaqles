@@ -234,7 +234,7 @@ func TestBrowserShims(t *testing.T) {
 	fake := installFakeBrowsers(t)
 	ws := workspaceNamed(t, "company-x")
 
-	// tq settings render writes the shims, and a second render finds nothing to do
+	// tentaqles settings render writes the shims, and a second render finds nothing to do
 	out := runSettingsRender(t, "company-x")
 	if !strings.Contains(out, "browser shims written") {
 		t.Fatalf("render did not write the shims:\n%s", out)

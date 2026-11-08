@@ -1,4 +1,4 @@
-"""tq_hook.sh, the bridge from Claude Code to `tq claude-hook`, fails closed.
+"""tq_hook.sh, the bridge from Claude Code to `tentaqles claude-hook`, fails closed.
 
 Claude Code runs a call whose hook exits with anything but 2, or whose hook it killed. So
 pre-tool-use answers 0 or 2 and nothing else, whatever goes wrong with tq.

@@ -1,7 +1,7 @@
 # Tentaqles plugin
 
 The Claude Code plugin of [Tentaqles](https://github.com/tentaqles/tentaqles). It holds one thing: the hook,
-`scripts/tq_hook.sh`, which runs `tq claude-hook`:
+`scripts/tq_hook.sh`, which runs `tentaqles claude-hook`:
 
 - at session start, to state the folder's client, its git and cloud identity and its Claude config home;
 - before each Bash or PowerShell command, to block a `git`, `gh` or cloud command that would run under another

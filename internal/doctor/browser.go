@@ -27,6 +27,6 @@ func browserChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix stri
 	if !envplan.ShimsReady(w.Name) {
 		add("warn", "browser-shims-missing", w.Name,
 			"the browser shims (BROWSER, xdg-open, open) are not written for this client",
-			"tq settings render "+w.Name)
+			"tentaqles settings render "+w.Name)
 	}
 }

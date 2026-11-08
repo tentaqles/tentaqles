@@ -18,7 +18,7 @@ var scriptExts = map[string]bool{
 }
 
 // tqEnvRe matches a script asking tq to recompute the identity for the current
-// directory -- `tq env --shell cmd`, `"%LOCALAPPDATA%\tentaqles\bin\tq.exe" env`.
+// directory -- `tentaqles env --shell cmd`, `"%LOCALAPPDATA%\tentaqles\bin\tq.exe" env`.
 var tqEnvRe = regexp.MustCompile(`(?i)tq(\.exe)?"?\s+env\b`)
 
 // shimMaxBytes caps how much of a script is read. Shims are tiny; anything
@@ -29,7 +29,7 @@ const shimMaxBytes = 64 << 10
 // PATH -- is a script that assigns the identity variables itself.
 //
 // This matters because tq exports the identity into the environment and then
-// execs the CLI by name (`tq run <ws> -- gh ...`, `tq login <ws> claude`). A
+// execs the CLI by name (`tentaqles run <ws> -- gh ...`, `tentaqles login <ws> claude`). A
 // script earlier on PATH that recomputes the identity from the *current
 // directory* silently discards the workspace the user asked for, so the
 // command runs against the wrong account and nothing reports it. Folder-based
@@ -74,7 +74,7 @@ func shimShadow(resolved string, vars []string, readFile func(string) ([]byte, e
 	case len(assigns) > 0:
 		return "it sets " + strings.Join(assigns, ", ") + " itself", true
 	case tqEnvRe.MatchString(body):
-		return "it re-runs `tq env` for the current directory", true
+		return "it re-runs `tentaqles env` for the current directory", true
 	}
 	return "", false
 }

@@ -5,7 +5,7 @@ if (-not (Test-Path Variable:global:__tq_prev_prompt)) { $global:__tq_prev_promp
 function global:__tq_hook { if ($env:TQ_ENABLED -eq '0') { return }; $__tq_e = $null; try { $__tq_e = [Console]::OutputEncoding; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }; try { $o = (& '/opt/tq/bin/tq' env --shell powershell | Out-String) } catch { $o = '' } finally { if ($null -ne $__tq_e) { try { [Console]::OutputEncoding = $__tq_e } catch { } } }; try { if ($o.Trim()) { Invoke-Expression $o } } catch { } }
 function global:prompt { __tq_hook; & $global:__tq_prev_prompt }
 # A simple function's $args never holds a literal --: the parameter binder
-# eats it. For tq run, tq dotenv run and tq redact run, __tq_args puts it
+# eats it. For run, __tq_args puts it
 # back before the command word, so the command's own flags stay its own.
 function global:__tq_args {
   $a = @($args[0]); $out = New-Object System.Collections.ArrayList; $i = 0
@@ -18,19 +18,14 @@ function global:__tq_args {
       if (-not $ws) { [void]$out.Add($t); $ws = $true; $i++; continue }
       break
     }
-  } elseif ($a.Count -ge 2 -and ($a[0] -ceq 'dotenv' -or $a[0] -ceq 'redact') -and $a[1] -ceq 'run') {
-    [void]$out.Add([string]$a[0]); [void]$out.Add('run'); $i = 2
-    while ($i -lt $a.Count) {
-      $t = [string]$a[$i]
-      if ($t -ceq '--') { break }
-      if (($t -ceq '--file' -or $t -ceq '--classes') -and $i + 1 -lt $a.Count) { [void]$out.Add($t); [void]$out.Add([string]$a[$i + 1]); $i += 2; continue }
-      if ($t.StartsWith('-')) { [void]$out.Add($t); $i++; continue }
-      break
-    }
   } else { return ,$a }
   if ($i -lt $a.Count -and [string]$a[$i] -ceq '--') { $i++ }
   if ($i -lt $a.Count) { [void]$out.Add('--'); foreach ($x in $a[$i..($a.Count - 1)]) { [void]$out.Add($x) } }
   return ,$out.ToArray()
+}
+function global:tentaqles {
+  $__a = __tq_args $args
+  & '/opt/tq/bin/tq' @__a
 }
 function global:tq {
   $__a = __tq_args $args

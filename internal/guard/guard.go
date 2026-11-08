@@ -279,19 +279,19 @@ func Decide(in Input) Decision {
 	// reason to refuse it. Mutating git stays blocked.
 	readOnlyGit := git && IsReadOnlyGit(in.Command)
 	if git && !readOnlyGit && has(in.Findings, "env-drift") {
-		return block("env-drift", "shell identity (TQ_WS) does not match cwd; open a new shell or run: eval \"$(tq env --shell <shell>)\"")
+		return block("env-drift", "shell identity (TQ_WS) does not match cwd; open a new shell or run: eval \"$(tentaqles env --shell <shell>)\"")
 	}
 	if (IsRemoteMutation(in.Command)) && has(in.Findings, "claude-config-drift") {
-		return block("claude-config-drift", fmt.Sprintf("this Claude session is not running under the %s identity dir (CLAUDE_CONFIG_DIR drift).\n  Fix: start Claude from a tq-activated shell in the workspace, or: tq run %s -- claude", client, client))
+		return block("claude-config-drift", fmt.Sprintf("this Claude session is not running under the %s identity dir (CLAUDE_CONFIG_DIR drift).\n  Fix: start Claude from a tq-activated shell in the workspace, or: tentaqles run %s -- claude", client, client))
 	}
 	if git && in.ExpectedEmail != "" && HasInlineIdentityOverride(in.Command) {
 		return block("git-email-drift", "inline git identity override (-c user.email/--config-env) is not allowed; identity is managed by tq")
 	}
 	if git && !readOnlyGit && in.ExpectedEmail != "" && in.ActualEmail != "" && !strings.EqualFold(in.ExpectedEmail, in.ActualEmail) {
-		return block("git-email-drift", fmt.Sprintf("Git email mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tq doctor (the client folder sets it; do not set user.email by hand)", in.ExpectedEmail, in.ActualEmail))
+		return block("git-email-drift", fmt.Sprintf("Git email mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tentaqles doctor (the client folder sets it; do not set user.email by hand)", in.ExpectedEmail, in.ActualEmail))
 	}
 	if StartsWith(in.Command, "gh") && in.ExpectedGHUser != "" && in.ActualGHUser != "" && !strings.EqualFold(in.ExpectedGHUser, in.ActualGHUser) {
-		return block("gh-user", fmt.Sprintf("GitHub user mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tq login %s gh", in.ExpectedGHUser, in.ActualGHUser, client))
+		return block("gh-user", fmt.Sprintf("GitHub user mismatch.\n  Expected: %s\n  Actual:   %s\n  Fix: tentaqles login %s gh", in.ExpectedGHUser, in.ActualGHUser, client))
 	}
 	return Decision{}
 }

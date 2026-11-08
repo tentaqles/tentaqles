@@ -322,27 +322,27 @@ func runsGuardCommand(command string) bool {
 func GuardHookFix(ws string, g GuardHook) []string {
 	switch {
 	case g.NoConfig:
-		return []string{fmt.Sprintf("add claude to the identities in %s's manifest, then: tq settings render %s", ws, ws)}
+		return []string{fmt.Sprintf("add claude to the identities in %s's manifest, then: tentaqles settings render %s", ws, ws)}
 	case g.Unresolved:
-		return []string{"run it from a folder whose path resolves, then: tq run " + ws + " -- claude"}
+		return []string{"run it from a folder whose path resolves, then: tentaqles run " + ws + " -- claude"}
 	case g.Setting == "disableAllHooks":
-		next := "tq run " + ws + " -- claude"
+		next := "tentaqles run " + ws + " -- claude"
 		return []string{fmt.Sprintf("remove %q (or set it to false) in %s, then: %s", g.Setting, g.File, next)}
 	case g.Setting == "enabledPlugins":
-		return []string{fmt.Sprintf("set %q to true under enabledPlugins in %s, then: tq run %s -- claude", GuardPlugin, g.File, ws)}
+		return []string{fmt.Sprintf("set %q to true under enabledPlugins in %s, then: tentaqles run %s -- claude", GuardPlugin, g.File, ws)}
 	case g.File != "" && g.Setting == "":
 		// A file that cannot be read or is not the JSON it must be: repairing it is the fix, and an
 		// install cannot repair it.
-		next := "tq run " + ws + " -- claude"
+		next := "tentaqles run " + ws + " -- claude"
 		return []string{fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: %s", g.File, next)}
 	case g.Disabled:
-		return []string{"tq run " + ws + " -- claude plugin enable " + GuardPlugin}
+		return []string{"tentaqles run " + ws + " -- claude plugin enable " + GuardPlugin}
 	case g.Missing:
 		return GuardInstallLines(ws)
 	case g.Reinstall:
 		// The plugin's hooks file is not the guard, so an install over the installed plugin may not
 		// replace it: uninstall first, then install afresh.
-		return append([]string{"tq run " + ws + " -- claude plugin uninstall " + GuardPlugin},
+		return append([]string{"tentaqles run " + ws + " -- claude plugin uninstall " + GuardPlugin},
 			GuardInstallLines(ws)...)
 	}
 	return GuardInstallLines(ws)
@@ -353,7 +353,7 @@ func GuardHookFix(ws string, g GuardHook) []string {
 // install.
 func GuardInstallLines(ws string) []string {
 	return []string{
-		"tq run " + ws + " -- claude plugin marketplace add " + GuardMarketplace,
+		"tentaqles run " + ws + " -- claude plugin marketplace add " + GuardMarketplace,
 		GuardPluginLine(ws),
 	}
 }
@@ -361,7 +361,7 @@ func GuardInstallLines(ws string) []string {
 // GuardPluginLine is the command that installs the tentaqles plugin for workspace ws, run through
 // tq so it uses the client's own Claude config.
 func GuardPluginLine(ws string) string {
-	return "tq run " + ws + " -- claude plugin install " + GuardPlugin
+	return "tentaqles run " + ws + " -- claude plugin install " + GuardPlugin
 }
 
 // isOutside reports a filepath.Rel result that leaves its base.

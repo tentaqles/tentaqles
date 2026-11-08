@@ -3,7 +3,7 @@
 #
 # Usage: bash tq_hook.sh <session-start|pre-tool-use>
 #
-# Resolves the `tq` binary and runs `tq claude-hook <event>` (stdin passes
+# Resolves the `tq` binary and runs `tentaqles claude-hook <event>` (stdin passes
 # straight through, exit status is propagated).
 #
 # FAIL-CLOSED: if tq cannot be found or run, pre-tool-use denies every shell command
@@ -129,10 +129,10 @@ if [ -n "$TQ" ]; then
   if [ "$_status" != "126" ] && [ "$_status" != "127" ]; then
     if [ "$_status" != "0" ] && [ "$_status" != "2" ]; then
       if [ "$_event" = "pre-tool-use" ]; then
-        echo "BLOCKED [tq/guard-error]: tq exited with status ${_status} without a decision (a tq still running after ${_tq_deadline}s is stopped); tq denies a call it cannot judge. Report this to the developer instead of retrying; \`tq doctor\` shows what is wrong" >&2
+        echo "BLOCKED [tq/guard-error]: tq exited with status ${_status} without a decision (a tq still running after ${_tq_deadline}s is stopped); tq denies a call it cannot judge. Report this to the developer instead of retrying; \`tentaqles doctor\` shows what is wrong" >&2
         exit 2
       fi
-      echo "Tentaqles: tq did not print the session preamble (status ${_status}); run \`tq doctor\`."
+      echo "Tentaqles: tq did not print the session preamble (status ${_status}); run \`tentaqles doctor\`."
       exit 0
     fi
     exit "$_status"

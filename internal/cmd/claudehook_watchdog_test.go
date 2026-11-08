@@ -16,7 +16,7 @@ import (
 var spin atomic.Bool
 
 // spinChild is the child half of TestHookStall_*: it runs the real RunMain of
-// `tq claude-hook pre-tool-use` with a tight loop injected (no calls, no allocation, so only
+// `tentaqles claude-hook pre-tool-use` with a tight loop injected (no calls, no allocation, so only
 // an asynchronous preemption can stop it) and a goroutine forcing garbage collections, which
 // stop the world and so must preempt the loop, then exits with RunMain's code or the
 // watchdog's.

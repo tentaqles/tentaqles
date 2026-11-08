@@ -146,7 +146,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	}
 	b.WriteString(identity + "\n")
 	fmt.Fprintf(&b, "Tools: %s. Other providers' CLIs are not on this terminal's PATH.\n", strings.Join(m.Scope(), ", "))
-	b.WriteString("\ntq doctor:\n")
+	b.WriteString("\ntentaqles doctor:\n")
 	if len(rep.Findings) == 0 {
 		b.WriteString("- [ok] all checks passed\n")
 	}
@@ -157,7 +157,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\nRules: tq blocks git, gh and cloud commands that would run under another identity (exit 2). Run `tq doctor` for details.\n")
+	b.WriteString("\nRules: tq blocks git, gh and cloud commands that would run under another identity (exit 2). Run `tentaqles doctor` for details.\n")
 	return b.String()
 }
 
@@ -258,7 +258,7 @@ func decide(in io.Reader, out, errw io.Writer, asJSON bool) int {
 }
 
 func failClosed(out, errw io.Writer, asJSON bool, why string) int {
-	reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tq doctor` shows what is wrong"
+	reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tentaqles doctor` shows what is wrong"
 	emitDecision(out, errw, asJSON, true, guardErrorID, reason)
 	return 2
 }

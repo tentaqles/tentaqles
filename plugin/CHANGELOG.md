@@ -6,7 +6,7 @@ Releases before 0.16.0 are described on the
 
 ## [Unreleased]
 
-- **The plugin is the identity check and nothing else** ([ADR-0001](../docs/adr/0001-identity-isolator.md)). The
+- **The plugin is the identity check and nothing else.** The
   onboarding skill is removed. The PreToolUse matcher is now `^(Bash|PowerShell)$`: tq checks shell commands only
   (the wrong git email, gh user or cloud, a stale shell, a remote command outside every client folder), so file
   edits and MCP tools no longer start a tq process.

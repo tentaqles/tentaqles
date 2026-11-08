@@ -13,7 +13,7 @@ var Commit = ""
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the tq version and the commit it was built from",
+		Short: "Print the tentaqles version and the commit it was built from",
 		RunE: func(c *cobra.Command, _ []string) error {
 			commit := Commit
 			if commit == "" {

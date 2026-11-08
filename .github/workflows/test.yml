@@ -16,12 +16,12 @@ jobs:
         with: { go-version: '1.26' }
       - run: go vet ./...
       - run: go test ./... -count=1
-      - name: build tq
+      - name: build tentaqles and tq
         if: runner.os != 'Windows'
-        run: go build -o tq ./cmd/tentaqles
-      - name: build tq (windows)
+        run: go build -o tentaqles ./cmd/tentaqles && cp tentaqles tq
+      - name: build tentaqles and tq (windows)
         if: runner.os == 'Windows'
-        run: go build -o tq.exe ./cmd/tentaqles
+        run: go build -o tentaqles.exe ./cmd/tentaqles; Copy-Item tentaqles.exe tq.exe
       - name: goreleaser config check
         if: runner.os == 'Linux'
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
@@ -36,9 +36,9 @@ jobs:
           export TQ_HOME=$(mktemp -d) HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=$HOME/.gitconfig
           mkdir -p $HOME/work
           # A runner has no terminal: reach's form cannot run, so it writes nothing.
-          if ./tq reach $HOME/work/acme; then echo "tq reach ran without a human"; exit 1; fi
+          if ./tentaqles reach $HOME/work/acme; then echo "tentaqles reach ran without a human"; exit 1; fi
           test ! -e "$TQ_HOME/config.yaml"
-          eval "$(./tq activate bash)"
+          eval "$(./tentaqles activate bash)"
           # PROMPT_COMMAND only fires at an interactive prompt; call the hook explicitly after each cd
           cd $HOME/work; __tq_hook; test -z "${TQ_WS:-}"
           cd /; __tq_hook; test -z "${TQ_WS:-}"
@@ -52,10 +52,10 @@ jobs:
           $env:GIT_CONFIG_GLOBAL = "$env:USERPROFILE\.gitconfig"
           New-Item -ItemType Directory -Force "$env:USERPROFILE\work" | Out-Null
           # A runner has no terminal: reach's form cannot run, so it writes nothing.
-          .\tq.exe reach "$env:USERPROFILE\work\acme"; if ($LASTEXITCODE -eq 0) { throw "tq reach ran without a human" }
-          if (Test-Path "$env:TQ_HOME\config.yaml") { throw "a refused verb wrote config.yaml" }
-          $tq = (Resolve-Path .\tq.exe).Path
-          & $tq activate pwsh | Out-String | Invoke-Expression
+          .\tentaqles.exe reach "$env:USERPROFILE\work\acme"; if ($LASTEXITCODE -eq 0) { throw "tentaqles reach ran without a human" }
+          if (Test-Path "$env:TQ_HOME\config.yaml") { throw "a refused reach wrote config.yaml" }
+          $tentaqles = (Resolve-Path .\tentaqles.exe).Path
+          & $tentaqles activate pwsh | Out-String | Invoke-Expression
           Set-Location "$env:USERPROFILE\work"; prompt | Out-Null; if ($env:TQ_WS) { throw "hook set $env:TQ_WS in a neutral folder" }
           Set-Location \; prompt | Out-Null; if ($env:TQ_WS) { throw "hook set $env:TQ_WS in a neutral folder" }
           exit 0

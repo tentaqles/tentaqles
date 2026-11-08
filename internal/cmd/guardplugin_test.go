@@ -13,7 +13,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/testutil"
 )
 
-// The guard of a session is the tentaqles plugin's PreToolUse hook: tq run refuses
+// The guard of a session is the tentaqles plugin's PreToolUse hook: tentaqles run refuses
 // to start claude in an identity's folder when the client's Claude config has no enabled
 // plugin that runs it. These tests write the plugin the way claude plugin install leaves it.
 
@@ -99,12 +99,12 @@ func writeTB(tb testing.TB, p, body string) {
 }
 
 // guardFix is the exact line that installs the plugin for a client (REQ-5).
-const guardFix = "tq run acme -- claude plugin install tentaqles@tentaqles"
+const guardFix = "tentaqles run acme -- claude plugin install tentaqles@tentaqles"
 
 // guardInstallFix is what a refusal for a missing plugin prints, in this order: the marketplace (it
 // may be there already), REQ-5's install line, and the re-sign, since the install changes what the
 // record covers.
-var guardInstallFix = []string{"tq run acme -- claude plugin marketplace add tentaqles/tentaqles", guardFix}
+var guardInstallFix = []string{"tentaqles run acme -- claude plugin marketplace add tentaqles/tentaqles", guardFix}
 
 // fixBlockOf is the refusal's fix section for lines: the form fixBlock prints.
 func fixBlockOf(lines []string) string {
@@ -161,7 +161,7 @@ func TestRun_StartsWithTheHook(t *testing.T) {
 	}
 }
 
-// No plugin, no session: tq run <ws> and tq run . refuse with the fix line, and nothing launches.
+// No plugin, no session: tentaqles run <ws> and tentaqles run . refuse with the fix line, and nothing launches.
 // The fix line itself runs (TestRun_RefusalOnlyForASession).
 func TestRun_RefusesWithNoGuardHook(t *testing.T) {
 	root, _ := mkGuardWS(t, "acme", guardOpts{Absent: true})
@@ -176,7 +176,7 @@ func TestRun_RefusesWithNoGuardHook(t *testing.T) {
 	chdir(t, root)
 	_, err := runTq(t, "run", ".", "--", "claude")
 	if err == nil || !strings.Contains(err.Error(), "\n  "+fixBlockOf(guardInstallFix)) {
-		t.Fatalf("tq run . : want the refusal with the fix lines in order, got %v", err)
+		t.Fatalf("tentaqles run . : want the refusal with the fix lines in order, got %v", err)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("nothing may launch without the guard: %+v", *calls)
@@ -207,11 +207,11 @@ func TestRun_DisabledPluginIsNoHook(t *testing.T) {
 		fix string
 	}{
 		{"enabledPlugins false", guardOpts{Disabled: true}, []string{"not enabled", "enabledPlugins"},
-			"fix: tq run acme -- claude plugin enable tentaqles@tentaqles"},
+			"fix: tentaqles run acme -- claude plugin enable tentaqles@tentaqles"},
 		{"disableAllHooks", guardOpts{DisableAllHooks: true}, []string{"disableAllHooks", "settings.json", "turns off every hook"},
 			`fix: remove "disableAllHooks" (or set it to false) in `},
 		{"no PreToolUse", guardOpts{Hooks: `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh\" session-start"}]}]}}`},
-			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tq run acme -- claude plugin uninstall tentaqles@tentaqles\n    tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles"},
+			[]string{"no PreToolUse hook"}, "fix, in this order:\n    tentaqles run acme -- claude plugin uninstall tentaqles@tentaqles\n    tentaqles run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tentaqles run acme -- claude plugin install tentaqles@tentaqles"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -274,7 +274,7 @@ func TestRun_ForeignHookIsNoHook(t *testing.T) {
 }
 
 // Only a session needs the guard: the plugin's own commands, --version and --help run without one,
-// so the fix line runs. Other commands through tq run are not refused for it, and a neutral
+// so the fix line runs. Other commands through tentaqles run are not refused for it, and a neutral
 // folder's claude is unchanged.
 func TestRun_RefusalOnlyForASession(t *testing.T) {
 	mkGuardWS(t, "acme", guardOpts{Absent: true, Identities: "{ claude: {}, gh: {} }"})
@@ -324,8 +324,8 @@ func TestRun_ProjectSettingsCountToo(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), project) {
 			t.Fatalf("%s: want the refusal naming the file, got %v", c.body, err)
 		}
-		// A file that is not JSON is repaired, then tq run is tried again: the fix says so.
-		if c.want == "can't be read as JSON" && !strings.Contains(err.Error(), "fix: repair "+project+" (it can't be read as the JSON it must be), then: tq run acme -- claude") {
+		// A file that is not JSON is repaired, then tentaqles run is tried again: the fix says so.
+		if c.want == "can't be read as JSON" && !strings.Contains(err.Error(), "fix: repair "+project+" (it can't be read as the JSON it must be), then: tentaqles run acme -- claude") {
 			t.Fatalf("a file that is not JSON gets the repair line: %v", err)
 		}
 	}

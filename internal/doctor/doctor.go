@@ -96,7 +96,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 				add("warn", "identity-dir-missing", w.Name, "missing "+dir, "mkdir it")
 			} else if id == "claude" && runtime.GOOS != "darwin" {
 				if _, err := os.Stat(filepath.Join(dir, ".credentials.json")); err != nil {
-					add("warn", "claude-not-logged-in", w.Name, "no Claude credentials in "+dir, "tq login "+w.Name+" claude")
+					add("warn", "claude-not-logged-in", w.Name, "no Claude credentials in "+dir, "tentaqles login "+w.Name+" claude")
 				}
 			}
 			if p, ok := provs[id]; ok && p.LoginCmd != "" && !seenCLI[p.LoginCmd] {
@@ -113,13 +113,13 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 					add("warn", "cli-missing", "", p.LoginCmd+" not found on PATH", fix)
 				}
 				// A script earlier on PATH than the real CLI can overwrite the
-				// identity tq just exported, which makes `tq run` and
-				// `tq login` act on the wrong workspace without saying so.
+				// identity tq just exported, which makes `tentaqles run` and
+				// `tentaqles login` act on the wrong workspace without saying so.
 				if resolved, err := d.LookPath(p.LoginCmd); err == nil {
 					if why, shadowed := shimShadow(resolved, identityVars(p), d.ReadFile); shadowed {
 						add("warn", "cli-shadowed", "",
 							p.LoginCmd+" on PATH resolves to "+resolved+", and "+why+
-								": that overrides the identity tq exports, so tq run and tq login can act on the wrong workspace",
+								": that overrides the identity tq exports, so tentaqles run and tentaqles login can act on the wrong workspace",
 							"put the real "+p.LoginCmd+" ahead of "+filepath.Dir(resolved)+" on PATH, or remove that directory")
 					}
 				}
@@ -127,7 +127,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 	} // git global — only meaningful if git is actually installed.
 	if _, err := d.LookPath("git"); err != nil {
-		add("error", "git-missing", "", "git not found on PATH: tq cannot enforce per-workspace git identity", "install git, then re-run tq doctor")
+		add("error", "git-missing", "", "git not found on PATH: tq cannot enforce per-workspace git identity", "install git, then re-run tentaqles doctor")
 	} else {
 		inc, _ := d.RunGit("config", "--global", "--get-all", "include.path")
 		if !strings.Contains(filepath.ToSlash(inc), filepath.ToSlash(gitcfg.IncludeFile())) {
@@ -162,7 +162,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		}
 	}
 	runGlobalChecks(d, add)
-	// env vs cwd — shared with tq claude-hook so both agree. RunForCwd is the
+	// env vs cwd — shared with tentaqles claude-hook so both agree. RunForCwd is the
 	// hook path; it deliberately does not verify.
 	cwd := RunForCwd(cfg, d)
 	// Run already walks every workspace, so a cwd finding may repeat one it

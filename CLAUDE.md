@@ -8,8 +8,7 @@ wrong identity.
 
 ## Reading path
 
-`docs/IDEATION.md` is what it is for. Then `docs/adr/0001-identity-isolator.md` (what was kept and why),
-`docs/threat-model.md` (what it does and does not protect against), `docs/COMMANDS.md`, `docs/CLAUDE-HOOK.md` and
+`docs/IDEATION.md` is what it is for. Then `docs/threat-model.md` (what it does and does not protect against), `docs/COMMANDS.md`, `docs/CLAUDE-HOOK.md` and
 `docs/PROVIDERS.md`.
 
 ## Layout
@@ -31,7 +30,7 @@ wrong identity.
 - `internal/providers/`: the catalog (`catalog/*.yaml`, embedded) and user provider files.
 - `internal/doctor/`, `internal/claudesettings/`, `internal/statusline/`, `internal/browser/`, `internal/banner/`,
   `internal/gitcfg/`, `internal/detect/`, `internal/testutil/`.
-- `plugin/`: the Claude Code plugin: `hooks/hooks.json` and `scripts/tq_hook.sh`, which runs `tq claude-hook`.
+- `plugin/`: the Claude Code plugin: `hooks/hooks.json` and `scripts/tq_hook.sh`, which runs `tentaqles claude-hook`.
 - `test/integration/`: git identity end to end, the marketplace pins, the release config.
 - `installers/`, `.goreleaser.yaml`, `.github/workflows/`: release and CI. Steps in `docs/RELEASING.md`.
 
@@ -39,7 +38,7 @@ wrong identity.
 
 Each line names the tests that keep it. Weakening, skipping or removing one needs the owner's yes.
 
-- A client's terminal and `tq run` carry that client's identity and no other, and leaving the folder restores the
+- A client's terminal and `tentaqles run` carry that client's identity and no other, and leaving the folder restores the
   environment exactly: `TestRunClaudeHasTheClientsIdentity`, `TestRunDotResolvesCwd`, `TestEnv_ScopeLayerRestore`,
   `TestLayer_EnterAndLeaveRestoresExactly`.
 - A CLI of a provider outside the client's scope does not resolve on its PATH (dropped, or masked in a shared
@@ -75,11 +74,8 @@ too. The plugin suite is `PYTHONPATH=plugin python -m pytest plugin/tests -q` (n
 changelog is `CHANGELOG.md` under `[Unreleased]`; a change under `plugin/` also gets a line in
 `plugin/CHANGELOG.md`.
 
-A change to how a client's identity is set or kept apart (`internal/envplan/`, `internal/scope/`,
-`internal/shell/`, `internal/hooks/`, `internal/resolve/`), to the hook (`internal/guard/`,
-`internal/cmd/claudehook*.go`, `plugin/`), or to the release (`.goreleaser.yaml`, `installers/`,
-`.github/workflows/`, `.claude-plugin/marketplace.json`) gets an ADR under `docs/adr/` (Status, Date, Context,
-Decision, Consequences).
+Every command is `tentaqles <command>`; `tq <command>` is its alias. User-facing text (help, errors, fix lines,
+docs) names the `tentaqles` form.
 
 ## Rules
 

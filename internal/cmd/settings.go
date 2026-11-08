@@ -94,11 +94,13 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.
 	return c
 }
 
-// statuslineExe is the tq the status line runs: the installed tq on PATH, since os.Executable
-// may be a one-off build (go run, a temp dir) that later disappears.
+// statuslineExe is the binary the status line runs: the installed tentaqles (or its alias tq) on
+// PATH, since os.Executable may be a one-off build (go run, a temp dir) that later disappears.
 func statuslineExe() string {
-	if exe, err := exec.LookPath("tq"); err == nil {
-		return exe
+	for _, name := range []string{"tentaqles", "tq"} {
+		if exe, err := exec.LookPath(name); err == nil {
+			return exe
+		}
 	}
 	if exe, err := os.Executable(); err == nil {
 		return exe
@@ -107,7 +109,7 @@ func statuslineExe() string {
 }
 
 // renderIdentityFiles renders ws's Claude settings, PATH mask and browser shims, after reach
-// wrote or changed its manifest. Errors are warnings: tq doctor reports the drift.
+// wrote or changed its manifest. Errors are warnings: tentaqles doctor reports the drift.
 func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 	if ws == nil {
 		return
@@ -116,7 +118,7 @@ func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 	if _, err := os.Stat(dir); err == nil {
 		d := claudesettings.Desired(ws.Manifest, statuslineExe())
 		if _, err := claudesettings.Render(dir, d, false); err != nil {
-			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not rendered: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
+			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not rendered: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
 		}
 	}
 	renderScope(c, ws, false)

@@ -180,7 +180,7 @@ func (l *Layer) maskReady() bool {
 
 // WriteMask brings the mask folder in line with MaskFiles and the stub links: stale files
 // removed, missing or different ones written (0700 on POSIX: run by the user only). It reports
-// whether anything changed. tq settings render and tentaqles reach call it.
+// whether anything changed. tentaqles settings render and tentaqles reach call it.
 func (l *Layer) WriteMask() (bool, error) {
 	want := l.MaskFiles()
 	if len(want) == 0 {

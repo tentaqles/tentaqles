@@ -45,16 +45,16 @@ func RunForCwd(cfg *registry.Config, d Deps) CwdReport {
 	switch {
 	case res.Workspace != nil && envWS != res.Workspace.Name:
 		envDrift = true
-		add("error", "env-drift", res.Workspace.Name, fmt.Sprintf("cwd resolves to %s but TQ_WS=%q", res.Workspace.Name, envWS), "open a new shell or run: eval \"$(tq env --shell <shell>)\"")
+		add("error", "env-drift", res.Workspace.Name, fmt.Sprintf("cwd resolves to %s but TQ_WS=%q", res.Workspace.Name, envWS), "open a new shell or run: eval \"$(tentaqles env --shell <shell>)\"")
 	case res.Workspace == nil && envWS != "":
 		envDrift = true
-		add("error", "env-drift", "", fmt.Sprintf("cwd is neutral (%s) but TQ_WS=%q is still set", res.Reason, envWS), "eval \"$(tq env --shell <shell>)\"")
+		add("error", "env-drift", "", fmt.Sprintf("cwd is neutral (%s) but TQ_WS=%q is still set", res.Reason, envWS), "eval \"$(tentaqles env --shell <shell>)\"")
 	}
 	// hook-missing is suppressed when env-drift already fired for this cwd:
 	// both describe the same stale shell, and the plan says not to
 	// double-report. env-drift is the actionable one (same fix).
 	if !envDrift && !hasState && envWS == "" && res.Reason != "outside any base" {
-		add("warn", "hook-missing", "", "inside a clients folder but no tq state in this shell: is the shell hook installed?", "tq hooks install --all-detected, then open a new terminal")
+		add("warn", "hook-missing", "", "inside a clients folder but no tq state in this shell: is the shell hook installed?", "tentaqles hooks install --all-detected, then open a new terminal")
 	}
 	if res.Workspace == nil {
 		return rep
@@ -75,9 +75,9 @@ func RunForCwd(cfg *registry.Config, d Deps) CwdReport {
 		got, ok := d.Env("CLAUDE_CONFIG_DIR")
 		switch {
 		case ok && !samePath(got, want):
-			add("error", "claude-config-drift", ws.Name, fmt.Sprintf("CLAUDE_CONFIG_DIR=%q but %s expects %q", got, ws.Name, want), "eval \"$(tq env --shell <shell>)\"")
+			add("error", "claude-config-drift", ws.Name, fmt.Sprintf("CLAUDE_CONFIG_DIR=%q but %s expects %q", got, ws.Name, want), "eval \"$(tentaqles env --shell <shell>)\"")
 		case !ok && envWS == ws.Name:
-			add("error", "claude-config-drift", ws.Name, fmt.Sprintf("TQ_WS=%s but CLAUDE_CONFIG_DIR is unset (expected %q)", ws.Name, want), "eval \"$(tq env --shell <shell>)\"")
+			add("error", "claude-config-drift", ws.Name, fmt.Sprintf("TQ_WS=%s but CLAUDE_CONFIG_DIR is unset (expected %q)", ws.Name, want), "eval \"$(tentaqles env --shell <shell>)\"")
 		}
 	}
 	return rep

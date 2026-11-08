@@ -168,7 +168,7 @@ func ShimsReady(ws string) bool {
 
 // WriteShims brings identity ws's shims folder in line with the tq binary: the copy written or
 // replaced, the links made, anything else removed. It reports whether anything changed.
-// tq settings render and tentaqles reach call it.
+// tentaqles settings render and tentaqles reach call it.
 func WriteShims(ws string) (bool, error) {
 	if !workspace.NameRe.MatchString(ws) {
 		return false, fmt.Errorf("invalid workspace name %q", ws)

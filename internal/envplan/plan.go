@@ -79,7 +79,7 @@ type Ops struct {
 	From    string
 	To      string
 	// Notice is the one line the shell prints on stderr at this prompt,
-	// whether or not anything changed (tq env sets it; shell.Emit renders
+	// whether or not anything changed (tentaqles env sets it; shell.Emit renders
 	// it from fixed text, never from a path or the manifest).
 	Notice *Notice
 }
@@ -96,7 +96,7 @@ type Notice struct {
 const (
 	// NoticeMask: an identity's PATH needs its mask folder (a folder
 	// shared with other tools holds an out-of-scope CLI) and the folder is
-	// missing or changed; the fix is tq settings render.
+	// missing or changed; the fix is tentaqles settings render.
 	NoticeMask = "path-mask"
 	// NoticeCmdLong: the identity PATH is longer than a cmd.exe line, so cmd.exe keeps the
 	// PATH it has (out-of-scope CLIs still resolve there); the rest of the identity applies.

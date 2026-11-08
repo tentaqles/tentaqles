@@ -8,7 +8,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// Env is the environment the prompt hook (tq env) reads: a variable lookup, the names it
+// Env is the environment the prompt hook (tentaqles env) reads: a variable lookup, the names it
 // holds (for the prefix entries of the match lists, TF_TOKEN_*), and how the shell spells
 // PATH. PathOK false leaves PATH alone: tq cannot spell it for that shell (fish on Windows,
 // or a bash hook from before ShellPathVar).
@@ -24,7 +24,7 @@ func OSEnv() Env {
 	return Env{Lookup: os.LookupEnv, Names: environNames(os.Environ()), Syntax: NativeSyntax(), PathOK: true}
 }
 
-// ShellEnv is the environment tq env reads for shell sh. On Windows bash and zsh spell PATH
+// ShellEnv is the environment tentaqles env reads for shell sh. On Windows bash and zsh spell PATH
 // their own way: the hook passes that spelling in ShellPathVar and tq answers in it; without it
 // PATH is left alone. fish on Windows: PATH is left alone. Every other case is OSEnv.
 func ShellEnv(sh string) Env {

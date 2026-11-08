@@ -65,7 +65,7 @@ func (m *Manifest) validateScope() error {
 	seen := map[string]bool{}
 	for _, id := range m.ExtraScope {
 		if _, ok := providers.MustLoad().Get(id); !ok {
-			return fmt.Errorf("scope: unknown provider %q (a catalog id: tq providers list)%s", id, unknownProviderHint(id))
+			return fmt.Errorf("scope: unknown provider %q (a catalog id: tentaqles providers list)%s", id, unknownProviderHint(id))
 		}
 		if seen[id] {
 			return fmt.Errorf("scope: %q is listed twice", id)

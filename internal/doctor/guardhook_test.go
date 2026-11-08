@@ -77,7 +77,7 @@ func put(t *testing.T, p, body string) {
 }
 
 // doctor reports guard-hook-missing only for a client that has a claude identity. A client with no
-// claude identity gets no such finding; the launch refusal (tq run) still covers a session in it.
+// claude identity gets no such finding; the launch refusal (tentaqles run) still covers a session in it.
 func TestDoctor_GuardHookNotForAClientWithoutClaude(t *testing.T) {
 	cfg := trustedClient(t, "{ gh: {} }", false)
 	if fs := Run(cfg, deps(nil, t.TempDir(), nil)); has(fs, "guard-hook-missing") {
@@ -94,7 +94,7 @@ func TestDoctor_GuardHookMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("no guard-hook-missing: %+v", fs)
 	}
-	wantFix := "tq run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tq run acme -- claude plugin install tentaqles@tentaqles"
+	wantFix := "tentaqles run acme -- claude plugin marketplace add tentaqles/tentaqles\n    tentaqles run acme -- claude plugin install tentaqles@tentaqles"
 	if f.Level != "error" || f.Workspace != "acme" || f.Fix != wantFix {
 		t.Fatalf("finding %+v", f)
 	}
@@ -113,7 +113,7 @@ func TestDoctor_GuardHookMissing(t *testing.T) {
 	put(t, project, `{"disableAllHooks":true}`)
 	fs = Run(cfg, deps(nil, t.TempDir(), nil))
 	f, ok = findCode(fs, "guard-hook-missing")
-	if !ok || !strings.Contains(f.Msg, project) || f.Fix != "remove \"disableAllHooks\" (or set it to false) in "+project+", then: tq run acme -- claude" {
+	if !ok || !strings.Contains(f.Msg, project) || f.Fix != "remove \"disableAllHooks\" (or set it to false) in "+project+", then: tentaqles run acme -- claude" {
 		t.Fatalf("project switch: %+v", f)
 	}
 }

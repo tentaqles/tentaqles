@@ -36,7 +36,7 @@ default browser, which opens whatever profile was used last.
 It refuses any other URL scheme, a value that starts with '-', a folder that is not a
 client's, a client with no browsers: list, and a listed browser that is not installed. A
 page opened by the BROWSER variable, xdg-open or open inside a client's terminal goes the
-same way (tq settings render writes those shims).`,
+same way (tentaqles settings render writes those shims).`,
 		DisableFlagParsing: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			want, target, err := parseOpenArgs(args)

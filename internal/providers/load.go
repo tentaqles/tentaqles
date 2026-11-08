@@ -121,7 +121,7 @@ func (e *FileError) First() string {
 
 // Fix is what the developer does about it; the message has already named the file.
 func (e *FileError) Fix() string {
-	return "fix or delete it, then run tq providers list"
+	return "fix or delete it, then run tentaqles providers list"
 }
 
 // Detail is the file (with the line and column of a schema error: path:5:3) and the first
@@ -242,7 +242,7 @@ func Load() (*Catalog, error) {
 
 // LoadAll is Load but never stops at the first bad user file: it loads every readable, valid
 // user file over the embedded catalog and returns one error per file it did not load (a
-// *FileError) plus any error reading the folder, so `tq providers list` and `tq doctor` can
+// *FileError) plus any error reading the folder, so `tentaqles providers list` and `tentaqles doctor` can
 // report them all and the hook can decide per workspace. The embedded
 // catalog alone still errors with a nil catalog.
 func LoadAll() (*Catalog, []error) {

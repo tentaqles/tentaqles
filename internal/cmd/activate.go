@@ -10,7 +10,7 @@ import (
 func newActivateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "activate <shell>",
-		Short: "Print the hook to add to your shell profile, e.g. eval \"$(tq activate bash)\"",
+		Short: "Print the hook to add to your shell profile, e.g. eval \"$(tentaqles activate bash)\"",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			h, err := shell.Hook(args[0])

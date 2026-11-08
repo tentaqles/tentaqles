@@ -339,7 +339,7 @@ func Install(sh Shell, p Profiles) (Status, error) {
 		return st, nil
 	}
 	if st.State == "corrupt" {
-		return st, fmt.Errorf("%s: %s contains a partial tq block; run: tq hooks remove %s", sh, profile, sh)
+		return st, fmt.Errorf("%s: %s contains a partial tq block; run: tentaqles hooks remove %s", sh, profile, sh)
 	}
 	if st.State == "unreadable" {
 		return st, fmt.Errorf("%s: cannot read %s", sh, profile)

@@ -60,18 +60,18 @@ func TestEnv_NeutralCwd_UnsetsTrackedVars(t *testing.T) {
 	}
 }
 
-// TQ_ENABLED=0 is the shell-activation kill switch: tq env prints nothing.
+// TQ_ENABLED=0 is the shell-activation kill switch: tentaqles env prints nothing.
 func TestEnv_PrintsNothingUnderKillSwitch(t *testing.T) {
 	root := mkLaunchWS(t, "acme")
 	chdir(t, root)
 	t.Setenv("TQ_ENABLED", "0")
 	if got := runEnv(t, "env", "--shell", "bash"); got != "" {
 		// The output holds env values: never print it (rules).
-		t.Fatalf("tq env under TQ_ENABLED=0 must print nothing, got %d bytes", len(got))
+		t.Fatalf("tentaqles env under TQ_ENABLED=0 must print nothing, got %d bytes", len(got))
 	}
 	for _, flag := range []string{"--off", "--on"} {
 		if _, err := runTq(t, "env", flag); err == nil {
-			t.Fatalf("tq env %s is gone with the tq off/on functions", flag)
+			t.Fatalf("tentaqles env %s is gone with the tq off/on functions", flag)
 		}
 	}
 }

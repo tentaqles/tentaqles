@@ -166,7 +166,7 @@ var (
 )
 
 // installGuardPlugin installs the tentaqles plugin into the client's Claude config, and says why
-// and what to run when it cannot. It never fails reach: tq run refuses a session without the
+// and what to run when it cannot. It never fails reach: tentaqles run refuses a session without the
 // plugin in the meantime.
 func installGuardPlugin(c *cobra.Command, ws *resolve.Workspace) {
 	w := c.OutOrStdout()
@@ -355,7 +355,7 @@ func reachWarnOther(c *cobra.Command, m *manifest.Manifest) {
 		strings.Join(m.OtherProviders, ", "))
 }
 
-// reachDetectShells are the shells whose profile reach checks (every shell tq hooks install
+// reachDetectShells are the shells whose profile reach checks (every shell tentaqles hooks install
 // detects). Tests replace it.
 var reachDetectShells = func(p hooks.Profiles) []hooks.Shell { return hooks.Detect(p, hooks.LookPath) }
 

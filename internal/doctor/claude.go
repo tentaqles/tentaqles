@@ -22,7 +22,7 @@ import (
 var unpinnedRe = regexp.MustCompile(`(?i)\b(npx|bunx|pnpm\s+dlx|uvx)\b[^"]*?(@latest\b|\s-y\s+(@?[a-z0-9._-]+/)?[a-z0-9._-]+(\s|"|$))`)
 
 // claudeChecks reports identity-level Claude config problems for one
-// trusted workspace: settings drift from `tq settings render`, and unpinned
+// trusted workspace: settings drift from `tentaqles settings render`, and unpinned
 // packages in settings.json / .claude.json.
 func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
 	dir := paths.IdentityDir(w.Name, "claude")
@@ -31,7 +31,7 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 	}
 	want := claudesettings.Desired(w.Manifest, "")
 	if res, err := claudesettings.Render(dir, want, true); err == nil && res.Changed {
-		add("warn", "settings-drift", w.Name, "settings.json differs from the tq baseline: "+strings.Join(res.Changes, "; "), "tq settings render "+w.Name)
+		add("warn", "settings-drift", w.Name, "settings.json differs from the tq baseline: "+strings.Join(res.Changes, "; "), "tentaqles settings render "+w.Name)
 	}
 	for _, f := range []string{"settings.json", ".claude.json"} {
 		raw, err := os.ReadFile(filepath.Join(dir, f))
@@ -47,13 +47,13 @@ func claudeChecks(w *resolve.Workspace, add func(level, code, ws, msg, fix strin
 }
 
 // guardHookCheck reports a trusted workspace whose Claude sessions in its folder would start with no
-// tentaqles guard: the check tq run makes before it starts claude, on the same
+// tentaqles guard: the check tentaqles run makes before it starts claude, on the same
 // CLAUDE_CONFIG_DIR and the folder's own project settings, with the same fix line.
 func guardHookCheck(w *resolve.Workspace, add func(level, code, ws, msg, fix string)) {
 	g := guardplugin.CheckSessionGuard(envplan.Desired(w)["CLAUDE_CONFIG_DIR"], w.Root, w.Root)
 	if g.OK || g.NoConfig {
 		// A client with no claude identity has no Claude config for tq to guard, so there is nothing
-		// for doctor to report; tq run still refuses a session in it.
+		// for doctor to report; tentaqles run still refuses a session in it.
 		return
 	}
 	add("error", "guard-hook-missing", w.Name, "no session starts without the tentaqles guard: "+g.Why,
@@ -327,7 +327,7 @@ func pluginForeignPath(names []string, add func(level, code, ws, msg, fix string
 			list := groups[src]
 			add("warn", "plugin-foreign-path", d.name,
 				fmt.Sprintf("%d plugin(s) installed from %s: %s", len(list), where, strings.Join(list, ", ")),
-				"reinstall each inside the identity: tq run "+d.name+" -- claude plugin uninstall <plugin>, then tq run "+d.name+" -- claude plugin install <plugin>")
+				"reinstall each inside the identity: tentaqles run "+d.name+" -- claude plugin uninstall <plugin>, then tentaqles run "+d.name+" -- claude plugin install <plugin>")
 		}
 	}
 }

@@ -19,7 +19,7 @@ import (
 //
 //   - layer 1 (advisory): the session-start preamble states the scope;
 //   - layer 2 (PATH): aws is not on the identity PATH tq builds, az is;
-//   - layer 3 (harness config): tq settings render leaves no AWS MCP server in the identity's
+//   - layer 3 (harness config): tentaqles settings render leaves no AWS MCP server in the identity's
 //     Claude home, even one configured there before.
 
 // scenarioGlobalPATH lays out a machine's global PATH with fakes: the AWS CLI's install
@@ -58,9 +58,9 @@ func envJSON(t *testing.T, sh string) (set map[string]string, unset []string) {
 	return v.Set, v.Unset
 }
 
-// TestEnv_ScopeReferenceScenario_PATH: on the PATH tq env builds for
+// TestEnv_ScopeReferenceScenario_PATH: on the PATH tentaqles env builds for
 // company-x, a shell call to aws finds nothing (command-not-found) while az still resolves;
-// the AWS variables are unset. tq run from outside the folder resolves on the same PATH.
+// the AWS variables are unset. tentaqles run from outside the folder resolves on the same PATH.
 func TestEnv_ScopeReferenceScenario_PATH(t *testing.T) {
 	root, _ := setupScoped(t, "company-x", companyXBody)
 	global, awsDir, azDir := scenarioGlobalPATH(t)
@@ -75,7 +75,7 @@ func TestEnv_ScopeReferenceScenario_PATH(t *testing.T) {
 	set, unset := envJSON(t, sh)
 	idPath, ok := set["PATH"]
 	if !ok {
-		t.Fatalf("tq env sets no PATH: %v", set)
+		t.Fatalf("tentaqles env sets no PATH: %v", set)
 	}
 	env := []string{"PATH=" + idPath, "PATHEXT=.COM;.EXE;.BAT;.CMD"}
 	if p, err := envplan.LookPath("aws", env); !errors.Is(err, envplan.ErrNotInPath) {
@@ -102,13 +102,13 @@ func TestEnv_ScopeReferenceScenario_PATH(t *testing.T) {
 		t.Setenv(envplan.ShellPathVar, "")
 	}
 
-	// tq run . -- aws and tq run company-x -- aws resolve on the identity PATH: not found,
+	// tentaqles run . -- aws and tentaqles run company-x -- aws resolve on the identity PATH: not found,
 	// and nothing is launched. az is launched from its folder.
 	calls := fakeExec(t)
 	for _, target := range []string{".", "company-x"} {
 		err := runCmdErr(t, "run", target, "--", "aws", "ec2", "run-instances")
 		if err == nil || !strings.Contains(err.Error(), "command not found on the PATH of identity company-x") {
-			t.Fatalf("tq run %s -- aws: %v", target, err)
+			t.Fatalf("tentaqles run %s -- aws: %v", target, err)
 		}
 	}
 	if len(*calls) != 0 {

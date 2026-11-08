@@ -64,7 +64,7 @@ func TestProviders_MatchesLegacyTable(t *testing.T) {
 // that carry identity env vars show up in Providers().
 func TestProviders_IncludesNewIdentities(t *testing.T) {
 	got := Providers()
-	// azure-devops is the az CLI under its own id: `tq login <ws> azure-devops` runs az login.
+	// azure-devops is the az CLI under its own id: `tentaqles login <ws> azure-devops` runs az login.
 	for _, id := range []string{"glab", "snowflake", "databricks", "postgres", "terraform", "azure-devops"} {
 		if _, ok := got[id]; !ok {
 			t.Errorf("Providers() missing new identity %q", id)

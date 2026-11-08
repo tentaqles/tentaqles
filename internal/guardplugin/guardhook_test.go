@@ -129,7 +129,7 @@ func TestGuardHook_FailsClosed(t *testing.T) {
 	if g := CheckGuardHook(""); g.OK || !g.NoConfig {
 		t.Fatalf("no config dir: %+v", g)
 	}
-	if got := GuardHookFix("acme", GuardHook{NoConfig: true}); len(got) != 1 || got[0] != "add claude to the identities in acme's manifest, then: tq settings render acme" {
+	if got := GuardHookFix("acme", GuardHook{NoConfig: true}); len(got) != 1 || got[0] != "add claude to the identities in acme's manifest, then: tentaqles settings render acme" {
 		t.Fatalf("no-config fix = %q", got)
 	}
 }
@@ -280,7 +280,7 @@ func TestGuardHook_UnresolvedFolder(t *testing.T) {
 		if g.OK || !g.Unresolved || g.Why == "" {
 			t.Fatalf("%s working folder: want a refusal, got %+v", name, g)
 		}
-		if got := GuardHookFix("acme", g); len(got) != 1 || !strings.Contains(got[0], "tq run acme -- claude") {
+		if got := GuardHookFix("acme", g); len(got) != 1 || !strings.Contains(got[0], "tentaqles run acme -- claude") {
 			t.Fatalf("%s working folder: fix = %q", name, got)
 		}
 	}
@@ -293,11 +293,11 @@ func TestGuardHook_UnresolvedFolder(t *testing.T) {
 // record covers them), a new session for a project's.
 func TestGuardHook_ProjectFixLines(t *testing.T) {
 	got := GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/p/.claude/settings.local.json"})
-	if len(got) != 1 || got[0] != `remove "disableAllHooks" (or set it to false) in /p/.claude/settings.local.json, then: tq run acme -- claude` {
+	if len(got) != 1 || got[0] != `remove "disableAllHooks" (or set it to false) in /p/.claude/settings.local.json, then: tentaqles run acme -- claude` {
 		t.Fatalf("project fix = %q", got)
 	}
 	got = GuardHookFix("acme", GuardHook{Why: "x", Setting: "enabledPlugins", File: "/p/.claude/settings.json"})
-	if len(got) != 1 || got[0] != `set "tentaqles@tentaqles" to true under enabledPlugins in /p/.claude/settings.json, then: tq run acme -- claude` {
+	if len(got) != 1 || got[0] != `set "tentaqles@tentaqles" to true under enabledPlugins in /p/.claude/settings.json, then: tentaqles run acme -- claude` {
 		t.Fatalf("enabledPlugins fix = %q", got)
 	}
 }
@@ -306,18 +306,18 @@ func TestGuardHook_ProjectFixLines(t *testing.T) {
 // switched off is enabled; for disableAllHooks the fix names the setting and the file.
 func TestGuardHook_FixLines(t *testing.T) {
 	want := []string{
-		"tq run acme -- claude plugin marketplace add tentaqles/tentaqles",
-		"tq run acme -- claude plugin install tentaqles@tentaqles",
+		"tentaqles run acme -- claude plugin marketplace add tentaqles/tentaqles",
+		"tentaqles run acme -- claude plugin install tentaqles@tentaqles",
 	}
 	if got := GuardHookFix("acme", GuardHook{Why: "x", Missing: true}); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("missing fix = %q", got)
 	}
 	got := GuardHookFix("acme", GuardHook{Why: "x", Disabled: true})
-	if strings.Join(got, "\n") != "tq run acme -- claude plugin enable tentaqles@tentaqles" {
+	if strings.Join(got, "\n") != "tentaqles run acme -- claude plugin enable tentaqles@tentaqles" {
 		t.Fatalf("disabled fix = %q", got)
 	}
 	got = GuardHookFix("acme", GuardHook{Why: "x", Setting: "disableAllHooks", File: "/c/settings.json"})
-	if len(got) != 1 || got[0] != `remove "disableAllHooks" (or set it to false) in /c/settings.json, then: tq run acme -- claude` {
+	if len(got) != 1 || got[0] != `remove "disableAllHooks" (or set it to false) in /c/settings.json, then: tentaqles run acme -- claude` {
 		t.Fatalf("setting fix = %q", got)
 	}
 }
@@ -400,7 +400,7 @@ func TestGuardHook_BrokenFileFixLines(t *testing.T) {
 	t.Run("identity settings.json not JSON", func(t *testing.T) {
 		claude := guardClaudeDir(t, hooks, `{"enabledPlugins":`)
 		g := CheckGuardHook(claude)
-		want := fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: tq run acme -- claude", filepath.Join(claude, "settings.json"))
+		want := fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: tentaqles run acme -- claude", filepath.Join(claude, "settings.json"))
 		if g.OK || g.File != filepath.Join(claude, "settings.json") || strings.Join(GuardHookFix("acme", g), "\n") != want {
 			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
 		}
@@ -425,7 +425,7 @@ func TestGuardHook_BrokenFileFixLines(t *testing.T) {
 		project := filepath.Join(root, ".claude", "settings.local.json")
 		writeFile(t, project, `{"disableAllHooks":false,}`)
 		g := CheckSessionGuard(claude, root, root)
-		want := fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: tq run acme -- claude", project)
+		want := fmt.Sprintf("repair %s (it can't be read as the JSON it must be), then: tentaqles run acme -- claude", project)
 		if g.OK || g.File != project || strings.Join(GuardHookFix("acme", g), "\n") != want {
 			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))
 		}
@@ -444,9 +444,9 @@ func TestGuardHook_BrokenFileFixLines(t *testing.T) {
 		claude := guardClaudeDir(t, `{"hooks":`, ok)
 		g := CheckGuardHook(claude)
 		want := []string{
-			"tq run acme -- claude plugin uninstall tentaqles@tentaqles",
-			"tq run acme -- claude plugin marketplace add tentaqles/tentaqles",
-			"tq run acme -- claude plugin install tentaqles@tentaqles",
+			"tentaqles run acme -- claude plugin uninstall tentaqles@tentaqles",
+			"tentaqles run acme -- claude plugin marketplace add tentaqles/tentaqles",
+			"tentaqles run acme -- claude plugin install tentaqles@tentaqles",
 		}
 		if g.OK || !g.Reinstall || strings.Join(GuardHookFix("acme", g), "\n") != strings.Join(want, "\n") {
 			t.Fatalf("%+v -> %q", g, GuardHookFix("acme", g))

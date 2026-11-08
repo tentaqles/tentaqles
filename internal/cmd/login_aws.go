@@ -41,7 +41,7 @@ func awsSSOSessions(configPath string) []string {
 	return out
 }
 
-// awsLoginArgs picks the `aws` arguments for `tq login <ws> aws`.
+// awsLoginArgs picks the `aws` arguments for `tentaqles login <ws> aws`.
 //
 //	--sso-session NAME   aws sso login --sso-session NAME (always wins)
 //	--sso                aws configure sso (first-time SSO setup)

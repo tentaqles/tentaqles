@@ -22,7 +22,7 @@ func renderShims(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 		}
 		ch, err := envplan.WriteShims(ws.Name)
 		if err != nil {
-			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: browser shims not written: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
+			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: browser shims not written: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
 			return false
 		}
 		if ch {
@@ -72,7 +72,7 @@ func renderScope(c *cobra.Command, ws *resolve.Workspace, dryRun bool) bool {
 		}
 	case l != nil:
 		if ch, err := l.WriteMask(); err != nil {
-			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: PATH mask not written: %v (run tq settings render %s)\n", ws.Name, err, ws.Name)
+			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: PATH mask not written: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
 		} else if ch {
 			fmt.Fprintf(c.OutOrStdout(), "%s: PATH mask written (%s, %d names)\n", ws.Name, l.MaskDir(), len(l.Masked()))
 			changed = true

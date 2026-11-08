@@ -14,7 +14,7 @@ type AddFunc func(level, code, ws, msg, fix string)
 // Check is a doctor check registered from its own file, so each
 // workstream adds checks without editing Run. Either func may be nil.
 // Checks must stay cheap: no network, no subprocess (RunForCwd backs the
-// hook path; Run calls these only from tq doctor).
+// hook path; Run calls these only from tentaqles doctor).
 type Check struct {
 	// Name is unique, e.g. "launcher" or "codex".
 	Name string

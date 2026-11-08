@@ -85,7 +85,7 @@ type launched struct {
 // String names the call without its env: a failure message must never print the environment.
 func (l launched) String() string { return l.name + " " + strings.Join(l.args, " ") }
 
-// prog is a launched command's program name: tq run resolves the command on the identity PATH.
+// prog is a launched command's program name: tentaqles run resolves the command on the identity PATH.
 func prog(name string) string { return strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)) }
 
 // fakeExec replaces execCommand for the test and returns the recorded calls.
@@ -175,7 +175,7 @@ func TestLaunchClaudeArgs(t *testing.T) {
 	}
 }
 
-// tq run <client> -- claude starts claude with the client's identity: its own Claude config home.
+// tentaqles run <client> -- claude starts claude with the client's identity: its own Claude config home.
 func TestRunClaudeHasTheClientsIdentity(t *testing.T) {
 	mkLaunchWS(t, "acme")
 	calls := fakeExec(t)
@@ -201,7 +201,7 @@ func samePathT(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// tq run . is the client of the folder (any subfolder), and in a neutral folder no client: no
+// tentaqles run . is the client of the folder (any subfolder), and in a neutral folder no client: no
 // other client's Claude config home leaks into it.
 func TestRunDotResolvesCwd(t *testing.T) {
 	root := mkLaunchWS(t, "acme")
@@ -233,7 +233,7 @@ func TestRunDotResolvesCwd(t *testing.T) {
 	}
 }
 
-// From a Claude Code session in the client's folder, tq run <its name> and tq run . launch with
+// From a Claude Code session in the client's folder, tentaqles run <its name> and tentaqles run . launch with
 // its identity and without the bypass flag.
 func TestRunFromAgentSession(t *testing.T) {
 	root := mkLaunchWS(t, "acme")
@@ -267,12 +267,12 @@ func TestRunCommandFlagsAreNotTqFlags(t *testing.T) {
 	}
 }
 
-// otherClientRefusal is the exact refusal of a session's tq run <other>.
+// otherClientRefusal is the exact refusal of a session's tentaqles run <other>.
 func otherClientRefusal(name string) string {
-	return "tq run: " + name + " is another client. A Claude Code session can only run under the client of its own folder."
+	return "tentaqles run: " + name + " is another client. A Claude Code session can only run under the client of its own folder."
 }
 
-// A Claude Code session launches only the client of the folder it is in: tq run <other> refuses
+// A Claude Code session launches only the client of the folder it is in: tentaqles run <other> refuses
 // and nothing launches, from another client's folder and from a neutral one.
 func TestRunOtherClient_RefusedForAgents(t *testing.T) {
 	roots := mkWorkspacesInOneBase(t, "alpha", "beta")
@@ -282,7 +282,7 @@ func TestRunOtherClient_RefusedForAgents(t *testing.T) {
 		chdir(t, from)
 		_, err := runTq(t, "run", "beta", "--", "gh", "pr", "list")
 		if err == nil || err.Error() != otherClientRefusal("beta") {
-			t.Fatalf("from %s: tq run beta must refuse in a session, got %v", from, err)
+			t.Fatalf("from %s: tentaqles run beta must refuse in a session, got %v", from, err)
 		}
 	}
 	if len(*calls) != 0 {
@@ -290,14 +290,14 @@ func TestRunOtherClient_RefusedForAgents(t *testing.T) {
 	}
 }
 
-// A neutral folder is no client's folder: a session there refuses tq run of any client.
+// A neutral folder is no client's folder: a session there refuses tentaqles run of any client.
 func TestRunOtherClient_NeutralFolderRefused(t *testing.T) {
 	mkWorkspacesInOneBase(t, "alpha", "beta")
 	t.Setenv("CLAUDECODE", "1")
 	chdir(t, t.TempDir())
 	calls := fakeExec(t)
 	if _, err := runTq(t, "run", "beta", "--", "az", "group", "list"); err == nil || err.Error() != otherClientRefusal("beta") {
-		t.Fatalf("tq run beta from a neutral folder must refuse, got %v", err)
+		t.Fatalf("tentaqles run beta from a neutral folder must refuse, got %v", err)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("a neutral folder launched beta: %+v", *calls)
@@ -336,7 +336,7 @@ func TestRunOtherClient_HumanAllowed(t *testing.T) {
 	}
 }
 
-// A CLI of a provider outside the client's scope does not run through tq run, however it is
+// A CLI of a provider outside the client's scope does not run through tentaqles run, however it is
 // spelled; one in scope does.
 func TestRun_OutOfScopeCLIRefused(t *testing.T) {
 	base := newBase(t)
@@ -352,7 +352,7 @@ func TestRun_OutOfScopeCLIRefused(t *testing.T) {
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, name := range []string{"aws", "aws.exe"} {
 		if _, err := runTq(t, "run", "acme", "--", name, "s3", "ls"); err == nil || !strings.Contains(err.Error(), "outside its scope") {
-			t.Fatalf("tq run acme -- %s: %v", name, err)
+			t.Fatalf("tentaqles run acme -- %s: %v", name, err)
 		}
 	}
 	if len(*calls) != 0 {

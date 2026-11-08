@@ -15,7 +15,7 @@ import (
 func BenchmarkLayer_Compile(b *testing.B) {
 	b.Setenv("TQ_HOME", testutil.TempDir(b))
 	ws := companyX(b, true)
-	_ = Desired(ws) // the catalog loaded once per process, as in tq env
+	_ = Desired(ws) // the catalog loaded once per process, as in tentaqles env
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = LayerFor(ws)

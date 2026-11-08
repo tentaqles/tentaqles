@@ -168,8 +168,8 @@ func TestSessionStart_Workspace(t *testing.T) {
 	if !strings.Contains(out, "Identity: acme") {
 		t.Fatalf("missing Identity: acme in %q", out)
 	}
-	if !strings.Contains(out, "tq doctor:") {
-		t.Fatalf("missing tq doctor: block in %q", out)
+	if !strings.Contains(out, "tentaqles doctor:") {
+		t.Fatalf("missing tentaqles doctor: block in %q", out)
 	}
 }
 
@@ -256,9 +256,9 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 		"Cloud: azure, aws\n" +
 		"Identity: acme · CLAUDE_CONFIG_DIR=/home/acme/.tentaqles/identities/acme/claude\n" +
 		"Tools: aws, az, claude, gh. Other providers' CLIs are not on this terminal's PATH.\n" +
-		"\ntq doctor:\n" +
+		"\ntentaqles doctor:\n" +
 		"- [ok] all checks passed\n" +
-		"\nRules: tq blocks git, gh and cloud commands that would run under another identity (exit 2). Run `tq doctor` for details.\n"
+		"\nRules: tq blocks git, gh and cloud commands that would run under another identity (exit 2). Run `tentaqles doctor` for details.\n"
 	if got != want {
 		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
 	}

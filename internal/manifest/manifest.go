@@ -53,7 +53,7 @@ type Identity struct {
 	ShareCapabilities *bool `yaml:"share_capabilities"`
 	// ExpectedAccount is the account this identity must be logged in as --
 	// an email for Claude, a username for gh. Declaring it is what lets
-	// `tq doctor` tell a correctly wired workspace signed into the wrong
+	// `tentaqles doctor` tell a correctly wired workspace signed into the wrong
 	// client from a correct one; leaving it empty means that identity is
 	// never verified, and costs nothing.
 	//
@@ -66,7 +66,7 @@ type Identity struct {
 
 type Claude struct {
 	// Env is merged into the identity's settings.json env by
-	// `tq settings render`. Values are checked like the rest of the manifest:
+	// `tentaqles settings render`. Values are checked like the rest of the manifest:
 	// a secret-shaped value makes the manifest fail to load.
 	Env map[string]string `yaml:"env"`
 }

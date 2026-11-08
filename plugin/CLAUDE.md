@@ -6,7 +6,7 @@ pinned to a release tag and its sha; see `docs/RELEASING.md`).
 It holds the hook (`hooks/hooks.json`, `scripts/tq_hook.sh`) and nothing else; `tests/` is a pytest suite for the
 script.
 
-- The hook is a bridge to `tq claude-hook`. The rules live in the Go CLI (`internal/guard`).
+- The hook is a bridge to `tentaqles claude-hook`. The rules live in the Go CLI (`internal/guard`).
 - The PreToolUse matcher is `^(Bash|PowerShell)$`: only shell commands are checked.
 - `pre-tool-use` answers 0 or 2 and nothing else: Claude Code runs a call whose hook answers anything else, or that
   it killed. If tq is missing, fails or hangs, the call is denied.

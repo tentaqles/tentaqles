@@ -7,13 +7,13 @@ which variables, how to install it, how to log in and what to hide is data: the 
 ## Where it lives
 
 - The built-in providers: `internal/providers/catalog/<id>.yaml`, embedded in the binary.
-- Your own: `~/.tentaqles/providers/<id>.yaml` (`$TQ_HOME/providers`), written by `tq providers add` or by hand.
+- Your own: `~/.tentaqles/providers/<id>.yaml` (`$TQ_HOME/providers`), written by `tentaqles providers add` or by hand.
   A file with the id of a built-in replaces it, except its `match` lists, which are added to the built-in ones: an
   override can hide more, never less. A file with a new id adds a provider, and may not claim a CLI, subcommand or
   variable a built-in lists (extend the built-in instead, with a file named for its id).
 
-`tq providers list` shows the catalog and any file that did not load, with the reason; `tq providers show <id>`
-prints one provider; `tq providers check` tells which CLIs are installed.
+`tentaqles providers list` shows the catalog and any file that did not load, with the reason; `tentaqles providers show <id>`
+prints one provider; `tentaqles providers check` tells which CLIs are installed.
 
 ## Schema
 
@@ -30,7 +30,7 @@ cli:                           # omit, or null, for a provider with no CLI
   command: gh
   version_args: ["--version"]
 
-install:                       # per-OS install hints, shown by tq doctor when the CLI is missing
+install:                       # per-OS install hints, shown by tentaqles doctor when the CLI is missing
   windows: { winget: "GitHub.cli", scoop: "gh" }
   macos:   { brew: "gh" }
   linux:   { apt: "gh" }       # also pip, npm, url, note
@@ -40,10 +40,10 @@ identity:                      # omit for a CLI with no per-client config home
     GH_CONFIG_DIR: "{dir}"     # {dir} is ~/.tentaqles/identities/<client>/<id>
   caveat: "..."                # optional: what the variable does not move
 
-login:                         # what tq login <client> <id> runs; command defaults to cli.command
+login:                         # what tentaqles login <client> <id> runs; command defaults to cli.command
   args: ["auth", "login"]
 
-notes: "..."                   # optional, shown by tq providers show
+notes: "..."                   # optional, shown by tentaqles providers show
 
 match:                         # what a client's terminal hides when this provider is outside its scope
   executables: [gh, hub]       # masked on the client's PATH; no Windows suffix
@@ -63,7 +63,7 @@ the scope:
 
 - each of its `executables` is hidden from the client's PATH: a PATH folder that holds only such CLIs is dropped,
   and one shared with other tools gets a stub of the same name in the client's mask folder, earlier on the PATH,
-  that prints `<name>: command not found` and exits 127. `tq run` refuses the name however it is spelled;
+  that prints `<name>: command not found` and exits 127. `tentaqles run` refuses the name however it is spelled;
 - each of its `env` variables is unset, unless a provider in scope claims the same variable.
 
 A provider in scope always wins: a CLI it claims, even by one subcommand, stays. A generic tool, whose CLI is not in

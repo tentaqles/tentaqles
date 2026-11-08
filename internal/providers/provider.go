@@ -102,7 +102,7 @@ func hasControlChars(s string) bool {
 }
 
 // ValidateEnvPair checks a single identity env key/value for injection-unsafe
-// content. It is used by Validate and by "tq providers add".
+// content. It is used by Validate and by "tentaqles providers add".
 func ValidateEnvPair(k, v string) error {
 	if !EnvKeyRe.MatchString(k) {
 		return fmt.Errorf("identity.env key %q is not a valid environment variable name (must match %s)", k, EnvKeyRe.String())
