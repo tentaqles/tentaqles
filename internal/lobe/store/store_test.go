@@ -615,6 +615,63 @@ func TestLobeRepoKey(t *testing.T) {
 			t.Error("App and app give different keys on Windows")
 		}
 	}
+
+	// A linked worktree takes the key of its main repository (c/app); a submodule and a worktree whose
+	// main repository lies outside the client folder keep their own keys (the keys of "sub" and "wt2").
+	writeWorktreeShape(t, c)
+	if got := RepoKey(c, filepath.Join(c, "wt", "fix")); got != "r_a172cedc" {
+		t.Errorf("worktree RepoKey = %q, want the main repository's r_a172cedc", got)
+	}
+	writeGitTestFile(t, filepath.Join(c, "sub", ".git"), "gitdir: "+filepath.Join(c, "subgit")+"\n")
+	writeGitTestFile(t, filepath.Join(c, "subgit", "placeholder"), "")
+	if got := RepoKey(c, filepath.Join(c, "sub")); got != "r_ddc6e2b2" {
+		t.Errorf("submodule RepoKey = %q, want the key of sub, r_ddc6e2b2", got)
+	}
+	outside := t.TempDir()
+	writeGitTestFile(t, filepath.Join(outside, "app", ".git", "worktrees", "x", "commondir"), "../..\n")
+	writeGitTestFile(t, filepath.Join(c, "wt2", ".git"), "gitdir: "+filepath.Join(outside, "app", ".git", "worktrees", "x")+"\n")
+	if got := RepoKey(c, filepath.Join(c, "wt2")); got != "r_745b01a8" {
+		t.Errorf("worktree outside the client RepoKey = %q, want the key of wt2, r_745b01a8", got)
+	}
+
+	// A worktree of a bare repository (its common folder is bare.git, not .git) keeps its own key: the
+	// key of its relative path, not the key of bare.git's parent (the client folder, r_cdb4ee2a).
+	bareClient := t.TempDir()
+	writeGitTestFile(t, filepath.Join(bareClient, "bare.git", "worktrees", "fix", "commondir"), "../..\n")
+	writeGitTestFile(t, filepath.Join(bareClient, "wt", "fix", ".git"), "gitdir: "+filepath.Join(bareClient, "bare.git", "worktrees", "fix")+"\n")
+	plain := t.TempDir()
+	got := RepoKey(bareClient, filepath.Join(bareClient, "wt", "fix"))
+	if want := RepoKey(plain, filepath.Join(plain, "wt", "fix")); got != want || got == "r_cdb4ee2a" {
+		t.Errorf("worktree of bare.git RepoKey = %q, want its own relative key %q (not r_cdb4ee2a)", got, want)
+	}
+}
+
+// writeWorktreeShape builds, in client folder c, the main repository c/app (its .git folder) and the
+// linked worktree c/wt/fix (a .git file naming c/app/.git/worktrees/fix, whose commondir is ../..).
+func writeWorktreeShape(t *testing.T, c string) {
+	t.Helper()
+	writeGitTestFile(t, filepath.Join(c, "app", ".git", "worktrees", "fix", "commondir"), "../..\n")
+	writeGitTestFile(t, filepath.Join(c, "wt", "fix", ".git"), "gitdir: "+filepath.Join(c, "app", ".git", "worktrees", "fix")+"\n")
+}
+
+// writeGitTestFile writes content to path, creating its parent folders.
+func writeGitTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLobeRepoKeyStartsNoProcess(t *testing.T) {
+	c := t.TempDir()
+	writeWorktreeShape(t, c)
+	t.Setenv("PATH", "")
+	if got := RepoKey(c, filepath.Join(c, "wt", "fix")); got != "r_a172cedc" {
+		t.Errorf("worktree RepoKey with an empty PATH = %q, want r_a172cedc", got)
+	}
 }
 
 func TestLobeStoreNoInit(t *testing.T) {

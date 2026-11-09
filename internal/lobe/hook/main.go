@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/lobe/sense"
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -148,6 +149,13 @@ func (r *run) work(stdin io.Reader, steps []step) {
 	r.ws = res.Workspace
 	if !loginMatches(r.host, r.ws.Name) {
 		return
+	}
+	// A call the design skips leaves nothing, not even the client's store folder: the skip decision is
+	// made before the store is opened (recordFailure makes the same check, too).
+	if r.event == evPostToolUseFailure {
+		if _, skip := sense.Skip(callOf(r)); skip {
+			return
+		}
 	}
 	st, err := store.Open(r.ws.Name, store.ReadWrite)
 	if err != nil {

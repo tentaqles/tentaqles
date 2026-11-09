@@ -11,8 +11,11 @@ import (
 const maxCallRunes = 4000
 
 // CallText is the text of a call that rules are matched against: for a shell tool the command
-// string, for any other tool the compact JSON of the tool input with sorted keys. It is scrubbed
-// and at most 4000 characters long.
+// string, for any other tool (every tool that is not a shell tool, MCP tools included) the compact
+// JSON of the tool input with sorted keys, so two inputs that differ only in key order give one
+// text. An input that is a JSON string holding JSON is unwrapped first; an input that is not a JSON
+// object (a bare string or an array) is scrubbed as the JSON value it is, or as text when it is not
+// JSON. It is scrubbed and at most 4000 characters long.
 func CallText(tool string, input json.RawMessage) string {
 	var text string
 	if ShellTool(tool) {

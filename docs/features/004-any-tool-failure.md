@@ -1,6 +1,6 @@
 # 004: A failed call from any tool is logged
 
-**Status** not started · **Stage** Sense · **Entries** S-01 (the rest: every tool, the skip rules, the lobe's
+**Status** built, reviewed and evaluated on Windows on 2026-11-09 (tests, tester brief 9 of 9); CI and the owner's checks pending · **Stage** Sense · **Entries** S-01 (the rest: every tool, the skip rules, the lobe's
 own tools, the grep rule, the worktree key), F-02 (`internal/lobe/shellwords`), F-01 (the worktree half of the
 repository key) · **Needs** 003 · **Feeds** 005, 006, 008
 
@@ -186,8 +186,9 @@ trade off" in `CLAUDE.md`. The plugin's pinned test still lists exactly `PostToo
 
 ## Evaluation
 
-The tester is a fresh agent with the built `tentaqles` first on `PATH` and an empty working folder. Use bash
-(Git Bash on Windows). No network. Run the standard setup of feature 002 first:
+The tester is a fresh agent with the built program called by its full path (read every `tentaqles` below as that
+path: in an activated shell `tentaqles` is a shell function that runs the installed program) and an empty
+working folder. Use bash (Git Bash on Windows). No network. Run the standard setup of feature 002 first:
 
 ```bash
 W="$(pwd -W 2>/dev/null || pwd)"; mkdir -p "$W/home"
@@ -295,3 +296,32 @@ read as JSON. No line in this feature has an `fp`.
   holds. This file keeps the stated 1. If 008 decides otherwise, that feature changes it.
 - **Nested clones and submodules** are keyed by their own folder and have no graph behind the key (S-01
   risks). The event is still logged.
+
+## Result of the build, the review and the tester run
+
+Built on 2026-11-09 by four Haiku builders from written briefs (the tokenizer, the worktree key, every tool, the
+skip rules), reviewed as one change by a Sonnet reviewer, then fixed in one round by a Haiku builder and rerun by
+the main session.
+
+- Brief check (task 1): the code fit. Claude Code's hooks page says a declined call fires `PermissionDenied` and a
+  cancelled tool fires no failure event, so rules 5 and 6 are guards for hosts or versions that report a refusal
+  as a failure. Which event carries a failed MCP call is still from the page only; the owner's capture session
+  settles it.
+- The review found one blocking bug that no test had caught: `tq lobe status 2>&1` split at the `&`, so the
+  memory's own command would have been recorded. Redirections are now stripped before the own-tool and grep rules
+  (`shellwords.StripRedirects`). It also found that a skipped call still created the client's store (the skip
+  decision now runs before the store opens), a worktree of a bare repository keyed wrongly (the common folder must
+  be named `.git`), and the missing versions in the refusal table (the source names none; the comment says so).
+- Tests: the whole repository is green on Windows (`go vet`, `go build`, `go test ./...`); no plugin change.
+  `TestLobeShellwordsMatchTheGuard` runs 54 shared cases through both tokenizers; no non-test file under
+  `internal/guard` changed.
+- Tester brief: 9 of 9 on Windows 11 in Git Bash against a program built from the working tree. After the four
+  own-tool and two skip payloads, acme's store held only its three files (`store.json`, `lock`, the log).
+
+Known narrow cases, stated in the code: the grep rule reads the first statement that is not a `cd`, so
+`grep x f; npm test` with `Exit code 1` is `ok`; the redirect strip ignores quotes, so `grep "x>y" f` loses `>y`
+for those two rules only; a pipe after the memory's own command (`tq lobe status | head`) is recorded, because
+every statement must be the memory's own.
+
+Left open: CI on Linux and macOS; the owner's person checks (a failed edit, a refused call, an interrupted call,
+an MCP failure); the capture session, which decides whether MCP failures arrive on `PostToolUseFailure`.

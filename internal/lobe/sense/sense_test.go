@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -262,6 +263,40 @@ func TestLobeSenseLocate(t *testing.T) {
 	}
 }
 
+// TestLobeSenseWorktreeKey: a linked worktree is keyed by its main repository, its cwd stays relative
+// to the worktree, and a submodule keeps its own key. No process may be started, so PATH is empty.
+func TestLobeSenseWorktreeKey(t *testing.T) {
+	t.Setenv("PATH", "")
+	c := t.TempDir()
+	for _, f := range []struct{ path, content string }{
+		{filepath.Join(c, "app", ".git", "worktrees", "fix", "commondir"), "../..\n"},
+		{filepath.Join(c, "wt", "fix", ".git"), "gitdir: " + filepath.Join(c, "app", ".git", "worktrees", "fix") + "\n"},
+		{filepath.Join(c, "sub", ".git"), "gitdir: " + filepath.Join(c, "subgit") + "\n"},
+		{filepath.Join(c, "subgit", "placeholder"), ""},
+	} {
+		if err := os.MkdirAll(filepath.Dir(f.path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f.path, []byte(f.content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(c, "wt", "fix", "src"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	const appKey = "r_a172cedc"
+
+	if got := Locate(c, filepath.Join(c, "wt", "fix")); got != (Place{Repo: appKey, Cwd: "."}) {
+		t.Errorf("worktree root: Locate = %+v, want {Repo:%s Cwd:.}", got, appKey)
+	}
+	if got := Locate(c, filepath.Join(c, "wt", "fix", "src")); got != (Place{Repo: appKey, Cwd: "src"}) {
+		t.Errorf("worktree src: Locate = %+v, want {Repo:%s Cwd:src}", got, appKey)
+	}
+	if got := Locate(c, filepath.Join(c, "sub")); got != (Place{Repo: "r_ddc6e2b2", Cwd: "."}) {
+		t.Errorf("submodule: Locate = %+v, want {Repo:r_ddc6e2b2 Cwd:.}", got)
+	}
+}
+
 func TestLobeSenseLocateThroughALink(t *testing.T) {
 	c := t.TempDir()
 	for _, d := range []string{
@@ -387,6 +422,17 @@ func TestLobeSenseOutcome(t *testing.T) {
 		t.Errorf("line id = %v, want %q", line["id"], out.ID)
 	}
 
+	// A tool that is not a shell tool: its outcome carries the call text CallText gives it, and its tool name.
+	mcpInput := json.RawMessage(`{"n":4411}`)
+	mcpCall := Call{Session: "s1", Tool: "mcp__acme__ping", CallID: "toolu_mcp", Input: mcpInput, Error: "widget 4411 is not frobnicated"}
+	mcpOut, err := Record(context.Background(), s, FromClaudeFailure(mcpCall, Place{Cwd: "."}, fixedNow()), mcpCall)
+	if err != nil {
+		t.Fatalf("Record of an MCP failure: %v", err)
+	}
+	if want := CallText("mcp__acme__ping", mcpInput); mcpOut.Call != want || mcpOut.Tool != "mcp__acme__ping" {
+		t.Errorf("MCP outcome Call/Tool = %q/%q, want %q/mcp__acme__ping", mcpOut.Call, mcpOut.Tool, want)
+	}
+
 	// A fresh store whose events path is a regular file cannot take the line.
 	fresh := openClient(t, "beta")
 	if err := os.WriteFile(filepath.Join(fresh.Dir(), "events"), []byte("not a folder\n"), 0600); err != nil {
@@ -459,6 +505,177 @@ func TestLobeSenseNoInit(t *testing.T) {
 					})
 				}
 			}
+		}
+	}
+}
+
+func TestLobeSenseEveryToolEvent(t *testing.T) {
+	now := fixedNow()
+
+	edit := FromClaudeFailure(Call{
+		Session: "s", Tool: "Edit", CallID: "e1",
+		Input: json.RawMessage(`{"file_path":"a.txt"}`),
+		Error: "Exit code 1\nString to replace not found",
+	}, Place{Cwd: "."}, now)
+	if edit.Exit != nil {
+		t.Errorf("Edit Exit = %d, want nil: the exit rule is for shell tools only", *edit.Exit)
+	}
+	if got := edit.Error.String(); got != "Exit code 1\nString to replace not found" {
+		t.Errorf("Edit Error = %q, want the whole error", got)
+	}
+
+	mcp := FromClaudeFailure(Call{
+		Session: "s", Tool: "mcp__acme__ping", CallID: "m1",
+		Input: json.RawMessage(`{"password":"hunter2","note":"hi"}`),
+		Error: "widget is not frobnicated",
+	}, Place{Cwd: "."}, now)
+	if got := mcp.Input.String(); got != `{"note":"hi","password":"[redacted:key]"}` {
+		t.Errorf("MCP Input = %q", got)
+	}
+
+	unnamed := FromClaudeFailure(Call{Session: "s", CallID: "u1", Input: json.RawMessage(`{}`), Error: "x"}, Place{Cwd: "."}, now)
+	if unnamed.Tool != "unknown" {
+		t.Errorf("empty tool name: Tool = %q, want unknown", unnamed.Tool)
+	}
+
+	const secret = "Zx81kQpL0029aaBB"
+	web := Call{
+		Session: "s", Tool: "WebFetch", CallID: "w1",
+		Input: json.RawMessage(`{"url":"https://example.test/x?api_key=` + secret + `","prompt":"read"}`),
+		Error: "fetch failed",
+	}
+	e := FromClaudeFailure(web, Place{Cwd: "."}, now)
+	if strings.Contains(e.Input.String(), secret) {
+		t.Errorf("WebFetch Input %q holds the secret", e.Input.String())
+	}
+	if strings.Contains(CallText(web.Tool, web.Input), secret) {
+		t.Errorf("WebFetch CallText holds the secret")
+	}
+}
+
+func TestLobeSenseCallTextOrder(t *testing.T) {
+	a := CallText("mcp__acme__ping", json.RawMessage(`{"b":1,"a":2}`))
+	b := CallText("mcp__acme__ping", json.RawMessage(`{"a":2,"b":1}`))
+	if a != b {
+		t.Errorf("key order changes the call text: %q and %q", a, b)
+	}
+
+	asString := json.RawMessage(`"{\"file_path\":\"a.go\",\"old_string\":\"x\"}"`)
+	want := CallText("Edit", json.RawMessage(`{"file_path":"a.go","old_string":"x"}`))
+	if got := CallText("Edit", asString); got != want {
+		t.Errorf("Edit as a JSON string = %q, want %q", got, want)
+	}
+}
+
+func TestLobeSenseSkip(t *testing.T) {
+	bash := func(command, errText string) Call {
+		return Call{Session: "s", Tool: "Bash", CallID: "b1",
+			Input: json.RawMessage(`{"command":` + strconv.Quote(command) + `}`), Error: errText}
+	}
+	cases := []struct {
+		name   string
+		call   Call
+		reason string
+		skip   bool
+	}{
+		{"interrupted", Call{Tool: "Bash", IsInterrupt: true, Error: "Exit code 1\nfail"}, "interrupt", true},
+		{"interrupted with nothing else", Call{IsInterrupt: true}, "interrupt", true},
+		{"refused", bash("npm test", "The user doesn't want to proceed with this tool use."), "refused", true},
+		{"refused with leading spaces", bash("npm test", "  \n The user doesn't want to proceed with this tool use."), "refused", true},
+		{"own tentaqles", bash("tentaqles lobe graph find x", "Exit code 1\nfail"), "own", true},
+		{"own tq", bash("tq lobe status", "Exit code 1\nfail"), "own", true},
+		{"own after cd", bash("cd app && tentaqles.exe lobe graph map", "Exit code 1\nfail"), "own", true},
+		{"own MCP tool", Call{Tool: "mcp__graph__lobe_find", Input: json.RawMessage(`{"q":"zzz"}`), Error: "nothing"}, "own", true},
+		{"not own: tentaqles doctor", bash("tentaqles doctor", "Exit code 1\nfail"), "", false},
+		{"not own: npm and tentaqles", bash("npm test && tentaqles lobe status", "Exit code 1\nfail"), "", false},
+		{"not own: echo", bash("echo tentaqles lobe", "Exit code 1\nfail"), "", false},
+		{"not own: MCP acme", Call{Tool: "mcp__acme__ping", Input: json.RawMessage(`{"n":1}`), Error: "nothing"}, "", false},
+		{"not own: MCP lobe server", Call{Tool: "mcp__lobe__ping", Input: json.RawMessage(`{"n":1}`), Error: "nothing"}, "", false},
+		{"not own: Edit", Call{Tool: "Edit", Input: json.RawMessage(`{"file_path":"a.txt"}`), Error: "String to replace not found"}, "", false},
+		{"not own: empty command", bash("", "Exit code 1\nfail"), "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			reason, skip := Skip(c.call)
+			if reason != c.reason || skip != c.skip {
+				t.Errorf("Skip = (%q, %v), want (%q, %v)", reason, skip, c.reason, c.skip)
+			}
+		})
+	}
+}
+
+func TestLobeSenseGrepNoMatch(t *testing.T) {
+	cases := []struct {
+		name     string
+		tool     string
+		command  string
+		errText  string
+		kind     string
+		errWant  string
+		exitWant *int
+	}{
+		{"grep exit 1", "Bash", "grep -n zzz notes.txt", "Exit code 1", "ok", "", intp(1)},
+		{"grep empty error", "Bash", "grep -n zzz notes.txt", "", "ok", "", nil},
+		{"grep exit 2 keeps the message", "Bash", "grep -n zzz notes.txt", "Exit code 2\ngrep: notes.txt: No such file or directory", "fail", "grep: notes.txt: No such file or directory", intp(2)},
+		{"rg", "Bash", "rg zzz", "Exit code 1", "ok", "", intp(1)},
+		{"git grep", "Bash", "git grep -n x", "Exit code 1", "ok", "", intp(1)},
+		{"grep after cd", "Bash", "cd app && grep x f", "Exit code 1", "ok", "", intp(1)},
+		{"grep first of a pipe", "Bash", "grep x f | wc -l", "Exit code 1", "ok", "", intp(1)},
+		{"grep with a redirect", "Bash", "grep x f 2>/dev/null", "Exit code 1", "ok", "", intp(1)},
+		{"ls is not a grep", "Bash", "ls zzz", "Exit code 1", "fail", "", intp(1)},
+		{"Edit is not a shell tool", "Edit", `{"file_path":"a.txt"}`, "Exit code 1", "fail", "Exit code 1", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			input := json.RawMessage(`{"command":` + strconv.Quote(c.command) + `}`)
+			if c.tool == "Edit" {
+				input = json.RawMessage(c.command)
+			}
+			e := FromClaudeFailure(Call{Session: "s", Tool: c.tool, CallID: "g1", Input: input, Error: c.errText}, Place{Cwd: "."}, fixedNow())
+			if e.Kind != c.kind {
+				t.Errorf("Kind = %q, want %q", e.Kind, c.kind)
+			}
+			if got := e.Error.String(); got != c.errWant {
+				t.Errorf("Error = %q, want %q", got, c.errWant)
+			}
+			switch {
+			case (e.Exit == nil) != (c.exitWant == nil):
+				t.Errorf("Exit = %v, want %v", e.Exit, c.exitWant)
+			case e.Exit != nil && *e.Exit != *c.exitWant:
+				t.Errorf("Exit = %d, want %d", *e.Exit, *c.exitWant)
+			}
+		})
+	}
+}
+
+func TestLobeSenseOwnShellCommands(t *testing.T) {
+	cases := []struct {
+		command string
+		want    bool
+	}{
+		{"tentaqles lobe graph find x", true},
+		{"tq lobe status", true},
+		{"cd app && tentaqles.exe lobe graph map", true},
+		{"TQ_NO_BANNER=1 tq lobe status", true},
+		{"/usr/local/bin/tq lobe status", true},
+		{`C:\tools\tentaqles.exe lobe status`, true},
+		{"tentaqles doctor", false},
+		{"npm test && tentaqles lobe status", false},
+		{"echo tentaqles lobe", false},
+		{"tq", false},
+		{"tq lobe status && rm -rf x", false},
+		{"cd app", false},
+		{"", false},
+		{"tq lobe status 2>&1", true},
+		{"cd app && tq lobe status 2>&1", true},
+		{"tentaqles lobe graph find x > out.txt 2>/dev/null", true},
+		{"tq lobe status &> all.log", true},
+		{"tq lobe status 2>&1 | tee log", false},
+		{"echo 1 2>&1", false},
+	}
+	for _, c := range cases {
+		if got := ownShellCommand(c.command); got != c.want {
+			t.Errorf("ownShellCommand(%q) = %v, want %v", c.command, got, c.want)
 		}
 	}
 }

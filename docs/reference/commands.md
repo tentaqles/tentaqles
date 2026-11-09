@@ -1037,6 +1037,16 @@ blocks a tool call.
 The seven events are `session-start`, `user-prompt-submit`, `pre-tool-use`, `post-tool-use`, `post-tool-use-failure`,
 `stop` and `session-end`.
 
+On `post-tool-use-failure` the memory records the failed call of every tool: a shell command, a file edit, a web
+fetch, an MCP tool. It writes one line to the client's event log with the tool's name, its input and the error, with
+every secret replaced by a marker. Four rules leave the line out or change it:
+
+- a call the person interrupted (`is_interrupt`) is not recorded;
+- a call the person or a hook refused, so the tool never ran, is not recorded;
+- the memory's own commands (`tentaqles lobe ...`, `tq lobe ...`, and MCP tools named `lobe_...`) are not
+  recorded, so the memory does not learn from its own output;
+- a `grep` (or `rg`, `ag`, `ack`, `git grep`) that found nothing is recorded as a success, not a failure.
+
 Setting `TQ_LOBE_NO_HOOKS=1` switches the hooks off. A person never needs to run this command.
 
 ---

@@ -19,6 +19,7 @@ type payload struct {
 	toolUseID string
 	errText   string
 	toolInput json.RawMessage
+	interrupt bool
 }
 
 // readPayload reads one JSON object from in. It returns false, with nothing read into the result, when
@@ -46,6 +47,7 @@ func readPayload(in io.Reader) (payload, bool) {
 		toolUseID: textKey(m, "tool_use_id"),
 		errText:   textKey(m, "error"),
 		toolInput: rawKey(m, "tool_input"),
+		interrupt: boolKey(m, "is_interrupt"),
 	}, true
 }
 
@@ -56,6 +58,15 @@ func textKey(m map[string]json.RawMessage, key string) string {
 		return ""
 	}
 	return s
+}
+
+// boolKey is the boolean under key, or false when the key is missing or is not a boolean.
+func boolKey(m map[string]json.RawMessage, key string) bool {
+	var b bool
+	if err := json.Unmarshal(m[key], &b); err != nil {
+		return false
+	}
+	return b
 }
 
 // rawKey is the JSON under key as it arrived, or nil when the key is missing or null.

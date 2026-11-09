@@ -84,41 +84,97 @@ func TestLobeHookNotOurs(t *testing.T) {
 	}
 }
 
+// rawPayloadJSON builds a PostToolUseFailure payload whose tool_input is the raw JSON object input,
+// for a tool whose input is not a command (payloadJSON only builds a command).
+func rawPayloadJSON(session, cwd, tool, callID, input, errText string) string {
+	p := struct {
+		SessionID      string          `json:"session_id"`
+		TranscriptPath string          `json:"transcript_path"`
+		Cwd            string          `json:"cwd"`
+		PermissionMode string          `json:"permission_mode"`
+		HookEventName  string          `json:"hook_event_name"`
+		ToolName       string          `json:"tool_name"`
+		ToolInput      json.RawMessage `json:"tool_input"`
+		ToolUseID      string          `json:"tool_use_id"`
+		Error          string          `json:"error"`
+	}{session, "/x/t.jsonl", cwd, "default", "PostToolUseFailure", tool, json.RawMessage(input), callID, errText}
+	b, err := json.Marshal(p)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 func TestLobeSenseFailureEveryTool(t *testing.T) {
 	f := newHome(t)
 	setLogin(t, f, "acme")
 	app := f.app("acme")
 
-	for _, tool := range []string{"Bash", "PowerShell"} {
-		callID := "toolu_01"
-		if tool == "PowerShell" {
-			callID = "toolu_02"
-		}
-		out := runHook(t, evPost, payloadJSON("s1", app, tool, callID, "npm run buld", "Exit code 1\nnpm error Missing script: buld"))
+	calls := []struct {
+		tool, callID, input, errText string
+	}{
+		{"Bash", "toolu_01", `{"command":"npm run buld"}`, "Exit code 1\nnpm error Missing script: buld"},
+		{"PowerShell", "toolu_02", `{"command":"npm run buld"}`, "Exit code 1\nnpm error Missing script: buld"},
+		{"Edit", "toolu_03", `{"file_path":"a.txt","old_string":"a","new_string":"b"}`, "String to replace not found"},
+		{"Write", "toolu_04", `{"file_path":"b.txt","content":"hi"}`, "permission denied"},
+		{"WebFetch", "toolu_05", `{"url":"https://example.test/x","prompt":"read"}`, "fetch failed: 503"},
+		{"mcp__acme__ping", "toolu_06", `{"n":4411}`, "widget 4411 is not frobnicated"},
+	}
+	for _, c := range calls {
+		out := runHook(t, evPost, rawPayloadJSON("s1", app, c.tool, c.callID, c.input, c.errText))
 		if out != "" {
-			t.Errorf("%s: stdout %q, want nothing", tool, out)
+			t.Errorf("%s: stdout %q, want nothing", c.tool, out)
 		}
 	}
-	got := decodeLogged(t, lines(t, "acme"))
-	if len(got) != 2 {
-		t.Fatalf("after Bash and PowerShell: %d lines, want 2", len(got))
+
+	ls := lines(t, "acme")
+	if len(ls) != len(calls) {
+		t.Fatalf("after %d failures of every tool: %d lines, want %d", len(calls), len(ls), len(calls))
 	}
-	for _, e := range got {
+	got := decodeLogged(t, ls)
+	for i, e := range got {
 		if e.Kind != "fail" || e.Host != "claude" || e.Repo != "r_a172cedc" || e.Cwd != "." {
-			t.Errorf("event %+v: want kind fail, host claude, repo r_a172cedc, cwd .", e)
+			t.Errorf("event %d %+v: want kind fail, host claude, repo r_a172cedc, cwd .", i, e)
 		}
 	}
+
 	first := got[0]
 	if first.ID != "evt_9bde2e09" || first.Exit == nil || *first.Exit != 1 ||
 		first.Error != "npm error Missing script: buld" || first.Input != `{"command":"npm run buld"}` {
 		t.Errorf("first event = %+v", first)
 	}
 
-	if out := runHook(t, evPost, payloadJSON("s1", app, "Edit", "toolu_03", "src/a.ts", "File not found")); out != "" {
-		t.Errorf("Edit: stdout %q, want nothing", out)
+	// The lines are decoded again as maps, for the tool name and for the keys a line has or lacks.
+	maps := make([]map[string]any, len(ls))
+	for i, l := range ls {
+		if err := json.Unmarshal([]byte(l), &maps[i]); err != nil {
+			t.Fatalf("line %d does not parse: %v", i, err)
+		}
 	}
-	if n := len(lines(t, "acme")); n != 2 {
-		t.Errorf("after an Edit failure: %d lines, want still 2", n)
+	if maps[2]["tool"] != "Edit" {
+		t.Errorf("line 2 tool = %v, want Edit", maps[2]["tool"])
+	}
+	if got[2].Error != "String to replace not found" {
+		t.Errorf("Edit error = %q, want the whole error", got[2].Error)
+	}
+	if got[2].Input != `{"file_path":"a.txt","new_string":"b","old_string":"a"}` {
+		t.Errorf("Edit input = %q", got[2].Input)
+	}
+	if _, has := maps[2]["exit"]; has {
+		t.Errorf("Edit line has an exit key: %v", maps[2]["exit"])
+	}
+
+	if maps[5]["tool"] != "mcp__acme__ping" {
+		t.Errorf("line 5 tool = %v, want mcp__acme__ping", maps[5]["tool"])
+	}
+	if got[5].Input != `{"n":4411}` {
+		t.Errorf("MCP input = %q", got[5].Input)
+	}
+	if got[5].Error != "widget 4411 is not frobnicated" {
+		t.Errorf("MCP error = %q", got[5].Error)
+	}
+	if _, has := maps[5]["exit"]; has {
+		t.Errorf("MCP line has an exit key: %v", maps[5]["exit"])
 	}
 }
 
@@ -143,6 +199,16 @@ func TestLobeSenseFailureSkips(t *testing.T) {
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			return failureJSON(f)
 		}},
+		{"interrupted", func(t *testing.T, f fixture) string {
+			setLogin(t, f, "acme")
+			return strings.TrimSuffix(rawPayloadJSON("s1", f.app("acme"), "Bash", "toolu_01",
+				`{"command":"npm run buld"}`, "Exit code 1\nnpm error Missing script: buld"), "}") + `,"is_interrupt":true}`
+		}},
+		{"refused", func(t *testing.T, f fixture) string {
+			setLogin(t, f, "acme")
+			return payloadJSON("s1", f.app("acme"), "Bash", "toolu_01", "npm run buld",
+				"The user doesn't want to proceed with this tool use.")
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -155,7 +221,82 @@ func TestLobeSenseFailureSkips(t *testing.T) {
 			if after := identityTrees(t, f); after != before {
 				t.Errorf("an identity folder changed:\nbefore:\n%s\nafter:\n%s", before, after)
 			}
+			if exists(paths.LobeDir("acme")) {
+				t.Errorf("a lobe folder was created for acme")
+			}
 		})
+	}
+}
+
+func TestLobeSenseOwnTools(t *testing.T) {
+	f := newHome(t)
+	setLogin(t, f, "acme")
+	app := f.app("acme")
+	const errText = "Exit code 1\nfail"
+
+	own := []string{
+		rawPayloadJSON("s1", app, "Bash", "toolu_o1", `{"command":"tentaqles lobe graph find x"}`, errText),
+		rawPayloadJSON("s1", app, "Bash", "toolu_o2", `{"command":"tq lobe status"}`, errText),
+		rawPayloadJSON("s1", app, "Bash", "toolu_o3", `{"command":"cd app && tentaqles.exe lobe graph map"}`, errText),
+		rawPayloadJSON("s1", app, "mcp__graph__lobe_find", "toolu_o4", `{"q":"zzz"}`, "nothing"),
+	}
+	for _, stdin := range own {
+		runHook(t, evPost, stdin)
+	}
+	if n := len(lines(t, "acme")); n != 0 {
+		t.Fatalf("the memory's own tools wrote %d lines, want 0", n)
+	}
+	if exists(paths.LobeDir("acme")) {
+		t.Fatalf("the memory's own tools created a lobe folder for acme")
+	}
+
+	notOwn := []string{
+		payloadJSON("s1", app, "Bash", "toolu_1", "tentaqles doctor", errText),
+		payloadJSON("s1", app, "Bash", "toolu_2", "npm test && tentaqles lobe status", errText),
+		payloadJSON("s1", app, "Bash", "toolu_3", "echo tentaqles lobe", errText),
+		rawPayloadJSON("s1", app, "mcp__acme__ping", "toolu_4", `{"n":1}`, "nothing"),
+	}
+	for i, stdin := range notOwn {
+		runHook(t, evPost, stdin)
+		if n := len(lines(t, "acme")); n != i+1 {
+			t.Fatalf("after %d tools that are not own: %d lines, want %d", i+1, n, i+1)
+		}
+	}
+}
+
+func TestLobeHookGrepNoMatch(t *testing.T) {
+	f := newHome(t)
+	setLogin(t, f, "acme")
+	app := f.app("acme")
+
+	runHook(t, evPost, payloadJSON("s1", app, "Bash", "toolu_01", "grep -n zzz notes.txt", "Exit code 1"))
+	ls := lines(t, "acme")
+	if len(ls) != 1 {
+		t.Fatalf("after a grep that found nothing: %d lines, want 1", len(ls))
+	}
+	var ok map[string]any
+	if err := json.Unmarshal([]byte(ls[0]), &ok); err != nil {
+		t.Fatalf("line does not parse: %v", err)
+	}
+	if ok["kind"] != "ok" || ok["exit"] != float64(1) {
+		t.Errorf("line = %v, want kind ok and exit 1", ok)
+	}
+	if _, has := ok["error"]; has {
+		t.Errorf("line has an error key: %v", ok["error"])
+	}
+
+	runHook(t, evPost, payloadJSON("s1", app, "Bash", "toolu_02", "grep -n zzz notes.txt",
+		"Exit code 2\ngrep: notes.txt: No such file or directory"))
+	ls = lines(t, "acme")
+	if len(ls) != 2 {
+		t.Fatalf("after a grep that failed: %d lines, want 2", len(ls))
+	}
+	var bad map[string]any
+	if err := json.Unmarshal([]byte(ls[1]), &bad); err != nil {
+		t.Fatalf("line does not parse: %v", err)
+	}
+	if bad["kind"] != "fail" || bad["exit"] != float64(2) {
+		t.Errorf("line = %v, want kind fail and exit 2", bad)
 	}
 }
 

@@ -5,6 +5,11 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **The memory records a failed call of every tool**, not only shell commands: a failed edit, web fetch or MCP
+  call adds its line to the client's event log, with the whole error and no exit code. A call the person
+  interrupted or refused is not recorded, nor is a command of the memory itself (`tentaqles lobe ...`), and a
+  `grep` that found nothing is recorded as a success. A linked git worktree is keyed by its main repository, read
+  from its `.git` file without running git, so a repository and its worktrees share one memory.
 - **The memory begins: a failed shell command in Claude Code is recorded.** The plugin gains a hook on
   `PostToolUseFailure` that runs `tentaqles lobe-hook claude post-tool-use-failure`. When a `Bash` or
   `PowerShell` call fails in a client's folder, and the session is logged in as that client, one line is

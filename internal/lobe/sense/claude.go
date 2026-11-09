@@ -6,12 +6,14 @@ package sense
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
 	"github.com/tentaqles/tentaqles/internal/lobe/scrub"
+	"github.com/tentaqles/tentaqles/internal/lobe/shellwords"
 )
 
 // Call is one tool call as a host reported it. The hook fills it from the payload.
@@ -22,6 +24,8 @@ type Call struct {
 	CallID  string          // the host's id of the call (tool_use_id); may be empty
 	Input   json.RawMessage // the tool input: a JSON object, or a JSON string that holds the object
 	Error   string          // the error text
+	// IsInterrupt is the payload's is_interrupt: the person stopped the call while it ran.
+	IsInterrupt bool
 }
 
 // unknownTool is the tool name of a call whose payload gave none.
@@ -29,6 +33,21 @@ const unknownTool = "unknown"
 
 // exitPrefix starts the first line of a shell tool's error when the command failed.
 const exitPrefix = "Exit code "
+
+// Skip reports whether a failed call is not recorded at all, and why: "interrupt", "refused" or
+// "own". An empty reason means the call is recorded. The rules apply in that order: an interrupted
+// call, a refused call (IsRefused on the error), then the memory's own tool (IsOwnTool).
+func Skip(c Call) (reason string, skip bool) {
+	switch {
+	case c.IsInterrupt:
+		return "interrupt", true
+	case IsRefused(c.Error):
+		return "refused", true
+	case IsOwnTool(c.Tool, c.Input):
+		return "own", true
+	}
+	return "", false
+}
 
 // ShellTool reports whether tool is a shell tool: "Bash" or "PowerShell".
 func ShellTool(tool string) bool {
@@ -54,19 +73,34 @@ func NormalInput(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
-// FromClaudeFailure builds the event of a failed call in Claude Code.
+// FromClaudeFailure builds the event of a failed call in Claude Code. Every tool is recorded: the
+// shell tools (Bash, PowerShell) have their "Exit code N" first line taken off into Exit; for any
+// other tool (Edit, Write, MultiEdit, NotebookEdit, Read, Grep, Glob, WebFetch, WebSearch,
+// mcp__<server>__<tool> and the rest) the error is stored whole, after scrubbing, and Exit stays nil.
+// The input is the scrubbed tool input as a JSON object, whatever the tool; an empty tool name is
+// recorded as "unknown".
 func FromClaudeFailure(c Call, pl Place, now time.Time) eventlog.Event {
 	tool := c.Tool
 	if tool == "" {
 		tool = unknownTool
 	}
 	exit, rest := splitExit(c.Error, ShellTool(tool))
+	kind := eventlog.KindFail
+	if grepFoundNothing(tool, c.Input, c.Error) {
+		// A grep that found nothing is an answer, not a failure: the line is written as ok, with no
+		// error, and the exit code 1 when the error stated it.
+		kind, rest, exit = eventlog.KindOK, "", nil
+		if strings.TrimSpace(c.Error) != "" {
+			one := 1
+			exit = &one
+		}
+	}
 	input := scrub.Input(NormalInput(c.Input))
 	var id string
 	if c.CallID != "" {
 		id = eventlog.ID("claude", c.Session, c.CallID)
 	} else {
-		id = eventlog.IDWithoutCall("claude", c.Session, tool, eventlog.KindFail, input.String(), now.UnixNano())
+		id = eventlog.IDWithoutCall("claude", c.Session, tool, kind, input.String(), now.UnixNano())
 	}
 	return eventlog.Event{
 		V:       1,
@@ -75,7 +109,7 @@ func FromClaudeFailure(c Call, pl Place, now time.Time) eventlog.Event {
 		Session: c.Session,
 		Host:    "claude",
 		Tool:    tool,
-		Kind:    eventlog.KindFail,
+		Kind:    kind,
 		Repo:    pl.Repo,
 		Cwd:     pl.Cwd,
 		Input:   input,
@@ -84,9 +118,42 @@ func FromClaudeFailure(c Call, pl Place, now time.Time) eventlog.Event {
 	}
 }
 
+// grepPrograms are the programs whose exit code 1 means "nothing matched".
+var grepPrograms = []string{"grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"}
+
+// grepFoundNothing reports whether a failed call is a grep that found nothing: a shell call whose
+// error, trimmed, is empty or exactly "Exit code 1", and whose first statement that is not a cd
+// runs a grep program, or git with grep as its next word. The shell redirections are removed first
+// (shellwords.StripRedirects). The rule looks at the first statement that is not a cd, so
+// `grep x f; npm test` with `Exit code 1` is written as ok although the second statement may be what
+// failed; this is the design's stated rule and a known narrow misclassification.
+func grepFoundNothing(tool string, input json.RawMessage, errText string) bool {
+	if !ShellTool(tool) {
+		return false
+	}
+	e := strings.TrimSpace(errText)
+	if e != "" && e != exitPrefix+"1" {
+		return false
+	}
+	for _, st := range shellwords.Statements(shellwords.StripRedirects(shellCommand(NormalInput(input)))) {
+		prog := shellwords.Program(st)
+		if prog == "cd" {
+			continue
+		}
+		if slices.Contains(grepPrograms, prog) {
+			return true
+		}
+		w := shellwords.CommandWords(st)
+		return prog == "git" && len(w) > 1 && w[1] == "grep"
+	}
+	return false
+}
+
 // splitExit takes the exit code off the error of a shell tool: when the first line is "Exit code "
 // and digits, optionally with a trailing carriage return, it returns the number and the error
-// without that line and its line break. Any other error comes back unchanged with a nil exit.
+// without that line and its line break. Any other error comes back unchanged with a nil exit. A
+// tool that is not a shell tool never has an exit code: its error is returned whole, even when it
+// starts with "Exit code ".
 func splitExit(errText string, shell bool) (*int, string) {
 	if !shell {
 		return nil, errText
