@@ -11,6 +11,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 - **`tentaqles codex-hook`** is the OpenAI Codex CLI counterpart of `claude-hook`: `pre-tool-use` runs the same identity
   check and answers Codex's deny object (stdout, exit 0), and every error path denies the same way; `session-start`
   prints the same preamble. The two share one decision path; `claude-hook` is unchanged.
+- **An AI coding agent besides Claude Code** is a category of `tentaqles add`, `remove` and the reach form: `add codex`
+  (or `add agent codex`) puts a catalog agent in the client's scope, and gives codex its own Codex home.
 
 ## [0.13.2] - 2026-11-08
 

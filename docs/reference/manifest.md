@@ -68,7 +68,7 @@ other_providers:
 | `cloud.also` | list of strings | Further clouds, from the same list, none equal to the primary and none twice. Needs a primary. | reach, `add cloud`, `remove cloud` |
 | `cloud.blocked_commands` | list of strings | Command prefixes the hook denies in this client. | by hand |
 | `email.provider` | string | The email provider: `gmail`, `outlook` or `none`. | reach, `add mail`, `remove mail` |
-| `scope` | list of provider ids | Providers the client uses besides its identities: team, data and task tools, and anything with no config home of its own. Each must be a catalog id, once. | reach, `add`, `remove` |
+| `scope` | list of provider ids | Providers the client uses besides its identities: team, data, agent and task tools, and anything with no config home of its own. Each must be a catalog id, once. | reach, `add`, `remove` |
 | `browsers` | list of `{name, profile}` | The client's browser profiles. `name` is `chrome` or `edge`, each at most once; `profile` is the profile's folder name (`Default`, `Profile 2`), not its display name. The first one is used by default. | reach, `add browser`, `remove browser` |
 | `other_providers` | list of strings | Names of tools tentaqles has no catalog entry for. Recorded only: tentaqles can neither isolate nor guard them. | reach, `add other`, `remove other` |
 
@@ -77,6 +77,21 @@ after a separator (`&&`, `;`, `|`, `&`, `$(`, a backtick, a bracket).
 
 The client's scope, which decides what its terminal hides, is: every key of `identities`, every cloud of `cloud`,
 the git provider's CLI, the email provider and everything in `scope`. See [providers](providers.md).
+
+An AI coding agent besides Claude Code is one of the catalog's `agent` providers: `codex`, `cline`, `continue`,
+`copilot`, `cursor`, `gemini`, `goose` or `opencode`. `reach` and `tentaqles add` write it like a team or data tool:
+its id goes into `scope`. An agent with a config home of its own also gets an `identities` entry and a folder there.
+Codex has one (`CODEX_HOME`), so a client on Codex reads:
+
+```yaml
+identities:
+    claude: {}
+    codex: {}
+scope:
+    - codex
+```
+
+`claude` is not an agent to add: every client has it.
 
 ### Languages
 

@@ -17,7 +17,8 @@ section for every command; `test/integration` fails when one is missing.
 - `cmd/tentaqles/`, `cmd/tq/`: one program under two names; the release builds `./cmd/tentaqles` as both.
 - `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `drop`, `env`, `activate`, `hooks`, `run`, `login`,
   `open`, `settings render`, `statusline`, `doctor`, `list`, `providers`, `version`, `claude-hook`.
-  `claudehook.go` is the hook (`session-start`, `pre-tool-use`); `edit.go` is `add`/`remove`, `drop.go` is `drop`;
+  `claudehook.go` is the hook (`session-start`, `pre-tool-use`); `codexhook.go` is the Codex CLI hook (`codex-hook`);
+  `edit.go` is `add`/`remove`, `drop.go` is `drop`;
   `render.go` writes the PATH mask and the browser shims.
 - `internal/reach/`: the form's options and answers, `Change` (what `add`/`remove` mean), and `Edit`, which
   changes only the keys the form owns.
@@ -29,6 +30,8 @@ section for every command; `test/integration` fails when one is missing.
 - `internal/shell/`, `internal/hooks/`: the shell activation templates and the profile blocks.
 - `internal/guard/`: the drift check (`guard.Decide`) and the shell-text reading it needs.
 - `internal/guardplugin/`: whether a client's Claude config has the enabled plugin hook.
+- `internal/codexconfig/`: tentaqles' part of a client's Codex `config.toml`: the two hooks, their trust, and
+  `developer_instructions`.
 - `internal/providers/`: the catalog (`catalog/*.yaml`, embedded) and user provider files.
 - `internal/doctor/`, `internal/claudesettings/`, `internal/statusline/`, `internal/browser/`, `internal/banner/`,
   `internal/gitcfg/`, `internal/detect/`, `internal/testutil/`.

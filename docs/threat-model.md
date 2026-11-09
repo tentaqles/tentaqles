@@ -26,15 +26,22 @@ opened in the wrong browser profile.
 | A hook that hangs a session | A 6-second decision deadline, a 7-second process watchdog and the script's own kill at 8 seconds, all under the 15-second hook timeout; a stall or a crash denies | `TestHookDeadlinesUnderHarnessTimeouts`, `TestHookStall_SpinningDecisionIsDenied`, `TestPreToolUseGuardPanicDenies` |
 | A folder that copies another client's marker or manifest | A marker must name its own folder, and the manifest's `client` must too | `TestResolve_MarkerOrManifestOfAnotherClient` |
 | A link opened in the wrong browser profile | `BROWSER`, `xdg-open` and `open` shims, and `tentaqles open`, start the client's browser with its profile | `TestBrowserShims`, `TestOpen_UsesTheClientsProfile`, `TestOpen_Refusals` |
+| A Codex command under the wrong identity | The client's Codex home (`CODEX_HOME`) with tentaqles' PreToolUse hook, which applies the Claude Code hook's rules and answers with Codex's deny; `tentaqles run` refuses a Codex session unless both hooks are present, enabled and trusted | `TestCodexPreToolUse_WrongGitEmailDenies`, `TestCodexPreToolUse_NeutralFolderBlocksPush`, `TestCodexPreToolUse_MatchingIdentityAllows` |
+| A Codex hook that errors, or is missing from the client's config | Every error path of `codex-hook pre-tool-use` answers the deny object, so a call tq cannot judge is refused. `tentaqles run` checks the two hooks are there, and `tentaqles doctor` reports a missing, disabled or untrusted one | `TestCodexPreToolUse_UnreadablePayloadDenies`, `TestCodexPreToolUse_PanicDenies`, `TestCodexPreToolUse_DeadlineDenies`, `TestCodexPreToolUse_WatchdogDenies` |
 
 ## What it does not do
 
 - **It is not a sandbox.** Every client's files and logins are readable by your user, and so by any program you
   run, Claude Code included. A CLI run by its full path, a script, or a different shell gets past the PATH mask.
 - **The hook reads text.** It checks the command line Claude Code is about to run, and only shell commands (Bash and
-  PowerShell); it doesn't see file edits or MCP tools. A command spelled to hide what it does (a variable, an alias,
+  PowerShell); it doesn't see file edits or MCP tools. The Codex hook checks Bash calls only, and Codex reports
+  PowerShell commands as Bash too. A command spelled to hide what it does (a variable, an alias,
   a script file) gets past it. A `gh` or cloud command wrapped in `sh -c`, `pwsh -Command`, `cmd /c` or `iex`
   gets past it too; a git call wrapped that way is read, three levels deep.
+- **Codex fails open when its hook is missing or crashes.** Codex allows a call when its hook gives no answer: a hook
+  whose binary is gone, or one that dies outside tentaqles' own error paths. tentaqles answers deny on every error it
+  can see, and `tentaqles run` checks the hooks are present, enabled and trusted, but a Codex started by its full path,
+  outside `tentaqles run`, is not checked at all.
 - **A failed lookup allows.** The `gh-user` rule asks `gh` for the active user with a 4-second limit; when the
   lookup fails or times out, the call is allowed.
 - **"Inside Claude Code" is a convenience check, not a boundary.** The refusals of `reach`, `add`, `remove`,

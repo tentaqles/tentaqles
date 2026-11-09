@@ -73,13 +73,13 @@ Claude Code session in its folder is that client's.
 
 | | In a terminal under the client's folder |
 |---|---|
-| **Claude Code** | Its own config home (`CLAUDE_CONFIG_DIR`), so its own account and subscription, settings and plugins. |
+| **Claude Code** | Its own config home (`CLAUDE_CONFIG_DIR`), so its own account and subscription, settings and plugins. The OpenAI Codex CLI, when the client uses it, gets its own home too (`CODEX_HOME`). |
 | **Language** | Claude writes the client's reports, documents, emails and messages in the client's language: Portuguese (Brazil) for one client, English (United States) for another. |
 | **git** | The client's name and email, in every repository under the folder. |
 | **CLI logins** | `gh`, `glab`, `az`, `aws`, `gcloud`, `databricks`, `doctl` and [many more](docs/reference/providers.md#catalog) each read their own login for that client. |
 | **Tools** | Only the client's: the CLIs of providers it doesn't use are not on the PATH, and their variables are unset. |
 | **Browser** | Links the terminal opens go to the client's Chrome or Edge profile. |
-| **Guard** | The tentaqles plugin for Claude Code blocks a `git`, `gh` or cloud command under the wrong identity. |
+| **Guard** | The tentaqles plugin for Claude Code, and the tentaqles hooks in the client's Codex config (OpenAI Codex CLI), block a `git`, `gh` or cloud command under the wrong identity. |
 
 ## Get started
 
@@ -122,7 +122,7 @@ tentaqles reach ~/clients/acme
 ```
 
 `reach` asks, one screen at a time: the client's email, its language (a list you filter by typing), its git host,
-clouds, team, data and task tools, email provider, and browser profiles. It shows what it will do and writes nothing
+clouds, team, data and task tools, AI agents besides Claude Code, email provider, and browser profiles. It shows what it will do and writes nothing
 until you type `yes`.
 
 **3. Open a new terminal in the folder and log in once.**
@@ -148,7 +148,7 @@ The full walk-through, with what to check after each step, is in [Getting starte
 | You want to | Run |
 |---|---|
 | Set up a new client | `tentaqles reach <folder>` |
-| Change one part of a client | `tentaqles add cloud aws`, `tentaqles add language pt-BR`, `tentaqles remove gh` |
+| Change one part of a client | `tentaqles add cloud aws`, `tentaqles add language pt-BR`, `tentaqles add codex`, `tentaqles remove gh` |
 | Change a client through the form | `tentaqles reach` in its folder |
 | Log a CLI in for a client | `tentaqles login <client> <cli>` |
 | Run one command as a client, from anywhere | `tentaqles run <client> -- <command>` |

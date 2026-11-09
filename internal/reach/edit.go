@@ -36,6 +36,8 @@ func AnswersFrom(m *manifest.Manifest) *Answers {
 			a.Team = append(a.Team, id)
 		case isOption(DataOptions, id):
 			a.Data = append(a.Data, id)
+		case isOption(AgentOptions(), id):
+			a.Agent = append(a.Agent, id)
 		case isOption(TaskOptions, id) && a.Task == "":
 			a.Task = id
 		}
@@ -52,10 +54,10 @@ func isOption(opts []Option, v string) bool {
 	return slices.ContainsFunc(opts, func(o Option) bool { return o.Value == v })
 }
 
-// formScopeIDs are the scope: ids the form owns: the team, data and task choices.
+// formScopeIDs are the scope: ids the form owns: the team, data, agent and task choices.
 func formScopeIDs() []string {
 	var out []string
-	for _, o := range slices.Concat(TeamOptions, DataOptions, TaskOptions) {
+	for _, o := range slices.Concat(TeamOptions, DataOptions, AgentOptions(), TaskOptions) {
 		out = append(out, o.Value)
 	}
 	return out
@@ -85,7 +87,7 @@ func (a *Answers) providerIDs() []string {
 
 func (a *Answers) scopeIDs() []string {
 	var out []string
-	for _, id := range slices.Concat(a.Team, a.Data, []string{a.Task}) {
+	for _, id := range slices.Concat(a.Team, a.Data, a.Agent, []string{a.Task}) {
 		if id != "" && !slices.Contains(out, id) {
 			out = append(out, id)
 		}
@@ -213,7 +215,7 @@ func Edit(raw []byte, before, after *Answers, drop ...string) (out []byte, chang
 		} else {
 			setNode(top, "scope", stringSeq(scope))
 		}
-		changes = append(changes, fmt.Sprintf("team, data and task providers: %s -> %s", list(b), list(a)))
+		changes = append(changes, fmt.Sprintf("team, data, agent and task providers: %s -> %s", list(b), list(a)))
 	}
 
 	if after.EmailProvider != before.EmailProvider {
