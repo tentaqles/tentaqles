@@ -29,6 +29,39 @@ func LostState(env Env) bool {
 	return !ok || st.WS == ""
 }
 
+// Settled reports whether a lost state needs no notice. A child shell (a -Command or -lc
+// command started from an activated terminal) inherits the variables of its parent, and its
+// profile runs the prompt hook once, but the inherited __TQ_STATE may be missing from what
+// the child sees. When the shell already holds TQ_WS for the folder's workspace ws, and the
+// ops that re-apply the identity change nothing real already holds (nothing to set, nothing
+// to unset), there is nothing the old values could restore, so the notice would only say so.
+// The state is still written (ops), so leaving the folder restores what tq set.
+func Settled(real Env, ops Ops, ws string) bool {
+	if ws == "" {
+		return false
+	}
+	if cur, ok := real.Lookup("TQ_WS"); !ok || strings.TrimSpace(cur) != ws {
+		return false
+	}
+	for _, k := range ops.Unset {
+		if envKey(k) == envKey(StateVar) {
+			continue
+		}
+		if _, has := real.Lookup(k); has {
+			return false
+		}
+	}
+	for k, v := range ops.Set {
+		if envKey(k) == envKey(StateVar) {
+			continue
+		}
+		if cur, has := real.Lookup(k); !has || cur != v {
+			return false
+		}
+	}
+	return true
+}
+
 // tqVars are the variables tq sets for some identity: the workspace markers, the state and
 // every config home of the catalog.
 func tqVars() map[string]bool {

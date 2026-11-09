@@ -180,3 +180,82 @@ func TestUnrecorded(t *testing.T) {
 		}
 	}
 }
+
+// A child shell (a -Command started from an activated client folder) inherits the identity
+// but may not see __TQ_STATE. In the same folder it is silent and holds the identity; its
+// state is still written, so leaving in that child restores what tq set. A child that is
+// not in the folder's identity still gets the notice.
+func TestLostState_ChildInSameFolderIsSilent(t *testing.T) {
+	t.Setenv("TQ_HOME", testutil.TempDir(t))
+	shared := filepath.Join(testutil.TempDir(t), "shared")
+	fakeExe(t, shared, "aws.exe")
+	fakeExe(t, shared, "node.exe")
+	cx := companyX(t, true)
+	if _, err := LayerFor(cx).WriteMask(); err != nil {
+		t.Fatal(err)
+	}
+	step := func(sh map[string]string, w *resolve.Workspace) *Notice {
+		e := Env{Lookup: env(sh), Names: names(sh), Syntax: NativeSyntax(), PathOK: true}
+		real := e
+		prev := DecodeState(sh[StateVar])
+		lost := LostState(e)
+		if lost {
+			e, prev = Forget(e), State{}
+		}
+		name := ""
+		if w != nil {
+			name = w.Name
+		}
+		want, n := Plan(w, prev, e)
+		ops, _ := DiffWant(want, e.Lookup, prev, name)
+		if lost {
+			FinishForget(&ops, real, e)
+			if !Settled(real, ops, name) {
+				n = ops.Notice
+			}
+		}
+		shellSim(sh, ops)
+		return n
+	}
+	parent := map[string]string{"PATH": shared, "MYAPP": "keep", "AWS_PROFILE": "prod"}
+	step(parent, cx)
+	child := map[string]string{}
+	for k, v := range parent {
+		child[k] = v
+	}
+	delete(child, StateVar)
+	if n := step(child, cx); n != nil {
+		t.Fatalf("child in the same folder: notice %v", n)
+	}
+	if child["TQ_WS"] != "company-x" || child["CLAUDE_CONFIG_DIR"] == "" || !strings.Contains(child["PATH"], MaskDir("company-x")) {
+		t.Fatalf("child lost the identity: %v", child)
+	}
+	if child[StateVar] == "" {
+		t.Fatal("child wrote no state")
+	}
+	if n := step(child, cx); n != nil {
+		t.Fatalf("second prompt in the child: notice %v", n)
+	}
+	if n := step(child, nil); n != nil {
+		t.Fatalf("leaving the child: notice %v", n)
+	}
+	for _, k := range []string{"TQ_WS", "CLAUDE_CONFIG_DIR", "AZURE_CONFIG_DIR"} {
+		if _, ok := child[k]; ok {
+			t.Errorf("leaving the child: %s survives", k)
+		}
+	}
+	if strings.Contains(child["PATH"], MaskDir("company-x")) || child["MYAPP"] != "keep" {
+		t.Errorf("leaving the child: %v", child)
+	}
+	// Elsewhere (not the folder's identity) the lost state still says so.
+	other := map[string]string{}
+	for k, v := range parent {
+		other[k] = v
+	}
+	other["TQ_WS"] = "company-x"
+	other["TQ_WS_ROOT"] = cx.Root
+	other[StateVar] = "hello world"
+	if n := step(other, nil); n == nil || n.Kind != NoticeStateLost {
+		t.Fatalf("a lost state elsewhere: notice %v", n)
+	}
+}
