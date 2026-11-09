@@ -1,7 +1,7 @@
 # Lobe: Enforce (E-01 to E-07)
 
 Enforce is the stage that can stop a tool call. A lesson climbs a ladder of stages (E-01), earns each step on a record
-kept while it is silent (E-02), must pass its own test cases (E-03) and falls back as soon as it proves wrong (E-07).
+kept call by call (E-02), must pass its own test cases (E-03) and falls back as soon as it proves wrong (E-07).
 Three checks sit beside the ladder: a block for a command that cannot succeed on this machine (E-04), a note when a
 call passes the wrong number of arguments (E-05), and a warning before a commit (E-06). None of them calls a model,
 and every doubt ends the same way: the call goes ahead. A deny can come from two things only, both under
@@ -30,8 +30,8 @@ visible reason and no one-step undo. Without it, nothing learned could ever bloc
 
 | Rule | Value (every number is proposed and measured by M-05; E-02 defines a hit and a false alarm) |
 |---|---|
-| enter | `seen`: passed the gate (C-04). `trial`: has a `when` block. `advice`: a lesson written on this machine by its person (`source` is `person`). A lesson that arrives through git enters like a local one, `trial` when it has a `when` block, never above `advice`, with no record and no approval; F-04 hands its arrival to this rule, and `source: person` in a pulled file earns nothing. So does an old lesson that returns when its replacement is undone (C-06, E-07). A built-in starter rule (C-08) gets an ordinary entry at `advice` on the day the ladder ships; before that day it acts as advice with no record. A lesson file may not claim `kind: starter` or `source: starter` |
-| `trial` to `advice` | at least 2 hits in at least 2 sessions and 0 false alarms; or a person runs `tentaqles lobe lessons confirm <id>`, which has one meaning: the person vouches for the lesson as written (F-07 describes the verb). On this ladder a lesson at `trial` moves to `advice`, and a retired lesson re-enters and moves to `advice`; the width a lesson from git then takes is F-04's part. A lesson that cannot earn a hit (no `avoid` block and no fingerprint, E-02) waits at its entry stage until the person confirms it |
+| enter | Every lesson that enters has passed the gate (C-04). `advice`: a lesson filed on this machine whose `source` is `repair`, `correction` or `person`, with or without a `when` block (decision D-9). One with a `when` block is shown before the matching call (R-04); one without is a standing lesson, shown in the session brief (R-05). `trial`: a lesson filed on this machine whose `source` is `backfill` and that has a `when` block; a false alarm at `advice` also sends a lesson here (E-07). `seen`: a `backfill` lesson with no `when` block; it waits for the person. A lesson that arrives through git and passes intake (F-04) enters at `advice`, whatever `source` its file states and with or without a `when` block (decision D-10): never above `advice`, with no record and no approval. F-04 hands its arrival to this rule. It is intake that puts the lesson at `advice`, not anything its file claims, and a lesson that fails intake enters nothing. An old lesson that returns when its replacement is undone (C-06, E-07) enters by this same rule, with a fresh record and no inherited approval, never above `advice`. A built-in starter rule (C-08) gets an ordinary entry at `advice` on the day the ladder ships; before that day it acts as advice with no record. A lesson file may not claim `kind: starter` or `source: starter` |
+| `trial` to `advice` | at least 2 hits in at least 2 sessions and 0 false alarms; or a person runs `tentaqles lobe lessons confirm <id>`, which has one meaning: the person vouches for the lesson as written (F-07 describes the verb). On this ladder a lesson at `seen` or `trial` moves to `advice`, and a retired lesson re-enters and moves to `advice`. A lesson from git enters at `advice`, so for one still there the verb makes no move on this ladder; the width it then takes is F-04's part. A lesson at `seen` or `trial` that cannot earn a hit (no `avoid` block and no fingerprint, E-02) waits there until the person confirms it. By the enter rule that is a `backfill` lesson filed here: a correction lesson and a pulled standing lesson enter at `advice` and do not wait |
 | `advice` to `block` (phase 3) | all five: an `avoid` block that passes E-03's promotion test; at least 5 hits at `advice` in at least 2 sessions; 0 false alarms at `advice`; `enforce` is `block`; the person runs `tentaqles lobe rules approve <id>` in their own terminal and types `yes`. A lesson filed with `--anyway` (C-04) carries `anyway: true` and is refused whatever its record. E-04 states the one exception, for a built-in sure-fail rule, which needs no typed `yes` |
 | `approve` in phase 2 | the verb exists and refuses everyone, before any other check: it prints `Blocking is not available yet in this version; <id> stays at advice.`, exits 1 and changes no file. Until phase 3 a stored `block` stage and the setting `enforce: block` both act as `advice` |
 | a person, not an agent | `CLAUDECODE` is unset; stdin and stdout are terminals; none of the 12 nearest parent processes (Trail-code's number) is an agent's program; and, for `approve`, the word `yes` is read from the console device, not from stdin. `allow-once`, `demote`, `retire` and `lessons confirm` need the first three. There is no `--yes` flag, and a yes typed in the agent's chat never counts |
@@ -86,9 +86,10 @@ visible reason and no one-step undo. Without it, nothing learned could ever bloc
   `lessons confirm`, `rules demote`, `rules retire` and an `approve` that only refuses. Phase 3 ships `approve.go`,
   `deny.go`, `approvals.json` and `rules allow-once`.
 - `ladder.Enter` gives a lesson its first entry by the enter rule. C-04 calls it when it files a lesson; `Settle`
-  (E-02) calls it for a lesson file that has no entry yet, such as one pulled through git or written by hand. Until
-  then the lesson acts at its enter stage and `tentaqles lobe rules` lists it there. Every write of a stage goes
-  through E-07's `apply`, which also writes the log line.
+  (E-02) calls it for a lesson file that has no entry yet, such as one written by hand or one pulled through git
+  that intake has passed (F-04). Until then a lesson filed here acts at its enter stage and `tentaqles lobe rules`
+  lists it there. A pulled lesson has no enter stage before intake has passed it, because intake is what puts it
+  at `advice`. Every write of a stage goes through E-07's `apply`, which also writes the log line.
 - The deny is one JSON object on stdout with exit code 0: `hookSpecificOutput` holding `permissionDecision` `deny` and
   `permissionDecisionReason`, as tentaqles answers Codex today (`internal/cmd/codexhook.go` L64). For Claude Code the
   shape is from https://code.claude.com/docs/en/hooks (web, not machine-checked). F-02 owns the writer.
@@ -134,8 +135,8 @@ visible reason and no one-step undo. Without it, nothing learned could ever bloc
 - `TestLobeLadder_Caps`: `enforce: advice`, `enforce: off`, `lessons: off` and a set stale flag each give 0 denies
   from a `block` rule and leave `ladder.json` and `approvals.json` byte-identical; `recall: off` alone gives 1 deny,
   and so does clearing the stale flag.
-- `TestLobeLadder_GitLessonEntersLikeALocalOne`: a pulled lesson with `source: person` and a `when` block enters
-  at `trial`, with no record and no approval: yes.
+- `TestLobeLadder_GitLessonEntersAtAdvice`: a pulled lesson that passed intake enters at `advice`, with no record
+  and no approval, whether its file says `source: person` or `source: backfill`: 2 of 2.
 - `TestLobeLadder_RetireMutesHere`: after `retire` on a shared lesson, 0 notes on this machine and the file in the
   repository is byte-identical.
 - `TestLobePerson_RefusesAgents`: `CLAUDECODE` set, piped stdin or an agent parent each refuse; 0 bytes change.
@@ -184,20 +185,27 @@ header cache. Input A, piped to `tentaqles lobe-hook claude pre-tool-use`: `{"se
 "hook_event_name":"PreToolUse", "cwd":"<acme>", "tool_name":"Bash", "tool_use_id":"t1",
 "tool_input":{"command":"dbsql -e 'MERGE INTO t USING (SELECT 1)'"}}`.
 
-At the end of phase 2 run checks 1 to 4. At the end of phase 3 run checks 1, 2 and 4 to 14; check 3 belongs to a
+At the end of phase 2 run checks 1 to 5. At the end of phase 3 run checks 1 to 3 and 5 to 15; check 4 belongs to a
 phase 2 build alone.
 
 1. Input A: exit code 0; stdout contains `Alias the MERGE source` (R-04's note) and no deny decision. Then
    `tentaqles lobe rules --json`: the entry for `l-4c7d19e2` has `"stage":"advice"`, where a lesson that a person
    wrote enters.
-2. Write `<lobe>/ladder.json`: `{"v":1, "entries":[{"lesson":"l-4c7d19e2", "stage":"trial", "hits":0,
+2. The enter rule reads `source`. Each time this check changes the lesson file, delete `<lobe>/ladder.json` if it
+   exists and run `tentaqles lobe rebuild`, so that the lesson has no stored entry and acts at its enter stage.
+   Set `source: repair`. Input A with `session_id` `r1`: exit code 0; stdout contains `Alias the MERGE source`
+   and no deny decision; `tentaqles lobe rules --json` has `"stage":"advice"` for `l-4c7d19e2`. A lesson learned
+   from a repair speaks at once. Set `source: backfill`. Input A with `session_id` `b1`: exit code 0 and empty
+   stdout; `tentaqles lobe rules --json` has `"stage":"trial"` for `l-4c7d19e2`. A lesson mined from old
+   sessions that has a `when` block is silent first. Set `source: person` again.
+3. Write `<lobe>/ladder.json`: `{"v":1, "entries":[{"lesson":"l-4c7d19e2", "stage":"trial", "hits":0,
    "false_alarms":0, "sessions":0, "approved_at":null}]}`. Input A with `session_id` `s2`: exit code 0 and empty
    stdout.
-3. `tentaqles lobe rules approve l-4c7d19e2`: exit code 1; the output contains `Blocking is not available yet`;
+4. `tentaqles lobe rules approve l-4c7d19e2`: exit code 1; the output contains `Blocking is not available yet`;
    `ladder.json` is unchanged and there is no `approvals.json`.
-4. `CLAUDECODE=1 tentaqles lobe lessons confirm l-4c7d19e2`: exit code not 0, and `ladder.json` is unchanged.
+5. `CLAUDECODE=1 tentaqles lobe lessons confirm l-4c7d19e2`: exit code not 0, and `ladder.json` is unchanged.
 
-For checks 5 to 14 set `enforce` to `block` and write the approved state by hand. `<lobe>/ladder.json`: `{"v":1,
+For checks 6 to 15 set `enforce` to `block` and write the approved state by hand. `<lobe>/ladder.json`: `{"v":1,
 "entries":[{"lesson":"l-4c7d19e2", "stage":"block", "hits":5, "false_alarms":0, "sessions":2,
 "approved_at":"2026-11-09T10:00:00Z"}]}`. `<lobe>/approvals.json`: `{"v":1, "approvals":[{"lesson":"l-4c7d19e2",
 "pattern":"(?i)merge into \\S+ using \\(", "when":{"tool":["Bash"], "command":["dbsql"]}, "title":"Alias the
@@ -205,24 +213,24 @@ MERGE source", "why":"The warehouse rejects it because the source has no alias."
 "approved_at":"2026-11-09T10:00:00Z", "override_until":null}]}`. The lesson has no `touches` entry, so it cannot
 be stale and no stale flag is needed for a deny.
 
-5. Input A with `session_id` `s3`: exit code 0; stdout has `"permissionDecision":"deny"`, `The warehouse rejects it`
+6. Input A with `session_id` `s3`: exit code 0; stdout has `"permissionDecision":"deny"`, `The warehouse rejects it`
    and `tentaqles lobe rules allow-once l-4c7d19e2`.
-6. Input A with the command `dbsql -e 'MERGE INTO t USING s'`: exit code 0 and no deny decision in stdout.
-7. Input A with the command `dbsql -e 'SELECT 1'; echo 'MERGE INTO t USING (SELECT 1)'`: stdout has a deny
+7. Input A with the command `dbsql -e 'MERGE INTO t USING s'`: exit code 0 and no deny decision in stdout.
+8. Input A with the command `dbsql -e 'SELECT 1'; echo 'MERGE INTO t USING (SELECT 1)'`: stdout has a deny
    decision. The `when` block matches (one statement runs `dbsql`), and the pattern is tested on the whole call
    text, so a quoted mention matches inside a matching `when`. Then input A with the command
    `echo 'MERGE INTO t USING (SELECT 1)'` alone: exit code 0 and no deny decision, because no statement runs
    `dbsql` and `tool` and `command` narrow each other.
-8. `CLAUDECODE=1 tentaqles lobe rules allow-once l-4c7d19e2`: exit code not 0, and `approvals.json` is unchanged.
-9. `echo yes | tentaqles lobe rules approve l-4c7d19e2`: exit code not 0, and both JSON files are unchanged.
-10. Set `enforce` to `advice`, then input A: exit code 0 and no deny decision in stdout.
-11. Set `enforce` to `block`, change the line under `## Do` to `Run it twice.`, then input A: stdout has a deny
+9. `CLAUDECODE=1 tentaqles lobe rules allow-once l-4c7d19e2`: exit code not 0, and `approvals.json` is unchanged.
+10. `echo yes | tentaqles lobe rules approve l-4c7d19e2`: exit code not 0, and both JSON files are unchanged.
+11. Set `enforce` to `advice`, then input A: exit code 0 and no deny decision in stdout.
+12. Set `enforce` to `block`, change the line under `## Do` to `Run it twice.`, then input A: stdout has a deny
     decision and `Give the source an alias`, and does not contain `Run it twice`.
-12. Change `using` to `usin` in the lesson's pattern, then input A: exit code 0 and no deny decision in stdout.
-13. Restore the lesson file. Input A with `tool_name` `Read` and `tool_input`
+13. Change `using` to `usin` in the lesson's pattern, then input A: exit code 0 and no deny decision in stdout.
+14. Restore the lesson file. Input A with `tool_name` `Read` and `tool_input`
     `{"file_path":"MERGE INTO t USING (SELECT 1)"}`: exit code 0 and no deny decision in stdout. The lesson's `when`
     block names the tool `Bash` alone, and a `block` rule denies only a call its `when` block matches.
-14. In the lesson file set `when: {tool: [Bash], command: [dbsql, databricks]}`, then input A: exit code 0 and no
+15. In the lesson file set `when: {tool: [Bash], command: [dbsql, databricks]}`, then input A: exit code 0 and no
     deny decision in stdout. The `when` block still matches the call but no longer equals the approved one, and
     a changed `when` ends the approval as a changed pattern does.
 
@@ -230,7 +238,7 @@ Person checks, for the owner to run in a terminal with the tester's `HOME`, `USE
 `CLAUDE_CONFIG_DIR` exported (`confirm`, `approve`, `allow-once` and `retire` answer only to a person). The tester
 prepares each state and pipes the inputs; the owner types the commands.
 
-1. From phase 2. With `ladder.json` as check 2 wrote it, `tentaqles lobe lessons confirm l-4c7d19e2`: exit code 0;
+1. From phase 2. With `ladder.json` as check 3 wrote it, `tentaqles lobe lessons confirm l-4c7d19e2`: exit code 0;
    `ladder.json` has `"stage":"advice"`; `ladder-log.jsonl` has a line with `"why":"confirmed"` and `"by":"person"`.
 2. From phase 3. The tester restores the lesson file, runs `tentaqles lobe rebuild`, deletes `approvals.json` and
    `trials.jsonl`, sets `enforce` to `block` and writes `ladder.json` with the entry at `"stage":"advice"`, the three
@@ -268,8 +276,12 @@ prepares each state and pipes the inputs; the owner types the commands.
 lobe records each fire and what the call then did, and that record alone decides whether the rule moves up. Fires at
 `advice` and `block` go into the same file, so one record serves every stage.
 
-**Why it matters.** A lesson drafted from one failure is often too broad. The trial lets it be wrong at no cost.
-Without it, the first sign of a wrong rule would be a wrong note or a wrong block in front of the agent.
+**Why it matters.** A lesson mined from old sessions (C-07) rests on weaker evidence than one learned here, and a
+lesson that a false alarm sent back has been wrong once. The trial lets both be wrong at no cost: nothing is shown
+while their record builds. A lesson learned here from a repair or a correction speaks at once, as a note (decision
+D-9), and its fires at `advice` are recorded in the same way. That record takes a wrong note back on the first false
+alarm (E-07), and it is what the step to `block` needs (E-01). Without the record, the first sign of a wrong rule
+would be a wrong block in front of the agent.
 
 **Mechanism**
 
@@ -334,10 +346,13 @@ Without it, the first sign of a wrong rule would be a wrong note or a wrong bloc
   `act` is `none` unless it is a deny, and it is judged like any other. A verdict from a session F-05 marked as
   tampered moves no rule and is left out of the counts.
 - The limit of the record: a lesson with neither an `avoid` block nor a fingerprint cannot earn a hit. That is
-  most correction lessons, and standing lessons not written by the person. Such a lesson waits at its entry stage
-  until the person confirms it (`tentaqles lobe lessons confirm <id>`, E-01). It is surfaced in two places:
-  R-05's brief prints one line with the number of lessons waiting and the command, and
-  `tentaqles lobe lessons --waiting` lists them.
+  most correction lessons and most standing lessons. At `advice` such a lesson is shown all the same, so a
+  correction lesson or a pulled standing lesson does not wait (E-01's enter rule). At `seen` or `trial` it waits
+  until the person confirms it (`tentaqles lobe lessons confirm <id>`, E-01); by the enter rule that is a
+  `backfill` lesson filed here. A waiting lesson is surfaced in two places: R-05's brief prints one line with the
+  number of lessons waiting and the command, and `tentaqles lobe lessons --waiting` lists them.
+- The other side of that limit: a lesson with no `avoid` block cannot earn a false alarm (step 3's table), so no
+  hook ever demotes it. E-07's risks say what the person does then.
 - A repair that contradicts its lesson: when a new repair has the fingerprint of an active lesson and the working
   fix matches that lesson's `avoid.pattern` (what the lesson says to avoid is what worked), the fire on the
   working call is `by: avoid` with the result `ok`, so this entry records a `false_alarm`. C-05 does not reinforce
@@ -564,7 +579,8 @@ Restore this file after each check.
 
 **Risks and open questions**
 
-- The everyday list is our guess at harmless calls; a client with other habits is covered by replay and the trial.
+- The everyday list is our guess at harmless calls; a client with other habits is covered by replay and by the
+  record of fires (E-02).
 - Replay reads only S-07's retention window, so a slow-climbing rule may need one more hit on promotion day.
 - S-03 stores a success as a projection of its input: the command for a shell tool, a reduced form for other
   tools, and the full input only for the success that follows a failure in the same session (core page 5.4). So
@@ -1132,6 +1148,10 @@ Person checks, for the owner to run in a terminal with the tester's `HOME`, `USE
 **Risks and open questions**
 
 - One false alarm can be chance (S-04 misreads, or the call works once). We accept a slow climb over a wrong block.
+- A lesson with no `avoid` block cannot earn a false alarm (E-02), so no hook ever takes its note back. A lesson
+  learned from a repair or a correction speaks from its first matching call (decision D-9). One filed without an
+  `avoid` block keeps speaking, right or wrong, until the person mutes it with `tentaqles lobe rules demote <id>`
+  or `tentaqles lobe rules retire <id>`.
 - An agent can cause a false alarm on purpose and so silence a rule at `advice`; a `block` rule would deny that call.
 - While a `block` rule is stale it only advises. That is the price of never denying on code that has changed (core
   page 5.5); the idle row removes an approval that staleness has kept unused for 90 days.

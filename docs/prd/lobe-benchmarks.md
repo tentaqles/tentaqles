@@ -17,10 +17,12 @@ program `lobebench`, and are not part of a release.
 |---|---|---|---|
 | 1. One identity per client | The leak suite's attacks found nothing of one client in another client's session | M-03 | Attacks run and leaks found. Pass mark: 0 leaks |
 | 2. Fewer tokens | The same tasks cost less with the graph on, with no loss of correctness; the graph was built before the runs, and its build time is reported apart from the tasks' cost | M-02 (arm `graph` against arm `identity`); M-07 (the graph is right); M-01 (the estimate shown in the product) | The figure M-02 step 6 computes: the ratio of total billed cost between the two arms with its 95% interval, beside the correctness difference; the graph's build time apart |
-| 3. Fewer errors | A mistake an agent made in a client's work was learned there and came back less often the next times it was about to happen: the repeat rate at the second, third and fourth meeting was lower with the lobe than without | M-04 (repeat rate at each meeting, and the tokens of each session); M-05 (blocks are right); M-02 (arm `lessons` against arm `identity`) | Repeat rate at the second, third and fourth meeting, with and without the lobe; billed tokens per session; wrong blocks; missed mistakes |
+| 3. Fewer errors | A mistake an agent made in a client's work was learned there and came back less often the next time it was about to happen: the repeat rate at the second meeting was lower with the lobe than without | M-04 (repeat rate at the second meeting, the same rate at the third and fourth, and the tokens of each session); M-05 (blocks are right); M-02 (arm `lessons` against arm `identity`) | Repeat rate at the second meeting, with and without the lobe; the same rate at the third and fourth meeting; billed tokens per session; wrong blocks; missed mistakes |
 
-Promise 3 says "the next times", not "never again": how soon a new lesson speaks up is set by the rule ladder (core
-page 5.5), which is why row 3 gives three rates and not one.
+Promise 3 says "learned there and not made twice" (core page section 1). A lesson learned from a failure and its
+fix speaks at the next matching call (D-9, core page 5.5), so the measured claim in row 3 is the repeat rate at the
+second meeting. The rates at the third and fourth meeting are still reported: they show whether a lesson was
+demoted or faded.
 
 No row is published before its tests have run. M-06 serves no promise: it holds the anti-goal that a hook never
 stalls a session. M-08 applies to every row. A run with a real agent gates a published number, never a phase: a
@@ -303,9 +305,11 @@ beside `tentaqles`. It is not in a release.
 - Cost, as an estimate. Graft's cold arm cost at least 1.94 dollars per SWE-bench instance: its README gives 52.34
   dollars over at most 27 instances, at its model's prices, and the division is ours (source: web, not
   machine-checked). 150 instances on 2 arms with 3 trials are 900 runs: about 1,700 dollars or more, and each
-  further arm adds about 870. Promises 2 and 3 together need 3 arms, about 2,600 dollars. The owner decides
-  whether and when that is spent; the question and pull request sets cost far less and run first. No phase waits
-  for that spending: it holds back only the published number (step 8).
+  further arm adds about 870. Promises 2 and 3 together need 3 arms, about 2,600 dollars. These figures are
+  estimates and unchecked. The owner has decided the order (D-15): the question and pull request sets cost far
+  less and run first, and the SWE-bench Verified run waits for one approval from the owner at phase 4, asked with
+  a checked cost in hand. Until then no paid run of that set starts. No phase waits for that spending: it holds
+  back only the published number (step 8).
 - OpenAI stopped reporting SWE-bench Verified after finding flawed tasks (web, not machine-checked), and models may
   have seen the public pull requests. We publish differences between arms, never a score.
 - The warm store can flatter `lessons`: warm-up tasks are committed first and a cold-store result is published too.
@@ -345,10 +349,10 @@ leaks (core page section 8).
    exits 0, prints nothing and writes nothing in any store. A session with the variable unset therefore gets
    nothing from the lobe. Between them the two attacks cover three forms, each run for both hosts: another
    client's login, the reverse through inherited variables, and no login variable at all.
-6. L-09 is an observation, not lobe work. It tests today's resolver, which is identity code the lobe calls and
-   does not change (`internal/resolve`). The suite runs it in every phase and prints its result apart, under
-   `observations`, with `"waits_on":"owner"`. Its result is not added to `leaks` until the owner has decided
-   whether the resolver should refuse that folder; from a yes on, it is an ordinary attack and counts.
+6. L-09 tests the folder resolver, which is identity code the lobe calls and does not change
+   (`internal/resolve`). It is an ordinary attack: the suite runs it in every phase, a hit is a leak counted in
+   `leaks`, and the exit code follows it like any other. The resolver is to refuse a second folder with a
+   client's name; that fix is outside the lobe and lands before phase 1 (D-12, core page section 8).
 
 | # | Attack | Expected |
 |---|---|---|
@@ -360,7 +364,7 @@ leaks (core page section 8).
 | L-06 | `session_id` and `tool_name` hold `../../acme/lobe/lessons/x`, and the same with backslashes | No file is created or read outside `identities/globex/lobe/` |
 | L-07 | Globex's `lobe/lessons`, or `.tentaqles/lessons` in its repository, is a symbolic link (a junction on Windows) to acme's private `lessons` | Exit 0, no output: a path that resolves outside the client's own folders is refused |
 | L-08 | Acme's marker file is copied into a neutral folder and into a subfolder of globex | Neutral folder: no output, no write. Subfolder: still globex |
-| L-09 | A second folder named `acme` under another registered base, with a copied marker. The hook JSON's `cwd` is that folder and the login is acme's, as it would be for a session started there if the resolver takes the folder for acme | Wanted: no output and no write there. An observation about today's resolver, reported apart and waiting on the owner's decision (step 6) |
+| L-09 | A second folder named `acme` under another registered base, with a copied marker. The hook JSON's `cwd` is that folder and the login is acme's, as it would be for a session started there if the resolver takes the folder for acme | No output and no write there. A write or any output in that folder is a leak, counted in `leaks` like any other (step 6) |
 | L-10 | A Stop in acme starts the detached work; hooks then run in globex. A fake agent CLI records its environment | The child wrote only under acme and saw acme's `CLAUDE_CONFIG_DIR` and `TQ_LOBE_NO_HOOKS=1` |
 | L-11 | Backfill (C-07) runs in acme while globex's canary sits in globex's Claude config and in `$HOME/.claude/projects` | Acme's store holds no globex canary: backfill reads only acme's own login folder, never `~/.claude` |
 | L-12 | 200 hook calls per client, interleaved from 8 workers (proposed) | No canary in the wrong store; every log line parses |
@@ -378,13 +382,12 @@ leaks (core page section 8).
 
 **How to build it**
 
-- `internal/lobe/benchcheck/leak/attacks.go` holds the table (id, the features an attack needs, setup, attack,
-  scan, and whether it counts or is an observation) and `canary.go` beside it the scanner. The package ships in
+- `internal/lobe/benchcheck/leak/attacks.go` holds the table (id, the features an attack needs, setup, attack
+  and scan) and `canary.go` beside it the scanner. The package ships in
   the binary (M-02). `test/integration/lobeleak_test.go` runs every attack against the built program in CI on the
   three systems; `tentaqles lobe bench leak` runs the same table for a tester.
-- `summary.json` has `leaks`, `controls_failed`, `not_run` (each entry with `needs`) and `observations` (each
-  entry with the attack id, `result` as `clean` or `hit`, and `waits_on`). The exit code follows `leaks` and
-  `controls_failed` only.
+- `summary.json` has `leaks`, `controls_failed` and `not_run` (each entry with `needs`). The exit code follows
+  `leaks` and `controls_failed`.
 - `--plant <events|lesson|graph>` copies that part of acme's store into globex's by hand before the scan, inside
   the home the action created. It exists so a test can prove the suite turns red. No build of the product, tagged
   or not, keys a store by anything but the client.
@@ -400,8 +403,8 @@ leaks (core page section 8).
   output and 0 files changed under `identities/` in 6 of 6 runs.
 - `TestLobeLeak_CommandUnderAnotherLoginRefused`: L-15 for each host's variable: exit 1, no acme canary in the
   output and 0 files changed under `identities/`; with the variable unset the same commands exit 0 (yes or no).
-- `TestLobeLeak_ResolverObservationReportedApart`: L-09 ran, its result is under `observations` with
-  `"waits_on":"owner"`, and it is in neither `leaks` nor `not_run` (yes or no).
+- `TestLobeLeak_SecondFolderWithAClientsName`: L-09 runs, and a write or any output in the second folder is
+  counted under `leaks` (yes or no).
 
 **Tester brief**
 
@@ -428,9 +431,8 @@ Start from the standard tester setup in F-07. No network. `A` is `$W/clients/acm
    `exit=1` and no line holding `acmecanaryword`: a command under another client's login is refused (L-15). The
    same command with `CLAUDE_CONFIG_DIR` unset exits 0.
 7. `tentaqles lobe bench leak --out "$W/leak"`. Expect exit 0, `"leaks":0` and `"controls_failed":0` in
-   `$W/leak/summary.json`, a `needs` entry for every attack under `not_run` (`L-14` among them, with
-   `"needs":"person"`), and under `observations` one entry that names `L-09` with `"waits_on":"owner"`. Report
-   its `result` (`clean` or `hit`) as found; either value passes this check.
+   `$W/leak/summary.json`, and a `needs` entry for every attack under `not_run` (`L-14` among them, with
+   `"needs":"person"`). `L-09` is not under `not_run`: it ran and counts in `leaks` like any other attack.
 8. `tentaqles lobe bench leak --plant events --out "$W/leak2"`, which copies acme's event log into globex's store
    by hand before the scan. Expect exit 1 and `"leaks"` at least 1.
 
@@ -445,11 +447,10 @@ Person checks
   keeps one client's
   memory out of a session logged in as another; it is not a defense against a process that sets both the folder
   and the variable to acme's, which is simply an acme session.
-- L-09 may show a hit today. The resolver keys a client by folder name (`internal/resolve/resolve.go` L125 to
-  L137), and only `reach` refuses a second folder with the same name (`internal/cmd/reach_test.go` L214). This is
-  an observation about identity code, not about the lobe: any fix is there and needs the owner's yes, and until
-  the owner decides, the phase gate of core page section 8 reads `leaks`, which leaves L-09 out (step 6). It is on
-  the owner's question list.
+- Until the resolver's fix lands, L-09 may show a hit and so a leak. The resolver keys a client by folder name
+  (`internal/resolve/resolve.go` L125 to L137), and only `reach` refuses a second folder with the same name
+  (`internal/cmd/reach_test.go` L214). The fix is identity work, outside the lobe, and lands before phase 1
+  (D-12, core page section 8), so the phase 1 gate reads L-09 with the rest (step 6).
 - A shared lesson committed to a repository reaches whoever clones it. That is the design (F-04), not a leak.
 
 ## M-04 Repeat-mistake benchmark
@@ -458,12 +459,13 @@ Person checks
 
 **What it is.** A trap is a rule of the environment that an agent breaks by default. The agent meets a trap in one
 task, the lobe gets the chance to learn, and a new session meets the same kind of trap in a different task. The
-number is the repeat rate: how often a later session falls into the trap, with the lobe and without it. It is
-reported at the second, third and fourth meeting of the same mistake.
+number is the repeat rate: how often a later session falls into the trap, with the lobe and without it. The
+headline is the rate at the second meeting of the same mistake. The rates at the third and fourth meeting are
+reported beside it.
 
 **Why it matters.** It is the direct test of promise 3. None of the sources measures it, so without this benchmark
-"headed off the next times it is about to happen" would be an opinion, and nobody could say how many times "next"
-takes.
+"learned there and not made twice" would be an opinion, and nobody could say how often a learned mistake still
+comes back.
 
 **Mechanism**
 
@@ -471,31 +473,32 @@ takes.
    look-alike task D where the avoided pattern is the right thing to do.
    - **Cross-shell syntax**: PowerShell text sent to Git Bash and the reverse. Traps covered by a starter rule (C-08)
      and traps not covered are reported as two groups: a starter rule is built in and enters the ladder at
-     `advice` (E-01), so it can speak at the first meeting, while a learned lesson cannot.
+     `advice` (E-01), so it can speak at the first meeting, while a learned lesson does not exist until after it
+     and speaks from the second (D-9).
    - **SQL dialect rule**: a stub warehouse CLI in `bench/traps/bin/` rejects one pattern with a fixed error, for
      example the `MERGE ... USING (` form in the sample lesson of core page 5.4.
    - **Wrong argument count**: a fixture repository whose function takes an unusual number of arguments.
    - **Misused API**: a stub command-line API and a stub MCP tool that reject one argument form.
 2. An episode runs sessions 1 to 4 on tasks A, B, C and E, each with a fresh context, and runs
    `tentaqles lobe consolidate` after each. That verb runs now what the `stop` hook starts (F-07): consolidation,
-   then the ladder's moves (E-07). So before the next session begins, the lesson is filed and stands at the stage
-   its record gives it. Session 5 runs task D.
+   then the ladder's moves (E-07). So before the next session begins, the lesson is filed and stands at its
+   stage: a lesson paired from a repair enters at `advice` (E-01, D-9) and stays there unless its record moves
+   it. Session 5 runs task D.
 3. The trap keeps its own log of rejected calls. Hits are read from that log, never from the lobe's own records.
 4. Arms from M-02: `identity` (no lobe), `lessons`, `all`, and `lessons-model-off` (`lessons` with `model: off`).
-   `lessons` runs in two modes. Untouched: nobody confirms anything, as a new user gets it, and a lesson is shown
-   only once the ladder has moved it to `advice`. Confirmed: this stands for a person who runs
-   `tentaqles lobe lessons confirm <id>` on each new lesson. That verb answers only to a person, and a harness
-   never pretends to be one, so in confirmed mode it writes each new lesson's entry in `ladder.json` directly, at
-   stage `advice` with empty counts, which is where a person's confirmation puts it (E-01). Arm `all` and the
-   graph's path for the argument-count family (G-04, E-05) join in phase 4. In arm `all` the harness builds the
-   graph of the trap's repository before session 1 and reports the build's time apart from every session's cost
-   (M-02, steps 3 and 5). Proposed size: 20 traps, 3 trials, 5 arm-and-mode pairs, 300 episodes.
+   There is one mode: nobody confirms anything, as a new user gets it, and the harness writes no ladder entry. A
+   lesson paired from a repair enters the ladder at `advice` by the enter rule (E-01, D-9), so it is shown at
+   the second meeting. Arm `all` and the graph's path for the argument-count family (G-04, E-05) join in
+   phase 4. In arm `all` the harness builds the graph of the trap's repository before session 1 and reports
+   the build's time apart from every session's cost (M-02, steps 3 and 5). Proposed size: 20 traps, 3 trials,
+   4 arms, 240 episodes.
 5. Numbers per family and arm. **Repeat rate**: episodes with a trap hit at the second meeting divided by all
-   episodes; untouched mode is the headline. The same rate at the third and fourth meeting, because the ladder
-   (core page 5.5) shows the agent nothing while a lesson is at `seen` or `trial`. The three rates together are
-   what promise 3's "the next times" means in numbers. Also the first-hit rate, the harm rate (task D failed or
-   its correct call was denied), advice shown on task D, and each session's billed tokens. Every arm here caps
-   `enforce` at `advice`, so no call is denied and harm is a failed task D; denies are M-05's subject.
+   episodes. This is the headline: it is what promise 3's "not made twice" means in numbers. The same rate at the
+   third and fourth meeting is still reported. Those two show whether a lesson was demoted (one false alarm at
+   `advice` sends it back to `trial`, where it is silent, E-07) or faded (C-05). Also the first-hit rate, the
+   harm rate (task D failed or its correct call was denied), advice shown on task D, and each session's billed
+   tokens. Every arm here caps `enforce` at `advice`, so no call is denied and harm is a failed task D; denies
+   are M-05's subject.
 6. Intervals resample traps, not trials, because trials of one trap are not independent (M-02, step 6).
 
 **Source**
@@ -511,9 +514,6 @@ takes.
 
 - `bench/traps/<family>/<trap>/` holds `trap.yaml` (the rule, the error text, the five tasks), the stub and its log
   path. `bench/internal/trap` runs episodes; `lobebench repeat` is the entry point (M-02).
-- Confirmed mode writes a ladder entry in the shape of core page 5.4, `{lesson, stage, hits, false_alarms,
-  sessions, approved_at}`, under F-01's lock, and touches no other file. It never writes `approvals.json`: nothing
-  in this benchmark reaches `block`.
 - Stubs are small Go programs built with the harness. They use no network and hold no real client data.
 - An invented house rule is used on purpose: the model cannot know it in advance, so session 1 does fall into it.
 - Edge cases: an episode where session 1 never hit the trap stays in the headline rate; a session that ends without
@@ -521,47 +521,42 @@ takes.
 
 **How we know it works**
 
-- `TestLobeRepeatStubEpisode`: with the scripted agent and confirmed mode, arm `identity` has repeat rate 1.0 and arm
-  `lessons` 0.0.
+- `TestLobeRepeatStubEpisode`: with the scripted agent and nothing confirmed, arm `identity` has repeat rate 1.0
+  and arm `lessons` 0.0.
 - `TestLobeRepeatReadsTheTrapLog`: deleting the lobe's event log changes no reported number (yes or no).
 - `TestLobeRepeatCountsHarm`: a deny on task D's correct call is counted in the harm rate.
 - `TestLobeRepeatHeadlineKeepsEveryEpisode`: the headline denominator equals traps times trials.
-- `TestLobeRepeatConfirmedEntryIsTheVerbsEntry`: for the same lesson, the ladder entry confirmed mode writes equals
-  the one the function behind `tentaqles lobe lessons confirm` writes, key for key (yes or no). The test calls the
-  function; no test runs the person-only verb.
 - Target for the real run (proposed): the 95% interval of the repeat-rate difference lies below 0 at the second
-  meeting in confirmed mode and by the fourth in untouched mode, because E-01 (proposed there) moves a lesson from
-  `trial` to `advice` only after 2 hits in 2 sessions. The harm rate of `lessons` is not above that of `identity`.
-  The real run needs a paid agent, so it gates the published sentence of promise 3 and not phase 2, which ends on
-  the tests above and the tester brief. A real run that misses the target means the claim is not made, and the
-  miss is recorded (M-02, step 8). The run is on Claude Code first, and its numbers name their host and model.
+  meeting. The harm rate of `lessons` is not above that of `identity`. The real run needs a paid agent, so it
+  gates the published sentence of promise 3 and not phase 2, which ends on the tests above and the tester brief.
+  A real run that misses the target means the claim is not made, and the miss is recorded (M-02, step 8). The
+  run is on Claude Code first, and its numbers name their host and model.
 
 **Tester brief**
 
 Start from the standard tester setup in F-07. No network. This brief also needs the harness program `lobebench`
 on `PATH` (M-02's brief says how it is built). The scripted agent of fixture `sql-merge` runs the trapped command
 and then the corrected one, unless the lobe's `pre-tool-use` hook printed context for that call; then it runs only
-the corrected one. Arm `lessons-model-off` calls no agent CLI. `--confirm` selects confirmed mode, in which the
-harness writes `ladder.json` itself; no step of this brief runs a person-only command. The harness works with
-its own client `acme` in a home under `--out`, built with `tentaqles lobe sandbox` as the standard setup builds
-`$W/clients/acme`.
+the corrected one. Arm `lessons-model-off` calls no agent CLI. Nothing is confirmed and the harness writes no
+ladder entry: the lesson paired from session 1's repair enters at `advice` by the enter rule (E-01). No step of
+this brief runs a person-only command. The harness works with its own client `acme` in a home under `--out`,
+built with `tentaqles lobe sandbox` as the standard setup builds `$W/clients/acme`.
 
-1. `lobebench repeat --agent stub --fixture sql-merge --arms identity,lessons-model-off --confirm --trials 1
+1. `lobebench repeat --agent stub --fixture sql-merge --arms identity,lessons-model-off --trials 1
    --out "$W/m04"`. Expect exit 0.
 2. `$W/m04/summary.json`, arm `identity`: `hits_by_session` is `[1,1,1,1]` and `repeat_rate_2` is 1.0.
 3. Arm `lessons-model-off`: `hits_by_session` is `[1,0,0,0]`, `repeat_rate_2` is 0.0 and `harm` is 0.
 4. The stub's log `$W/m04/lessons-model-off/trial1/trap.log` has exactly 1 line; the one for `identity` has 4.
 5. Under `$W/m04/lessons-model-off/trial1/home/` there is exactly one `.md` file directly in
    `identities/acme/lobe/lessons/`, and `identities/acme/lobe/ladder.json` holds `"stage":"advice"` for its id.
-6. Run check 1 without `--confirm` and with `--out "$W/m04b"`. Expect exit 0, and for arm `lessons-model-off` a
-   `hits_by_session` that starts with 1 and in which no 0 is followed by a 1.
 
 **Risks and open questions**
 
-- The ladder keeps a new lesson silent through `seen` and `trial`, so in untouched mode the rate at the second
-  meeting may equal the control, and with E-01's proposed thresholds the third may too. Promise 3 is worded for
-  that ("the next times"; core page 5.5). The three rates this benchmark reports are the evidence for how quiet a
-  new lesson should be, which core page 5.5 leaves open and E-01 holds as proposed numbers.
+- A repair lesson speaks at the second meeting (D-9). What can silence it again is a false alarm: one at
+  `advice` sends the lesson back to `trial` (E-07). A false alarm at the second or third meeting would show in
+  the rates at the third and fourth. One on the look-alike task D, which runs last, would show in the advice
+  shown on task D and in the harm rate. A lesson with no `avoid` block cannot earn a false alarm (E-02), so no
+  hook demotes it: its note on task D stays until a person runs `tentaqles lobe rules demote` or `retire`.
 - Invented rules show that the mechanism works, not how often real mistakes happen. M-02's pull request tasks cover
   real work.
 - Consolidation with `model: on` calls the agent CLI, so the real run needs network and its cost is counted (M-02,

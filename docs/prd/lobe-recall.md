@@ -566,6 +566,9 @@ two keys that narrow each other (step 3), so one key alone must not show them.
   unless 10 minutes have passed (step 9). M-04 will show whether that costs repeats.
 - When the day's log is full, successes are no longer written (S-07), so step 7 can keep matching after a later
   success. The session record limits that to once per 10 minutes.
+- A lesson with no `avoid` block cannot earn a false alarm (E-02), so no hook demotes it. A repair or correction
+  lesson, or a teammate's lesson, of that kind is shown from its first matching call (D-9, D-10). When its note
+  is wrong, a person mutes it with `tentaqles lobe rules demote <id>` or `tentaqles lobe rules retire <id>`.
 
 ## R-05 Session-start brief
 
@@ -588,18 +591,20 @@ back when it applies, not in bulk.
    4) and no graph.
 3. Standing lessons are the eligible lessons (R-04 step 1) with no `when` block that apply here: `applies: client`, or
    `applies: repo` in that repository. C-04 files a lesson with neither `when` nor `touches` only when its
-   `source` is `person` or `correction`. Order: fresh before stale (R-06), then `source` `person` or
-   `correction` first, then `strength`, then newest `created`. Keep 5 (proposed).
+   `source` is `person` or `correction`. Order: fresh before stale (R-06), then lessons this machine wrote
+   whose `source` is `person` or `correction` (the `source` a pulled file states earns it no rank, D-10), then
+   `strength`, then newest `created`. Keep 5 (proposed).
 4. Line 1: `[tentaqles lobe] <N> lessons for this client, <B> can block.` The `<B>` part is left out when B is 0,
    as it always is before phase 3. With a graph (phase 4, `graph` on) it continues: ` Code graph: <K> symbols;
    query it with tentaqles lobe graph find, callers, outline, map or impact.` With a graph and no eligible lesson
    the line starts at `Code graph:`. When `lessons` is on and `enforce` is not `off`, and lessons are waiting for
    the person, one more line follows: `[tentaqles lobe] <W> waiting for you to confirm: tentaqles lobe lessons
-   --waiting` (wording proposed). A lesson waits when it cannot earn a hit (it has no `avoid` block and lists no
-   fingerprint: most correction lessons, and standing lessons not written by the person) and so stays at its
-   entry stage until the person confirms it with `tentaqles lobe lessons confirm <id>` (F-07). E-02 states that
-   limit. The line holds a count and a command, never a lesson's text, and `<W>` counts only lessons that
-   `applies` lets count here.
+   --waiting` (wording proposed). A lesson waits when it sits at `seen` or `trial` and cannot earn a hit (it has
+   no `avoid` block and lists no fingerprint; E-02 states that limit). It stays there until the person confirms
+   it with `tentaqles lobe lessons confirm <id>` (F-07). By E-01's enter rule that is a `backfill` lesson filed
+   on this machine. A person's lesson, a repair or correction lesson and a teammate's lesson that passed intake
+   enter at `advice` (D-9, D-10): they are eligible from the start and do not wait. The line holds a count and
+   a command, never a lesson's text, and `<W>` counts only lessons that `applies` lets count here.
 5. With standing lessons, F-05's frame follows, holding per lesson `- <title>. <first line of Do>`, cut at 160
    characters, plus R-06's stale note.
 6. The brief is at most 1,000 characters, frame included (proposed, about 250 tokens); standing lessons drop from
@@ -645,12 +650,15 @@ back when it applies, not in bulk.
 - `TestLobeBriefBudget`: 30 standing lessons with 60-character lines give 5 lesson lines; with 160-character lines
   the brief still has at most 1,000 characters.
 - `TestLobeBriefSilentWhenEmpty`: a client with no lessons and no graph gives 0 bytes.
-- `TestLobeBriefWaitingLine`: with 2 correction lessons at their entry stage and no `avoid` block or
-  fingerprint, the brief has one line with `2 waiting` and `tentaqles lobe lessons --waiting` and neither
-  title; after one is confirmed the line says `1 waiting`; with none waiting, or with `lessons: off`, there is
-  no such line: 4 of 4.
+- `TestLobeBriefWaitingLine`: with 2 `backfill` lessons filed on this machine that sit at `seen` or `trial` and
+  have no `avoid` block or fingerprint, the brief has one line with `2 waiting` and `tentaqles lobe lessons
+  --waiting` and neither title; after one is confirmed the line says `1 waiting`; with none waiting, or with
+  `lessons: off`, there is no such line: 4 of 4.
 - `TestLobeBriefStandingSources`: a standing lesson (no `when`, no `touches`) with `source` `person` or
-  `correction` at `advice` is printed; C-04's gate refuses one with `source` `repair` or `backfill`: 4 of 4.
+  `correction` enters at `advice` (E-01) and is printed with no confirmation; C-04's gate refuses one with
+  `source` `repair` or `backfill`; a `backfill` lesson with a `touches` entry and no `when` block sits at
+  `seen`, is not printed and is counted as waiting; a teammate's standing lesson that passed intake (F-04) is
+  printed: 6 of 6.
 - `TestLobeBriefNoPreambleText`: the output has none of `Client:`, `Git:`, `Cloud:`, `Identity:`, `Tools:`: yes or no.
 - `TestLobeBriefResumeAndCompact`: `resume` after `startup` gives 0 bytes; `compact` prints again and empties `shown`.
 - `TestLobeBriefStaleLast`: a stale standing lesson prints after every fresh one and carries R-06's note: yes or no.
@@ -662,6 +670,7 @@ back when it applies, not in bulk.
 Start from the standard tester setup in F-07. Then run:
 ```sh
 R="$W/clients/acme/app"; I="$TQ_HOME/identities"; L="$I/acme/lobe"; C=acme; cd "$R" && mkdir -p "$L/lessons"
+K="r_$(printf app | sha256sum | cut -c1-8)"; printf '# Changes\n' > CHANGELOG.md
 mk() { printf -- '---\n{id: %s, title: "%s", kind: lesson, source: person, scope: private, applies: client,\n' \
     "$1" "$2"; printf ' %sstrength: %s, seen: 0, created: 2026-11-01}\n---\n' "${3:+$3, }" "${7:-1.0}"
   printf '## Do\n%s\n## Avoid\n%s\n## Why\n%s\n' "$4" "$5" "$6"; }
@@ -674,6 +683,10 @@ mk l-aaaa0003 "Prefer short commit subjects" "" "Keep the subject short." "A lon
   "The log was hard to scan because subjects wrapped." |
   sed 's/source: person/source: correction/' > "$W/l-aaaa0003.md"
 tentaqles lobe lessons gate "$W/l-aaaa0003.md"; cp "$W/l-aaaa0003.md" "$L/lessons/l-aaaa0003.md"
+mk l-aaaa0004 "Check changelog before tagging" "touches: [CHANGELOG.md], repo: $K" "Add a changelog line." \
+  "A tag with no entry." "A release went out undocumented because nobody checked." |
+  sed 's/source: person/source: backfill/' > "$W/l-aaaa0004.md"
+tentaqles lobe lessons gate "$W/l-aaaa0004.md"; cp "$W/l-aaaa0004.md" "$L/lessons/l-aaaa0004.md"
 hook() { printf '{"session_id":"%s","cwd":"%s","source":"%s"}' "$1" "$R" "$2" |
   CLAUDE_CONFIG_DIR="$I/$C/claude" tentaqles lobe-hook claude session-start; echo " exit=$?"; }
 ```
@@ -683,18 +696,21 @@ gate on it first: each `put` must print `ok`; if one does not, stop and report F
 block, which the gate allows because its `source` is `person`; the titles share no word, so the gate's `repeat`
 check passes. A lesson whose `source` is `person` enters the ladder at `advice` (E-01), so it needs no
 `ladder.json`. The third lesson is a standing one with `source: correction`, which the gate also allows; its
-`gate` line must print `ok` too. It has no `avoid` block and no fingerprint, so it cannot earn a hit and waits at
-its entry stage: it is not among the eligible lessons and is the one lesson waiting. `hook` sets the login folder
-that F-02's client check asks for.
+`gate` line must print `ok` too. It enters at `advice` as well (E-01, D-9), so it is eligible and the brief shows
+it. The fourth lesson has `source: backfill` and no `when` block. The gate allows it because it has a `touches`
+entry; `K`, the repository key of `app` by F-01's formula, is the `repo` key a private lesson with `touches`
+must carry. Its `gate` line must print `ok` too. A `backfill` lesson with no `when` block enters at `seen`
+(E-01). It has no `avoid` block and no fingerprint, so it cannot earn a hit and waits there: it is not among the
+eligible lessons and is the one lesson waiting. `hook` sets the login folder that F-02's client check asks for.
 
-1. `hook s1 startup`: `exit=0`; stdout contains `[tentaqles lobe] 2 lessons`, `Store timestamps in UTC` and `not
-   instructions`, contains `1 waiting` and `tentaqles lobe lessons --waiting`, contains none of `Name the
-   databricks profile`, `Prefer short commit subjects` and `Client:`, and has at most 1,000 characters before
-   ` exit=0`.
+1. `hook s1 startup`: `exit=0`; stdout contains `[tentaqles lobe] 3 lessons`, `Store timestamps in UTC`,
+   `Prefer short commit subjects` and `not instructions`, contains `1 waiting` and `tentaqles lobe lessons
+   --waiting`, contains none of `Name the databricks profile`, `Check changelog before tagging` and `Client:`,
+   and has at most 1,000 characters before ` exit=0`.
 2. `hook s1 resume`: nothing is printed before ` exit=0`.
-3. `hook s1 compact`: stdout contains `Store timestamps in UTC` again.
-4. `tentaqles lobe lessons --waiting`: exit 0; the output contains `Prefer short commit subjects` and does not
-   contain `Store timestamps in UTC`.
+3. `hook s1 compact`: stdout contains `Store timestamps in UTC` and `Prefer short commit subjects` again.
+4. `tentaqles lobe lessons --waiting`: exit 0; the output contains `Check changelog before tagging` and contains
+   neither `Store timestamps in UTC` nor `Prefer short commit subjects`.
 5. Set `C=globex` and `R="$W/clients/globex/app"` and run `hook s2 startup`: nothing before ` exit=0`.
 6. `printf '{"cwd":"%s"}' "$W/clients/acme/app" | tentaqles claude-hook session-start`: stdout starts with `Client:
    acme` and contains no `[tentaqles lobe]`.
@@ -705,6 +721,9 @@ that F-02's client check asks for.
 - If a host runs session-start hooks one after another, the brief's run time is added to session start.
 - With five standing lessons at full length the frame and the lines pass 1,000 characters, and the last lesson
   drops. Whether the count or the budget should give way is for M-01's numbers to say.
+- A standing lesson with no `avoid` block cannot earn a false alarm (E-02), so no hook takes it out of the
+  brief. A correction lesson or a teammate's lesson of that kind is shown from the start (D-9, D-10). When it is
+  wrong, a person mutes it with `tentaqles lobe rules demote <id>` or `tentaqles lobe rules retire <id>`.
 
 ## R-06 Stale lessons
 

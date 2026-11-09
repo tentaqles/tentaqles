@@ -81,9 +81,10 @@ anything a second client could share. Without it `tentaqles drop` could leave a 
    | `$TQ_HOME/identities/<client>/claude/projects/`, `$TQ_HOME/identities/<client>/codex/sessions/` | C-07, F-05 | The client's own login folders. Read only, by the backfill; a session that writes there gets the tamper mark |
    | `$TQ_HOME/identities/<client>/codex/config.toml`, the plugin's `hooks/hooks.json` | F-03 | Where the lobe's hooks are registered |
 
-   The tentaqles repository itself gains `NOTICE` and `third_party/licenses/` (F-07), the `bench/` folder (M-02 to
-   M-08) and, on a branch that is never merged, `spike/parser/` with its written result under `docs/prd/spikes/`
-   (G-01). None of that is on a person's machine at run time.
+   The tentaqles repository itself gains a root `LICENSE` (MIT, decision D-13), `NOTICE` and
+   `third_party/licenses/` (F-07), the `bench/` folder (M-02 to M-08) and, on a branch that is never merged,
+   `spike/parser/` with its written result under `docs/prd/spikes/` (G-01). None of that is on a person's
+   machine at run time.
 3. First use. `store.Open(ws, ReadWrite)` creates the folder, its subfolders and `store.json`, which is
    `{"v":1,"client":"<name>","created":"<time>"}`. The render step of `tentaqles reach` and of `tentaqles settings
    render` opens it once; a hook or a `tentaqles lobe` verb creates it if absent. A hook reaches `Open` only after
@@ -490,7 +491,7 @@ trust state in Codex or the tests that pin them, which is the anti-goal "the ide
 2. Claude Code. `plugin/hooks/hooks.json` gains one group per event, after the guard's group where one exists:
    `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `SessionEnd`. Each
    runs `bash "${CLAUDE_PLUGIN_ROOT}/scripts/lobe_hook.sh" <event>` with `"timeout": 5` and no matcher (every tool).
-   The lobe's hooks ship in the existing plugin; there is no second plugin to install (decision A-10).
+   The lobe's hooks ship in the existing plugin; there is no second plugin (decision D-11).
 3. The wrapper `plugin/scripts/lobe_hook.sh` inverts `tq_hook.sh`. It exits 0 at once when `TQ_LOBE_NO_HOOKS` is
    `1`, the event is unknown, or no binary is found. It looks for the binary as `tq_hook.sh` does (L66 to L85:
    `tq` on PATH, then the install folders). Otherwise it runs `<binary> lobe-hook claude <event>`, passes stdin
@@ -527,17 +528,18 @@ trust state in Codex or the tests that pin them, which is the anti-goal "the ide
 - The wrapper's file name must not contain `tq_hook.sh`. The checks that find the guard by that text must pass
   untouched: `test_tq_hook_deadline_is_under_the_hook_timeout` (L96), the matcher test (L191), `preToolUseRunsGuard`
   (`guardhook.go` L267) and `TestHookDeadlinesUnderHarnessTimeouts` (`claudehook_main_test.go` L45).
-- One pinned test must change and needs the owner's yes (decision A-10): `test_the_plugin_holds_only_the_guard_hook`
-  in `plugin/tests/test_tq_hook.py`. New form: the two guard commands are present with timeout 15 and unchanged
-  text; every other command is `lobe_hook.sh <event>` with timeout 5; the events are exactly the seven.
+- One pinned test changes, and the owner gave the yes it needs on 2026-11-09 (decision D-11):
+  `test_the_plugin_holds_only_the_guard_hook` in `plugin/tests/test_tq_hook.py`. It now asserts that the guard's
+  two entries are present and unchanged, with timeout 15 and the same command text, and that every other hook
+  entry is a lobe entry: `lobe_hook.sh <event>` with timeout 5, over exactly the seven events.
   `plugin/CLAUDE.md` changes with it. No other pinned plugin test is edited.
 - New plugin tests: `test_lobe_hook_always_exits_zero` (statuses 1, 2, 3, 134, 137), `test_lobe_hook_missing_binary`,
   `test_lobe_hook_unknown_event`, `test_lobe_hook_no_hooks_switch`, `test_lobe_hook_passes_stdin_and_stdout`.
 - Codex: `lobeEvents` is plain data inside `internal/codexconfig`, which the guard imports, so it imports no lobe
   package. `ownedCommand` learns the lobe suffix, so a re-render replaces lobe handlers. The labels Codex hashes
   for the four new events must be read from codex-rs and fixed by golden hashes, as `TestHookTrustGoldenHashes` does.
-- Trust for the lobe's Codex handlers is written by `Render`, as it is for the guard's today. A person who edits
-  or removes them gets the `lobe-hooks-untrusted` warning and nothing stops.
+- Trust for the lobe's Codex handlers is written by `Render`, as it is for the guard's today (decision D-11). A
+  person who edits or removes them gets the `lobe-hooks-untrusted` warning and nothing stops.
 - A plugin change ships by release: a `plugin/CHANGELOG.md` line, then the tag and sha pin (`TestRootMarketplacePin`).
 - Where we differ: Trail registers its failure hook for Bash only; ours has no matcher (decision D-3).
 
@@ -576,8 +578,8 @@ is handed and only reads: `PLUGIN` is its path, `J="$PLUGIN/hooks/hooks.json"` a
 - Codex's cap of 3 s on a session-end hook is from its page (web). If the phase 0 capture shows another number,
   that one handler registers the lower of it and 5; the lobe's own cutoff for the event is 1 s either way.
 - Writing Codex trust for six more handlers follows `Render` today, though the package comment (L16 to L17) says
-  the person accepts hooks in Codex's `/hooks` screen. If the owner wants lobe handlers accepted by hand, only
-  `trustHooks` changes.
+  the person accepts hooks in Codex's `/hooks` screen. The owner decided it: tentaqles writes the trust records
+  for the lobe's handlers as it does for the guard's (decision D-11), so nobody accepts them by hand.
 - If Bash start-up on Windows breaks the capture budget (M-06), the fallback is the direct command
   `tentaqles lobe-hook claude <event> || exit 0`, which loses the install-folder lookup.
 
@@ -617,10 +619,11 @@ each teammate repeats the same mistake, or a private note about a client's syste
    did not write the lesson it is held to its repository, as `applies: repo`, until the person runs `tentaqles
    lobe lessons confirm <id>` there. The verb has one meaning, which F-07 describes: the person vouches for the
    lesson as written. This entry's part is that the lesson then takes the width its `applies` states, and
-   `intake.json` records it as `"wide":true`; the stage move of the same act is E-01's. `applies` limits where
-   a lesson counts, for R-04, R-05 and E-01's deny alike (core page 5.4): `client` everywhere in the client;
-   `repo` only in the lesson's repository, which for a shared lesson is the one its file sits in; `path` only
-   there and under a `when.place` entry, which must then be present (C-04 checks it).
+   `intake.json` records it as `"wide":true`. A pulled lesson is at `advice` already (step 9), so the same act
+   moves its stage only when a false alarm had sent it back to `trial`; that move is E-01's. `applies` limits
+   where a lesson counts, for R-04, R-05 and E-01's deny alike (core page 5.4): `client` everywhere in the
+   client; `repo` only in the lesson's repository, which for a shared lesson is the one its file sits in;
+   `path` only there and under a `when.place` entry, which must then be present (C-04 checks it).
 7. Whose repository. A shared lesson carries no `repo` key: a key describes one machine's folder layout, and a
    teammate's checkout may sit at another path (F-01 step 5). Its repository is the one its file sits in, and
    `intake.json` files it under this machine's key. C-04's form check requires `repo` on a private lesson (core
@@ -632,10 +635,12 @@ each teammate repeats the same mistake, or a private note about a client's syste
    `scope` is `shared`, there is no `anyway` key, no `repo` key and no local `origin` key; the F-05 shape check,
    the C-04 gate with no bypass, the S-05 scan and its own `avoid` cases pass.
 9. Stage on arrival. A lesson that passed step 8 and is committed and unchanged against `HEAD` is handed to
-   `ladder.Enter` (E-01), which gives it its first entry by the enter rule, like a lesson learned here: `trial`
-   when it has a `when` block, never above `advice`, with no record and no approval, whatever the file claims.
-   `source: person` in a pulled file earns nothing: only a lesson written on this machine by its person enters
-   at `advice`. An uncommitted file this machine did not write is not recalled.
+   `ladder.Enter` (E-01), which enters it at `advice` (decision D-10): with or without a `when` block, never
+   above `advice`, with no record and no approval, whatever the file claims. Without a `when` block it is a
+   standing lesson for the session brief (R-05). The `source` a pulled file states earns it nothing more: it is
+   intake that puts the lesson at `advice`, not the file's claim, so `source: person` and `source: backfill`
+   enter alike. A file that fails step 8 is recorded as rejected and enters nothing. An uncommitted file this
+   machine did not write is not recalled.
 10. Why at most advice. `ladder.json` and `approvals.json` are local and never in a repository, so nobody's
     approval travels. Anyone who can push can write the file, so a file that could deny would let a commit stop
     your agent (decisions A-5, A-6).
@@ -686,8 +691,9 @@ each teammate repeats the same mistake, or a private note about a client's syste
 - `TestLobeSharedLessonRepoIsWhereItLives`: a shared file is filed under this machine's key for the repository
   it sits in, and R-06 judges its `touches` there; after `share` the file has no `repo` key, and intake rejects
   a pulled file that carries one. 3 of 3.
-- `TestLobePulledLessonStartsAtMostAtAdvice`: a pulled file whose text claims `block` gets `advice` or lower, and
-  one with a `when` block that says `source: person` enters at `trial`. 2 of 2. Also
+- `TestLobePulledLessonStartsAtMostAtAdvice`: a pulled file whose text claims `block` enters at `advice` and
+  never above, and one with a `when` block that says `source: person` enters at `advice` with no record and no
+  approval. 2 of 2. Also
   `TestLobeUncommittedLessonIsNotRecalled`: 0 recalls before the commit, at least 1 after.
 - `TestLobeRetireMutesOnlyHere`: after `rules retire` on a shared lesson the repository file is byte-identical and
   `git status --porcelain` is empty (E-01 holds the same check from the ladder's side).
@@ -716,8 +722,8 @@ Then `cd "$W/clients/globex/app"` and run every command there unless a check say
 2. `mkdir -p $L; cp "$W/k.md" $L/l-aaaa0001.md; tentaqles lobe consolidate`. Then `tentaqles lobe lessons --json`
    shows the id with `"state":"uncommitted"`: a file this machine did not write and nobody committed.
 3. Define `ci(){ git add .tentaqles; git -c user.name=tester commit -q -m lesson; tentaqles lobe consolidate; }`
-   and run `ci`. Then `tentaqles lobe lessons --json` shows the id with `"state":"ok"` and `"stage":"trial"`,
-   never `"advice"` or `"block"`: the file has a `when` block, and its `source: person` earns nothing here.
+   and run `ci`. Then `tentaqles lobe lessons --json` shows the id with `"state":"ok"` and `"stage":"advice"`,
+   never `"block"`: a pulled lesson that passed intake enters at `advice`, whatever `source` its file states.
 4. Three files that must be rejected: one that says it is private, one over 65,536 bytes, one whose name has 13
    hex characters.
 
@@ -764,6 +770,9 @@ Person checks, for the owner to run (`add`, `share`, `unshare` and `rules retire
 - A shared lesson is as trusted as any file committed to that repository, no more: a teammate with push access can
   put text in front of your agent, as with `CLAUDE.md` today. The agent itself can copy a private lesson into a
   repository by hand; private lessons hold patterns, not data (principle 6).
+- A pulled lesson speaks on arrival, as a note (decision D-10), before this machine has any record of it. One
+  with no `avoid` block cannot earn a false alarm (E-02), so no hook ever demotes it. The person mutes it with
+  `tentaqles lobe rules demote <id>` or `tentaqles lobe rules retire <id>` (step 11).
 - An id is a hash of the lesson's kind, title and fingerprints (C-04), so two teammates who learn the same lesson
   draw the same id and meet as a merge conflict in one file, which is the right place to settle it. Two different
   lessons that share 8 characters are a 32-bit accident; C-04 lengthens an id only against lessons it can see.
@@ -1092,7 +1101,8 @@ Person checks, for the owner to run before the tester's check 6 (`tentaqles lobe
 **Phase** 1 · **Origin** new · **Depends on** F-01, F-02, F-03, F-06; each command arrives with its owning entry
 
 **What it is.** The list of `tentaqles lobe` commands, the health findings `tentaqles doctor` shows for the lobe,
-the `NOTICE` file for ported code, and the standard setup every tester brief in these pages starts from.
+the root `LICENSE` file and the `NOTICE` file for ported code, and the standard setup every tester brief in
+these pages starts from.
 
 **Why it matters.** It serves "the person can see why and undo it in one step" and decision D-7. Without one list
 each stage invents its own verbs; without one setup each tester builds clients differently and results differ.
@@ -1121,7 +1131,7 @@ each stage invents its own verbs; without one setup each tester builds clients d
    | `tentaqles lobe consolidate [--session <id>] [--only <step>] [--draft <how>] [--now <time>] [--json]` | C-01 | no | Runs now what the `stop` hook starts, in the pass order (F-02 step 8): S-07's sweep, S-08's fold, consolidation, E-07's ladder moves, the graph build, then G-11's document run from phase 5. With `--only` or `--session` E-07's moves still run and the graph build is left out. It uses the model only when a person started it; the hidden `--detached` flag marks a run the `stop` hook started |
    | `tentaqles lobe backfill --dry-run [--json]` | C-07 | no | Reads the client's own past sessions and prints counts; writes nothing and calls no model |
    | `tentaqles lobe backfill [--yes] [--json] [--draft <how>]` | C-07 | yes | Drafts lessons from repairs that recur in the client's own past sessions and files them after a typed yes |
-   | `tentaqles lobe lessons [--stale] [--waiting] [--json]` | C-04 | no | Lists lessons with scope, stage and state (F-04); `--stale` lists the stale ones with what is gone (R-06); `--waiting` lists the lessons that cannot earn a hit (no `avoid` block and no fingerprint) and wait at their entry stage for `lessons confirm` (E-02). R-05's brief prints their number and this command |
+   | `tentaqles lobe lessons [--stale] [--waiting] [--json]` | C-04 | no | Lists lessons with scope, stage and state (F-04); `--stale` lists the stale ones with what is gone (R-06); `--waiting` lists the lessons at `seen` or `trial` that cannot earn a hit (no `avoid` block and no fingerprint) and wait there for `lessons confirm` (E-02). A lesson learned here or pulled through git enters at `advice` and does not wait; one mined from old sessions (C-07) can. R-05's brief prints their number and this command |
    | `tentaqles lobe lessons show <id> [--framed]` | C-04 | no | Prints one lesson; `--framed` prints it as a hook would (F-05) |
    | `tentaqles lobe lessons gate <file>` | C-04 | no | Runs every quality-gate check on a file; prints `ok` or one line per problem; files nothing |
    | `tentaqles lobe lessons history <id>` | C-06 | no | Prints the replacement chain, oldest first |
@@ -1129,7 +1139,7 @@ each stage invents its own verbs; without one setup each tester builds clients d
    | `tentaqles lobe lessons replace <old id> <file> [--anyway]` | C-06 | yes | Files a successor that names the old lesson in `supersedes` |
    | `tentaqles lobe lessons share <id> [--yes]` | F-04 | yes | Moves a private lesson into the current repository after the whole gate and a typed yes |
    | `tentaqles lobe lessons unshare <id> [--yes]` | F-04 | yes | Moves a shared lesson back to the private store |
-   | `tentaqles lobe lessons confirm <id>` | F-07 | yes | The person vouches for the lesson as written: a lesson at `trial` moves to `advice`; a retired lesson re-enters and moves to `advice` (E-01); a lesson that arrived through git and was held to its repository takes the width its `applies` states (F-04) |
+   | `tentaqles lobe lessons confirm <id>` | F-07 | yes | The person vouches for the lesson as written: a lesson at `seen` or `trial` moves to `advice`; a retired lesson re-enters and moves to `advice` (E-01); a lesson that arrived through git and was held to its repository takes the width its `applies` states (F-04). Such a lesson entered at `advice` (decision D-10), so confirming it moves its stage only when a false alarm had sent it back to `trial` |
    | `tentaqles lobe lessons forget <id> [--yes]` | F-07 | yes | Deletes a private lesson's file; E-07 retires its ladder entry in the next pass. Refuses a shared lesson and names `rules retire` and `unshare` |
    | `tentaqles lobe rules [--json]` | E-01 | no | Lists rules with stage and current counts |
    | `tentaqles lobe rules test [<id>] [--replay]` | E-03 | no | Runs a rule's shape, example and breadth tests; exits 1 when any fails |
@@ -1197,12 +1207,14 @@ each stage invents its own verbs; without one setup each tester builds clients d
    | `lobe-lesson-fork` | warn | Two live lessons replace the same old lesson; names the three ids | C-06 |
    | `lobe-graph-unsound` | warn | A graph folder holds `check.json`: its last build failed the soundness check twice | G-12 |
 
-6. Notices. A root `NOTICE` file lists Trail-code (MIT), agentmemory (Apache-2.0), Graphify (Apache-2.0, parts MIT)
-   and Graft (MIT) with their copyright lines. It also lists what later entries bring: the parser runtime and
-   grammars G-01 picks, the query files G-02 copies (eight from Trail-code, four `tags.scm` from grammar
-   repositories) and, if G-06's fallback is taken, `hashicorp/hcl/v2` (MPL-2.0, used unmodified). The license
-   texts sit in `third_party/licenses/<project>/`, ship in every release archive and are printed by `tentaqles
-   version --notices` (new flag). BASE is not copied or listed.
+6. Notices. tentaqles ships under the MIT license (decision D-13). A root `LICENSE` file holds that text. It
+   lands in phase 1 with `NOTICE` and `third_party/licenses/`, before any ported code ships; `plugin/LICENSE`
+   stays as it is. A root `NOTICE` file lists Trail-code (MIT), agentmemory (Apache-2.0), Graphify (Apache-2.0,
+   parts MIT) and Graft (MIT) with their copyright lines. It also lists what later entries bring: the parser
+   runtime and grammars G-01 picks, the query files G-02 copies (eight from Trail-code, four `tags.scm` from
+   grammar repositories) and, if G-06's fallback is taken, `hashicorp/hcl/v2` (MPL-2.0, used unmodified). The
+   license texts sit in `third_party/licenses/<project>/`, ship in every release archive and are printed by
+   `tentaqles version --notices` (new flag). BASE is not copied or listed.
 7. Benchmarks. `tentaqles lobe bench` ships in the binary with exactly four actions, the checks that need nothing
    else: `leak`, `latency`, `stall` and `check-claims` (code in `internal/lobe/benchcheck/`). The task harness is
    a separate program, `lobebench`, built from `bench/cmd/lobebench` in a checkout, with the actions `run`,
@@ -1269,6 +1281,7 @@ each stage invents its own verbs; without one setup each tester builds clients d
   acme only. `TestLobeSandbox_RefusesARealHome`: a home that holds a client, a `HOME` outside the folder and a set
   `GIT_CONFIG_GLOBAL` are refused with 0 bytes written. 3 of 3. The `TestReach_*` tests pass unedited.
 - `TestNoticeListsEveryPort`: 0 ported files without a `NOTICE` entry, and 0 headers that name BASE.
+  `TestRootLicenseIsMIT`: the root `LICENSE` file exists and holds the MIT license text. Yes or no.
 
 **Tester brief**
 
@@ -1341,5 +1354,7 @@ Every brief starts from a fresh working folder and this setup, and uses no netwo
 - The login check on commands (step 3) closes what the hook rule alone does not stop: an agent session logged in
   as one client inside another client's folder reading that client's lessons and graph through the agent tools.
   M-03's L-13 attacks `--client`, and M-03 gains one attack for the login form.
-- The repository has no `LICENSE` file of its own, which `NOTICE` and the license texts under `third_party/`
-  presuppose; only `plugin/LICENSE` (MIT) exists. Owner's call.
+- The repository has no `LICENSE` file of its own today, which `NOTICE` and the license texts under
+  `third_party/` presuppose; only `plugin/LICENSE` (MIT) exists. The owner decided it: tentaqles ships under the
+  MIT license (decision D-13), and the root `LICENSE` file lands in phase 1 with `NOTICE` and
+  `third_party/licenses/`, before any ported code ships.

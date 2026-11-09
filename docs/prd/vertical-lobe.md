@@ -28,8 +28,8 @@ A person who installs tentaqles notices three things in the first week.
 1. **One identity per client, enforced.** They stop signing in and out of services. Code, messages and commits never
    reach the wrong client's service, even when two clients use the same provider. This exists today.
 2. **Fewer tokens.** Their agent finds code, data and documents through a graph instead of reading files one by one.
-3. **Fewer errors.** A mistake an agent makes in a client's work is learned there and headed off the next times it
-   is about to happen, which also saves tokens. How soon a new lesson speaks up is set by the rule ladder (5.5).
+3. **Fewer errors.** A mistake an agent makes in a client's work is learned there and not made twice: the lesson
+   speaks up the next time the mistake is about to happen, which also saves tokens (the rule ladder, 5.5).
 
 It is for anyone who works with an AI coding agent: software, AI, data, frontend, backend and full-stack engineers,
 data scientists, analysts, and UI and UX designers. It must be worth installing for a person with one client or one
@@ -323,25 +323,25 @@ A lesson climbs one step at a time and falls back as soon as it proves wrong.
 
 | Stage | What the agent experiences | How a lesson gets here |
 |---|---|---|
-| seen | Nothing | It passed the quality gate (C-04) |
-| trial | Nothing. Each time it would have fired is logged with what happened next (E-02) | It has a `when` block |
-| advice | A short note before the matching call | Its trial record is clean, or a person wrote or confirmed it |
+| seen | Nothing | It was mined from old sessions (C-07), passed the quality gate (C-04) and has no `when` block |
+| trial | Nothing. Each time it would have fired is logged with what happened next (E-02) | It was mined from old sessions and has a `when` block, or a false alarm sent it back from advice (E-07) |
+| advice | A short note before the matching call, or a line in the session brief when it has no `when` block | It was learned here from a failure and its fix or from the person's correction; or a person wrote or confirmed it; or it came from a teammate and passed intake (F-04); or its trial record is clean |
 | block | The call is denied with the lesson's reason and how to override once | It has an exact `avoid` pattern, a clean advice record, and the person typed yes |
 | retired | Nothing | It faded, was replaced, or proved wrong |
 
-A lesson that arrives through git from a teammate enters your ladder like one learned here, with no record and no
-approval, and never above advice; what its file says about who wrote it earns it nothing. Whether it should instead
-speak on arrival is the second open question in section 12. Blocking is always a decision made by the person whose
-agent is being blocked, and a block rule denies only where the lesson's `when` block also matches. The thresholds
-are in E-01.
+A lesson that arrives through git from a teammate and passes intake (F-04) speaks on arrival, as a note (D-10). It
+enters your ladder at advice with no record and no approval, and never above; what its file says about who wrote it
+earns it nothing more. Blocking is always a decision made by the person whose agent is being blocked, and a block
+rule denies only where the lesson's `when` block also matches. The thresholds are in E-01.
 
 Three notes on the ladder:
 
-- **A new lesson is quiet at first.** As drafted, a lesson learned from a failure waits in `trial` until the same
-  mistake has come back (E-01 proposes twice, in two sessions) or a person confirms it. A lesson drawn from a
-  correction cannot prove itself that way at all and waits for the person. The session brief says how many lessons
-  are waiting and how to confirm them (R-05). That protects against wrong lessons and costs repeats; it is the
-  first open question in section 12.
+- **A new lesson speaks at once, as a note (D-9).** A lesson learned here from a failure and the fix that worked,
+  or from the person's own correction, enters at `advice` and is shown from the next matching call. A note is
+  information: the first false alarm sends the lesson back to `trial`, and a second one retires it (E-07). The
+  silent trial is kept for lessons mined from old sessions (C-07), which rest on weaker evidence, and for a lesson
+  a false alarm sent back. The step to `block` still needs a clean record at `advice` and a typed yes. The session
+  brief says how many lessons wait for the person and how to confirm them (R-05).
 - **A stale lesson** (the code it points at changed or is gone, R-06) is still shown, marked as possibly out of
   date and ranked after fresh ones. It never denies while it is stale; its approval is kept, and it denies again
   once it is no longer stale.
@@ -483,8 +483,8 @@ Phases are an order, not a schedule. Each phase ends with its checks green and t
 leaks. "Checks" means what runs without a paid agent: unit tests, the tester briefs, the latency and stall tests
 (M-06) and the harness on its fixtures. Runs with a real agent cost money and do not hold a phase back; they hold
 back a published number (M-08). A real run that misses its target means the claim is not made, and the miss is
-recorded. One attack in that suite, L-09, tests today's folder resolver and not the lobe; it is reported apart
-until the owner decides on it (section 12).
+recorded. One attack in that suite, L-09, tests the folder resolver and not the lobe; its fix is identity work that
+lands before phase 1 (D-12, below), so the suite counts it like any other attack.
 
 **Phase 0: answer five questions before building.** Each is a short throwaway test with a written result.
 
@@ -498,13 +498,22 @@ until the owner decides on it (section 12).
 5. Does the benchmark harness run one task with and without tentaqles and record tokens, calls, time and outcome
    (M-02)?
 
-**Phase 1: Sense.** The store, the fail-open engine, hook wiring, capture, scrubbing, fingerprints, starter rules,
-settings and commands. A person sees fewer cross-shell errors from the first hour, and `tentaqles lobe status` shows
-what was captured.
+**Before phase 1: one fix outside the lobe (D-12).** The folder resolver must refuse a second folder that carries
+a client's name. First a test in `internal/resolve` reproduces the case: a folder named like an existing client,
+under another registered clients folder, holding a copied marker. If it resolves to that client, the resolver is
+changed to bind each client to the folder it was created in; how the binding is stored is settled in the plan for
+that change. If the test shows the resolver already refuses, the test stays as the guard and no code changes. This
+is its own small change to identity code. It weakens no existing test and ships before any memory code.
 
-**Phase 2: Lessons.** Repair pairing, corrections, drafting, the gate, fading, backfill, sharing, then the ladder up
-to advice with its silent trial and automatic demotion, then triggers, the session brief and stale lessons. Nothing
-learned is shown before the ladder exists. This is where the repeat-mistake number first moves.
+**Phase 1: Sense.** The store, the fail-open engine, hook wiring, capture, scrubbing, fingerprints, starter rules,
+settings and commands. The lobe's hooks are new entries in the existing plugin (D-11). The root `LICENSE` file
+(MIT, D-13) and the `NOTICE` file land with the first ported code. A person sees fewer cross-shell errors from the
+first hour, and `tentaqles lobe status` shows what was captured.
+
+**Phase 2: Lessons.** Repair pairing, corrections, drafting, the gate with its English and Brazilian Portuguese
+word lists (D-14), fading, backfill, sharing, then the ladder up to advice with its silent trial and automatic
+demotion, then triggers, the session brief and stale lessons. Nothing learned is shown before the ladder exists.
+This is where the repeat-mistake number first moves.
 
 **Phase 3: Blocking.** Test cases on every rule, the step from advice to block, the sure-fail block, the check
 before a commit.
@@ -562,6 +571,13 @@ Every entry in the companion pages has the same parts:
 | D-6 | PDF and image processing is optional and can be switched at any time, with the behavior in 5.6 |
 | D-7 | Every claim is backed by a benchmark |
 | D-8 | Borrow mechanisms and code patterns from the four projects |
+| D-9 | A new lesson speaks at once, as a note: one learned from a failure and its fix, or from the person's correction, is shown from the next matching call and taken back on the first false alarm. The silent trial stays for lessons mined from old sessions (5.5, E-01) |
+| D-10 | A teammate's lesson that passes intake speaks on arrival, as a note, and can never block unless this person approves it here (5.5, F-04) |
+| D-11 | The lobe's hooks ship in the existing plugin. The pinned test `test_the_plugin_holds_only_the_guard_hook` changes with the owner's yes: the guard's entries stay as they are and every other entry is a lobe entry. tentaqles writes Codex's trust records for the lobe's handlers (F-03) |
+| D-12 | The folder resolver refuses a second folder with a client's name. A test reproduces the case first; the fix is its own change to identity code and lands before phase 1 (section 8, M-03 attack L-09) |
+| D-13 | tentaqles ships under the MIT license. A root `LICENSE` file lands with the `NOTICE` file, before any ported code ships (F-07) |
+| D-14 | A person may write a lesson in Brazilian Portuguese: the gate gets Brazilian Portuguese word lists in phase 2 (C-04). Other languages follow the same way later |
+| D-15 | The cheaper benchmark sets run first. The SWE-bench Verified run waits for one approval from the owner at phase 4, asked with a checked cost (M-02) |
 
 **Made by the author; each can be overturned**
 
@@ -576,11 +592,11 @@ Every entry in the companion pages has the same parts:
 | A-7 | Drafting uses the client's own agent CLI, detached, with an off switch | Client content only reaches that client's subscription |
 | A-8 | The Trail-code graph is the base; Graphify adds SQL, documents and confidence scores | One design, not a blend of two |
 | A-9 | Raw events expire after 14 days | Lessons keep patterns; data does not accumulate |
-| A-10 | The lobe's hooks ship in the existing plugin as new entries | One install; needs the owner's yes because a pinned plugin test changes (F-03) |
+| A-10 | The lobe's hooks ship in the existing plugin as new entries | One install. Confirmed by the owner as D-11 |
 | A-11 | User-facing name is "lobe": `tentaqles lobe`, "lessons", "rules" | Short, and matches the octopus naming |
 | A-12 | A lobe hook acts only when the folder and the session's login belong to the same client; otherwise it does nothing | A session logged in as one client must never read or feed another client's memory |
 | A-13 | The lobe keeps its own copy of small helpers instead of importing the guard | The guard's code stays untouched by memory work |
-| A-14 | The ladder up to advice ships with the first shown lesson; only the block step waits for phase 3 | No lesson is ever shown without the protection of a trial and automatic demotion |
+| A-14 | The ladder up to advice ships with the first shown lesson; only the block step waits for phase 3 | No lesson is ever shown before it can be demoted automatically |
 | A-15 | Switches for `graph` and `lessons` beside `recall` and `enforce` | A person can keep one half without the other, and the benchmarks can measure each half alone |
 | A-16 | A stale lesson is shown marked and never denies | Hiding it loses the reason; enforcing it blocks on code that has changed |
 | A-17 | Our own key names (`must_match`, `must_not_match`) for a rule's test cases | BASE is ideas only; we do not reuse its identifiers |
@@ -588,13 +604,15 @@ Every entry in the companion pages has the same parts:
 | A-19 | Agent tools are commands (`tentaqles lobe graph ...`), with an MCP server only as an option | Commands work in both hosts with no extra setup and cost no context until used |
 | A-20 | `tentaqles lobe sandbox <folder>` builds a throwaway home with two test clients, and refuses any folder inside the real home | Tester agents and benchmarks need clients without pretending to be a person at `reach` |
 | A-21 | Capture is on by default, for new and existing clients | The first-week promise needs it; events are scrubbed, stay on the machine and expire after 14 days. `tentaqles lobe set capture off` stops it |
-| A-22 | Machine-drafted lessons are written in English | The agent is the reader; see section 12 for lessons a person writes in another language |
+| A-22 | Machine-drafted lessons are written in English | The agent is the reader. A person may write one in English or Brazilian Portuguese (D-14) |
 | A-23 | The keys of a `when` block narrow each other; a fingerprint or prompt words match on their own | "Any one key" would fire a shell lesson on every shell call |
 | A-24 | A git worktree shares its repository's lessons and parse cache | Agents work in worktrees constantly; a fresh key per worktree would start each one cold |
 | A-25 | Inside a hook, blast radius stays in one repository; `tentaqles lobe graph impact --all` crosses a client's repositories | The hook has 1.5 seconds; the command has none |
 | A-26 | Published numbers come from Claude Code first, and each names its host and model; Codex follows when its usage fields are confirmed | One adapter in phase 0 instead of two |
 | A-27 | Benchmark labels may be drafted by an agent that did not write what is tested; a person checks a sample and every disagreement, and the report says so | Hundreds of cases labeled by the owner alone would hold up phase 3 |
 | A-28 | The harness builds the graph before a run and reports the build apart from the task's cost | It mirrors a person's second session, which is when the graph exists |
+| A-29 | The gate runs its English and its Brazilian Portuguese word lists on every lesson, whatever the client's language | A teammate's intake runs the same gate and must reach the same verdict on any machine |
+| A-30 | A teammate's lesson speaks on arrival whatever `source` its file states, a mined one included | Intake is what vouches for it, and a file's own claims earn nothing either way |
 
 ## 11. Left out
 
@@ -602,45 +620,23 @@ Every entry in the companion pages has the same parts:
 whole first version of this). Compiler-grade call edges from language servers. Automatic grouping of code into areas
 and a ranking of central functions (R-03's `map` prints folders and counts only). A visual graph or dashboard. Search
 by meaning with vectors. Warnings when a teammate's branch edits the same function. Agents other than Claude Code and
-Codex.
+Codex. Gate word lists for languages other than English and Brazilian Portuguese (D-14).
 
 **For good.** Any vendor cloud or transcript upload. Telemetry. A long-running background service or REST API.
 Dozens of agent tools. Coordination between agents. Project and task tracking. Model-written summaries of every
 function. Silent self-update. Exports that send the graph elsewhere.
 
-## 12. Open questions for the owner
+## 12. Questions the owner answered
 
-Seven questions that only the owner can answer. Each comes with a recommendation. Until an answer arrives, the
-pages are written with the more cautious reading.
+The draft held seven questions that only the owner could answer. The owner answered all seven on 2026-11-09, and
+the pages are written to those answers. No question is open.
 
-1. **How soon should a newly learned lesson speak?** As written, a lesson learned from a failure stays silent in
-   `trial` until the same mistake has come back twice, in two sessions, or until a person confirms it. That keeps
-   wrong lessons quiet and costs up to three repeats of a real mistake. The alternative: a lesson drawn from a
-   failure and the fix that worked speaks as a note from the next matching call, and the silent trial is kept for
-   weaker evidence (backfill) and for anything on its way to blocking. A lesson drawn from the person's own
-   correction would speak at once too, since today it can only wait to be confirmed. Recommendation: the
-   alternative; a note is information and E-07 takes it back on the first false alarm. It changes one row of E-01,
-   moves M-04's target to the second meeting, and lets promise 3 say "not made twice".
-2. **Does a teammate's lesson speak when it arrives?** As written, a lesson pulled through git earns its own trial
-   record on your machine first, so sharing saves a teammate at most one failure. Recommendation: let a lesson
-   that passed intake (F-04) speak on arrival as a note, never as a block.
-3. **May the lobe's hooks ship in the existing plugin?** It means one install. It changes a pinned plugin test,
-   `test_the_plugin_holds_only_the_guard_hook` in `plugin/tests/test_tq_hook.py`, which today requires exactly two
-   hook events and that every command runs `tq_hook.sh`. It also has tentaqles write Codex's trust records for the
-   lobe's handlers, as it already does for the guard's (F-03). Recommendation: yes. The other way is a second
-   plugin and a second install.
-4. **Should the folder resolver refuse a second folder with a client's name?** Read from the code, not run: a
-   folder named like an existing client, under another registered clients folder and holding a copied marker,
-   resolves to that client today; only `reach` refuses the duplicate. This is identity code, outside the lobe
-   (M-03, attack L-09). Recommendation: yes, bind a client to the folder it was created in.
-5. **Which license does tentaqles ship under?** The repository root has no `LICENSE` file; only `plugin/LICENSE`
-   (MIT) exists. Ported code needs a `NOTICE` file that presupposes one (F-07). Recommendation: MIT at the root
-   before phase 1 ships anything ported.
-6. **May a person write lessons in the client's language?** Machine-drafted lessons are in English. The quality
-   gate's wording checks are English too, so a lesson written by hand in Portuguese passes only with `--anyway` and
-   can then never be shared (C-04). Recommendation: add Brazilian Portuguese word lists to the gate in phase 2, as
-   C-02 already does for corrections.
-7. **May the public benchmark spend money, and when?** An estimate built on Graft's published figures, not checked:
-   about 1,700 dollars for two arms of SWE-bench Verified and about 2,600 for the three arms the promises need
-   (M-02). Recommendation: run the cheaper question and pull-request sets first and approve the larger run once, at
-   phase 4.
+| Question | Answer | Decision |
+|---|---|---|
+| How soon should a newly learned lesson speak? | At once, as a note; the silent trial stays for lessons mined from old sessions | D-9 |
+| Does a teammate's lesson speak when it arrives? | Yes, as a note, once it passes intake; never as a block | D-10 |
+| May the lobe's hooks ship in the existing plugin? | Yes; the pinned plugin test changes with the owner's yes | D-11 |
+| Should the folder resolver refuse a second folder with a client's name? | Yes; reproduce it with a test, then fix it before phase 1 | D-12 |
+| Which license does tentaqles ship under? | MIT | D-13 |
+| May a person write lessons in the client's language? | Yes, in Brazilian Portuguese from phase 2; other languages later | D-14 |
+| May the public benchmark spend money, and when? | Cheaper sets first; one approval for the larger run at phase 4 | D-15 |
