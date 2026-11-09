@@ -16,6 +16,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
   hooks (and the client's language) when codex is in the client's scope; `tentaqles doctor` reports a client whose
   hooks are missing, off, untrusted or unreadable, and `codex` in a client folder runs through `tentaqles run` in every
   shell.
+- **An AI coding agent besides Claude Code** is a category of `tentaqles add`, `remove` and the reach form: `add codex`
+  (or `add agent codex`) puts a catalog agent in the client's scope, and gives codex its own Codex home.
 
 ## [0.13.2] - 2026-11-08
 

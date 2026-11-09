@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/manifest"
+	"github.com/tentaqles/tentaqles/internal/providers"
 )
 
 // The categories `tentaqles add` and `tentaqles remove` take: the parts of reach's form, one at a time.
@@ -17,6 +18,7 @@ const (
 	CatCloud    = "cloud"    // the clouds (a list; the first is the primary)
 	CatTeam     = "team"     // team and meeting platforms (a list)
 	CatData     = "data"     // data platforms (a list)
+	CatAgent    = "agent"    // AI coding agents besides Claude Code (a list)
 	CatTask     = "task"     // the task management provider (one value)
 	CatMail     = "mail"     // the email provider (one value)
 	CatBrowser  = "browser"  // browsers, each with a profile (a list)
@@ -24,7 +26,19 @@ const (
 )
 
 // Categories are the category names, in the form's order.
-var Categories = []string{CatEmail, CatLanguage, CatGit, CatCloud, CatTeam, CatData, CatTask, CatMail, CatBrowser, CatOther}
+var Categories = []string{CatEmail, CatLanguage, CatGit, CatCloud, CatTeam, CatData, CatAgent, CatTask, CatMail, CatBrowser, CatOther}
+
+// AgentOptions are the AI coding agents a client can use besides Claude Code: the catalog's agent
+// providers, by id, except claude (every client has Claude Code).
+func AgentOptions() []Option {
+	var out []Option
+	for _, p := range providers.MustLoad().ByCategory(CatAgent) {
+		if p.ID != "claude" {
+			out = append(out, Option{p.Name, p.ID})
+		}
+	}
+	return out
+}
 
 // aliases spell a value the way people say it: the CLI's name for a git host or a cloud.
 var aliases = map[string]map[string]string{
@@ -45,6 +59,8 @@ func OptionsOf(cat string) []Option {
 		return TeamOptions
 	case CatData:
 		return DataOptions
+	case CatAgent:
+		return AgentOptions()
 	case CatTask:
 		return TaskOptions
 	case CatMail:
@@ -80,7 +96,7 @@ func value(cat, v string) (string, error) {
 // Locate finds the category of a bare value (`tentaqles remove gh`, `tentaqles add aws`): the first
 // category that offers it, aliases included. ok is false when none does.
 func Locate(v string) (cat, val string, ok bool) {
-	for _, c := range []string{CatGit, CatCloud, CatTeam, CatData, CatTask, CatMail, CatBrowser} {
+	for _, c := range []string{CatGit, CatCloud, CatTeam, CatData, CatAgent, CatTask, CatMail, CatBrowser} {
 		if got, err := value(c, v); err == nil {
 			return c, got, true
 		}
@@ -93,7 +109,7 @@ func Locate(v string) (cat, val string, ok bool) {
 // listed by hand), it returns that id in drop, for Edit. It never changes cur.
 func Change(cur *Answers, add bool, cat string, values []string) (next *Answers, drop []string, err error) {
 	n := *cur
-	n.Clouds, n.Team, n.Data = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data)
+	n.Clouds, n.Team, n.Data, n.Agent = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data), slices.Clone(cur.Agent)
 	n.Browsers, n.Other = slices.Clone(cur.Browsers), slices.Clone(cur.Other)
 	next = &n
 
@@ -150,8 +166,8 @@ func Change(cur *Answers, add bool, cat string, values []string) (next *Answers,
 			}
 		}
 		*field = ""
-	case CatCloud, CatTeam, CatData:
-		field := map[string]*[]string{CatCloud: &n.Clouds, CatTeam: &n.Team, CatData: &n.Data}[cat]
+	case CatCloud, CatTeam, CatData, CatAgent:
+		field := map[string]*[]string{CatCloud: &n.Clouds, CatTeam: &n.Team, CatData: &n.Data, CatAgent: &n.Agent}[cat]
 		if len(values) == 0 {
 			return nil, nil, fmt.Errorf("name the %s providers to %s", cat, verb(add))
 		}
@@ -255,6 +271,8 @@ func answered(cur *Answers, c, v string) bool {
 		return slices.Contains(cur.Team, v)
 	case CatData:
 		return slices.Contains(cur.Data, v)
+	case CatAgent:
+		return slices.Contains(cur.Agent, v)
 	case CatBrowser:
 		return slices.ContainsFunc(cur.Browsers, func(b manifest.Browser) bool { return b.Name == v })
 	}

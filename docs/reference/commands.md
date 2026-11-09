@@ -72,8 +72,8 @@ digit. Its parent folder is registered as a clients folder. A `<path>` that does
 2. the client's language, the one Claude writes the client's reports, documents, emails and messages in. The list
    starts on English (United States), selected; the rest follow by English name. Typing filters it (`por` leaves
    Portuguese (Brazil) and Portuguese (Portugal)), the arrows move through it, and enter chooses;
-3. the git provider, the clouds, the team and meeting platforms, the data platforms, the task management provider
-   and the email provider. A name typed under *Other* goes into the manifest's `other_providers`, and reach says that
+3. the git provider, the clouds, the team and meeting platforms, the data platforms, the AI agents besides Claude Code,
+   the task management provider and the email provider. A name typed under *Other* goes into the manifest's `other_providers`, and reach says that
    tentaqles can't isolate it;
 4. the browsers, with a profile for each.
 
@@ -93,7 +93,8 @@ It then prints what it is about to do and waits for a typed `yes`. Nothing is wr
 - adds the activation block to the profile of each shell it detects, when the block isn't there yet.
 
 **An existing client.** In a folder that already is a client, reach shows the client and what it can use, then
-offers a menu: nothing, the providers, the browser and profile, the email, or the language. The chosen part of the
+offers a menu: nothing, the providers, the AI agents besides Claude Code, the browser and profile, the email, or the
+language. The chosen part of the
 form opens with the current answers. reach lists the changes and waits for `yes`, then rewrites only those keys of
 the manifest (other keys and comments stay), makes the folders of new identities, rewrites the folder's git email
 when it changed, and renders the client's files again. A provider taken out keeps its identity folder, with any
@@ -157,8 +158,12 @@ step, `tentaqles login <client> <cli>`.
 | `cloud` | a list: `azure`, `aws`, `gcp` (also `az`, `gcloud`, `google`, `amazon`); the first is the primary | adds the values |
 | `team` | a list: `teams`, `slack`, `discord`, `zoom`, `google-meet` | adds the values |
 | `data` | a list: `databricks`, `snowflake`, `colab` | adds the values |
+| `agent` | a list of AI coding agents besides Claude Code: `cline`, `codex`, `continue`, `copilot`, `cursor`, `gemini`, `goose`, `opencode` | adds the values |
 | `browser` | a list of browsers, each with a profile: `chrome`, `edge` | adds the browser, or changes its profile (default `Default`) |
 | `other` | names tentaqles does not manage | adds the names |
+
+Claude Code is every client's agent, so `claude` is not a value of `agent`. `codex` gets its own Codex home
+(`CODEX_HOME`), and the client's Codex config with its two guard hooks.
 
 A value alone finds its category: `tentaqles add aws` is `tentaqles add cloud aws`. With no value, `add <category>`
 opens that category's part of the form with the current answers ticked; `email` is the exception and needs the
@@ -187,6 +192,12 @@ tentaqles add cloud aws --client acme
 
 # a value alone finds its category
 tentaqles add aws
+
+# an AI agent besides Claude Code, for one client
+tentaqles add codex --client personal
+
+# the same, with the category named
+tentaqles add agent gemini
 
 # open the task part of the form
 tentaqles add task
@@ -228,7 +239,7 @@ tentaqles remove <provider>            [--client <name or folder>] [--yes]
 | `email`, `language` | refused: a client always has one |
 | `git`, `task`, `mail` | clears it; a value, when given, must be the current one |
 | `cloud` | removes the values; the next cloud becomes the primary |
-| `team`, `data`, `other` | removes the values |
+| `team`, `data`, `agent`, `other` | removes the values |
 | `browser` | removes the browser named |
 
 A value alone finds its category: `tentaqles remove slack`. `gh` alone means the git host GitHub: when GitHub is the
@@ -250,6 +261,9 @@ sessions need a restart to see the change, as with `add`.
 ```
 # take a team tool out
 tentaqles remove slack
+
+# stop using Codex for one client
+tentaqles remove codex --client personal
 
 # take gh out of a client that moved to Azure DevOps
 tentaqles remove gh --client globex

@@ -36,11 +36,13 @@ var (
 type Answers struct {
 	Email string
 	// Language is the client's language tag (manifest.Languages).
-	Language      string
-	Git           string
-	Clouds        []string
-	Team          []string
-	Data          []string
+	Language string
+	Git      string
+	Clouds   []string
+	Team     []string
+	Data     []string
+	// Agent holds the AI coding agents besides Claude Code (AgentOptions).
+	Agent         []string
 	Task          string
 	EmailProvider string
 	Browsers      []manifest.Browser
@@ -132,9 +134,9 @@ func (a *Answers) AddOptions(base, name, gitName string) (workspace.AddOptions, 
 		}
 	}
 	// The rest of the scope, whether or not it has a CLI login: chat and meeting platforms, data
-	// platforms and the task provider. The scope is what the guard allows.
+	// platforms, AI agents and the task provider. The scope is what the guard allows.
 	var scope []string
-	for _, id := range slices.Concat(a.Team, a.Data, []string{a.Task}) {
+	for _, id := range slices.Concat(a.Team, a.Data, a.Agent, []string{a.Task}) {
 		if id != "" && !slices.Contains(scope, id) {
 			scope = append(scope, id)
 			addIdent(id)

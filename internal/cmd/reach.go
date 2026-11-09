@@ -46,7 +46,7 @@ func newReachCmd() *cobra.Command {
 		Short: "Make a folder a client identity, or change the one it already is",
 		Long: "tentaqles reach makes the current folder, or <path>, an isolated client identity. The folder's\n" +
 			"name is the client's name, and its parent folder is where your clients live. It asks for the\n" +
-			"client's email, its language, its git host, its clouds, team, data and task tools, its email provider\n" +
+			"client's email, its language, its git host, its clouds, team, data and task tools, its AI agents besides Claude Code, its email provider\n" +
 			"and its browser profile, and writes them to the client's manifest. A terminal opened in the folder, or in\n" +
 			"any subfolder, then carries that client's identity: its own Claude Code config home (and so its own\n" +
 			"subscription), its git name and email, its own login for each CLI, its browser profile, and a PATH\n" +
@@ -458,6 +458,7 @@ const (
 	reachPartLanguage  = "language"
 	reachPartProviders = "providers"
 	reachPartBrowsers  = "browsers"
+	reachPartAgents    = "agents"
 	reachPartNothing   = "nothing"
 )
 
@@ -479,8 +480,46 @@ func askReachPart(part string, a *reach.Answers) error {
 		return askBrowsers(run, a)
 	case reachPartProviders:
 		return askProviders(run, a)
+	case reachPartAgents:
+		return askAgents(run, a)
 	}
 	return fmt.Errorf("no form part %q", part)
+}
+
+// askOtherName asks the name of a provider the catalog does not list (Other) and keeps it in a.Other.
+func askOtherName(run func(huh.Field) error, a *reach.Answers, title string) error {
+	name := ""
+	if err := run(huh.NewInput().Title(title).Value(&name).Validate(reach.ValidateName)); err != nil {
+		return err
+	}
+	a.Other = append(a.Other, strings.TrimSpace(name))
+	return nil
+}
+
+// askMany asks a multi-select of providers and replaces *into with the choice. Other asks one more name.
+func askMany(run func(huh.Field) error, a *reach.Answers, title string, opts []reach.Option, into *[]string) error {
+	vs := slices.Clone(*into)
+	if err := run(huh.NewMultiSelect[string]().Title(title).Options(huhOptions(opts)...).Value(&vs)); err != nil {
+		return err
+	}
+	*into = nil
+	for _, v := range vs {
+		switch v {
+		case reachSkip:
+		case reachOther:
+			if err := askOtherName(run, a, title+": which one?"); err != nil {
+				return err
+			}
+		default:
+			*into = append(*into, v)
+		}
+	}
+	return nil
+}
+
+// askAgents asks the AI coding agents a client uses besides Claude Code.
+func askAgents(run func(huh.Field) error, a *reach.Answers) error {
+	return askMany(run, a, "AI agents besides Claude Code", reach.AgentOptions(), &a.Agent)
 }
 
 func askProviders(run func(huh.Field) error, a *reach.Answers) error {
@@ -496,15 +535,7 @@ func askProviders(run func(huh.Field) error, a *reach.Answers) error {
 		}
 		a.Other = keep
 	}
-	askOther := func(title string) error {
-		name := ""
-		if err := run(huh.NewInput().Title(title).Value(&name).Validate(reach.ValidateName)); err != nil {
-			return err
-		}
-		a.Other = append(a.Other, strings.TrimSpace(name))
-		return nil
-	}
-	// one and many start on the current choice (Skip when there is none) and replace it.
+	// one starts on the current choice (Skip when there is none) and replaces it.
 	one := func(title string, opts []reach.Option, into *string) error {
 		v := reachSkip
 		if *into != "" {
@@ -517,37 +548,19 @@ func askProviders(run func(huh.Field) error, a *reach.Answers) error {
 		switch v {
 		case reachSkip:
 		case reachOther:
-			return askOther(title + ": which one?")
+			return askOtherName(run, a, title+": which one?")
 		default:
 			*into = v
 		}
 		return nil
 	}
-	many := func(title string, opts []reach.Option, into *[]string) error {
-		vs := slices.Clone(*into)
-		if err := run(huh.NewMultiSelect[string]().Title(title).Options(huhOptions(opts)...).Value(&vs)); err != nil {
-			return err
-		}
-		*into = nil
-		for _, v := range vs {
-			switch v {
-			case reachSkip:
-			case reachOther:
-				if err := askOther(title + ": which one?"); err != nil {
-					return err
-				}
-			default:
-				*into = append(*into, v)
-			}
-		}
-		return nil
-	}
 	for _, step := range []func() error{
 		func() error { return one("Git provider", reach.GitOptions, &a.Git) },
-		func() error { return many("Cloud providers", reach.CloudOptions, &a.Clouds) },
-		func() error { return many("Team and meeting platforms", reach.TeamOptions, &a.Team) },
-		func() error { return many("Data platforms", reach.DataOptions, &a.Data) },
+		func() error { return askMany(run, a, "Cloud providers", reach.CloudOptions, &a.Clouds) },
+		func() error { return askMany(run, a, "Team and meeting platforms", reach.TeamOptions, &a.Team) },
+		func() error { return askMany(run, a, "Data platforms", reach.DataOptions, &a.Data) },
 		func() error { return one("Task management provider", reach.TaskOptions, &a.Task) },
+		func() error { return askAgents(run, a) },
 		func() error { return one("Email provider", reach.EmailOptions, &a.EmailProvider) },
 	} {
 		if err := step(); err != nil {
@@ -624,6 +637,7 @@ func runReachMenu() (string, error) {
 	err := huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title("This folder is already a client. What do you want to change?").Options(
 		huh.NewOption("Nothing, just show it", reachPartNothing),
 		huh.NewOption("Add or remove providers", reachPartProviders),
+		huh.NewOption("The AI agents besides Claude Code", reachPartAgents),
 		huh.NewOption("The browser and its profile", reachPartBrowsers),
 		huh.NewOption("The email", reachPartEmail),
 		huh.NewOption("The language", reachPartLanguage),
@@ -637,7 +651,7 @@ func runReachEditForm(part string, cur *reach.Answers) (*reach.Answers, error) {
 		return nil, errNoTerminal
 	}
 	a := *cur
-	a.Clouds, a.Team, a.Data = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data)
+	a.Clouds, a.Team, a.Data, a.Agent = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data), slices.Clone(cur.Agent)
 	a.Browsers, a.Other = slices.Clone(cur.Browsers), slices.Clone(cur.Other)
 	if err := askReachPart(part, &a); err != nil {
 		return nil, err
