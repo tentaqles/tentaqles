@@ -100,6 +100,17 @@ Error. A client's manifest does not load; the message names the file and the pro
 gets no identity and the hook denies every shell command in its folder. Fix the manifest under
 `~/.tentaqles/identities` (the keys are in the [files reference](reference/manifest.md)).
 
+### `client-folder-refused`
+
+Error. A client's marker (`.tentaqles.yaml`) is in a second folder under a clients folder, or the client's folder is not
+the one tentaqles has recorded for it, so the client does not load there. Fix: delete the copied `.tentaqles.yaml`, or
+run `tentaqles bind` in the client's own folder.
+
+### `client-folder-unrecorded`
+
+Warning. A client created before folders were recorded has no recorded folder. It still works. Fix:
+`tentaqles settings render <client>` records its folder.
+
 ### `provider-file-invalid`
 
 Error, or warning for a minor problem. A provider file of your own under `~/.tentaqles/providers` does not load. Fix

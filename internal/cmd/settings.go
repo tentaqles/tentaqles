@@ -42,7 +42,8 @@ func newSettingsRenderCmd() *cobra.Command {
   - when codex is in its scope, its Codex config.toml: tentaqles' PreToolUse and SessionStart
     hooks (enabled and trusted) and the client's language line;
   - its PATH mask: a stub for each CLI of a provider outside its scope;
-  - its browser shims, when the client lists a browser.
+  - its browser shims, when the client lists a browser;
+  - the folder of a client that has none recorded (a client created before folders were recorded).
 
 Only entries tq wrote earlier are ever removed; anything added by hand stays.
 --dry-run writes nothing.`,
@@ -73,6 +74,17 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.
 					continue
 				}
 				n++
+				if _, ok := cfg.Folder(ws.Name); !ok {
+					if dryRun {
+						fmt.Fprintf(c.OutOrStdout(), "%s: would record its folder %s\n", ws.Name, ws.Root)
+					} else if err := cfg.Bind(ws.Name, ws.Root); err != nil {
+						fmt.Fprintf(c.ErrOrStderr(), "warning: %s: folder not recorded: %v\n", ws.Name, err)
+					} else if err := cfg.Save(); err != nil {
+						return fmt.Errorf("%s: folder not recorded: %w", ws.Name, err)
+					} else {
+						fmt.Fprintf(c.OutOrStdout(), "%s: recorded its folder %s\n", ws.Name, ws.Root)
+					}
+				}
 				dir := paths.IdentityDir(ws.Name, "claude")
 				res, err := claudesettings.Render(dir, claudesettings.Desired(ws.Manifest, tqExe), dryRun)
 				if err != nil {

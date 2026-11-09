@@ -163,7 +163,9 @@ client: acme
 ```
 
 It must be a regular file, its `client` must equal the folder's name, and the manifest it points to must exist. A
-marker copied into another folder names the wrong client, so that folder stays neutral.
+marker copied into another folder names the wrong client, so that folder stays neutral. A folder that has the
+client's name and its marker, but is not the folder recorded for the client in `config.yaml`, is unreadable:
+no identity, and the hook denies shell commands there.
 
 ## Other files in a client's folder
 
@@ -177,7 +179,7 @@ marker copied into another folder names the wrong client, so that folder stays n
 
 ```text
 ~/.tentaqles/
-├── config.yaml                   the registered clients folders (bases:)
+├── config.yaml                   the registered clients folders (bases:) and each client's folder (clients:)
 ├── identities/
 │   └── <client>/
 │       ├── manifest.yaml         the client's manifest
@@ -196,7 +198,13 @@ marker copied into another folder names the wrong client, so that folder stays n
 ```yaml
 bases:
     - /home/ada/clients
+clients:
+    acme: /home/ada/clients/acme
 ```
+
+`clients` holds the folder each client was created in. `tentaqles reach` writes it, `tentaqles bind` changes
+it after you move a client, `tentaqles settings render` adds it for a client that has none, and
+`tentaqles drop` removes it. It holds names and folders, never a secret.
 
 Outside `~/.tentaqles`, tentaqles writes `~/.gitconfig-tentaqles` (one `includeIf` rule per client folder), adds it
 to `~/.gitconfig` as an `include.path` and sets `user.useConfigOnly = true` there, and adds its activation block

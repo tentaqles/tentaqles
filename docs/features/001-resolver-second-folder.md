@@ -1,6 +1,6 @@
 # 001: Resolver refuses a second folder with a client's name
 
-**Status** not started · **Stage** Ground · **Entries** D-12, M-03 (attack L-09) · **Needs** none ·
+**Status** built and evaluated on Windows on 2026-11-09; not committed; CI on Linux and macOS not run · **Stage** Ground · **Entries** D-12, M-03 (attack L-09) · **Needs** none ·
 **Feeds** 002, 013
 
 ## Result
@@ -195,12 +195,17 @@ done
 printf 'schema: tentaqles-marker-v1\nclient: acme\n' > "$W/one/acme/.tentaqles.yaml"
 printf 'schema: tentaqles-marker-v1\nclient: beta\n' > "$W/two/beta/.tentaqles.yaml"
 cp "$W/one/acme/.tentaqles.yaml" "$W/two/acme/.tentaqles.yaml"
-# BINDING: when the owner picked an option that records a folder, the build team adds here the exact
-# line or file that binds acme to $W/one/acme and beta to $W/two/beta, before the tester gets this brief.
+printf 'clients:
+  acme: %s
+  beta: %s
+' "$W/one/acme" "$W/two/beta" >> "$TQ_HOME/config.yaml"
+T=/full/path/to/the/built/tentaqles   # see the note below
 ```
 
-`beta` is a real client under `two`; it is why `two` is a registered base. `E` stands for
-`tentaqles env --shell bash --json`.
+`beta` is a real client under `two`; it is why `two` is a registered base. The `clients:` lines are the record
+`tentaqles reach` writes for a new client. Call the built program by its full path, `$T`, and read every
+`tentaqles` in the checks below as `$T`: in an activated shell `tentaqles` is a shell function that runs the
+installed program, whatever `PATH` says. `E` stands for `$T env --shell bash --json`.
 
 1. `cd "$W/one/acme/app"; $E | grep -c '"workspace":"acme"'` prints `1`. This is the control: the real client
    resolves from a subfolder.
@@ -216,6 +221,8 @@ cp "$W/one/acme/.tentaqles.yaml" "$W/two/acme/.tentaqles.yaml"
    `printf '{"cwd":"%s","tool_name":"Bash","tool_input":{"command":"ls"}}' "$W/one/acme" |`
    `tentaqles claude-hook pre-tool-use; echo "exit=$?"` prints `exit=0`.
 8. Nothing was written into the copy: `ls -A "$W/two/acme"` lists `.tentaqles.yaml` and `app` only.
+9. The copy is blocked: the hook input of check 7 with `cwd` `$W/two/acme` prints a line that starts with
+   `BLOCKED` and names `$W/one/acme`, and `exit=2`.
 
 **Person checks**
 
@@ -224,7 +231,7 @@ cp "$W/one/acme/.tentaqles.yaml" "$W/two/acme/.tentaqles.yaml"
   check on clients that were created before the change; a tester has no such client.
 - Only if the plan added a person-run step for a moved folder: the owner runs it once on a throwaway client.
 
-PASS needs 8 of 8. "Could not run" is a FAIL.
+PASS needs 9 of 9. "Could not run" is a FAIL.
 
 ## Done when
 
@@ -235,7 +242,7 @@ PASS needs 8 of 8. "Could not run" is a FAIL.
   tests of tasks 4 to 6 are green.
 - [ ] Every "Must not trade off" test passes unedited; `git diff` shows no change to an existing test's
   assertions.
-- [ ] The tester brief passes, 8 of 8.
+- [ ] The tester brief passes, 9 of 9.
 - [ ] `CLAUDE.md` names the new test; `CHANGELOG.md` has its line; the docs of task 7 are updated.
 - [ ] The owner has seen the two `tentaqles env` outputs under Result.
 
@@ -260,3 +267,107 @@ PASS needs 8 of 8. "Could not run" is a FAIL.
   owner has picked. If outcome A holds, the line is removed and the brief runs as it is.
 - **What would force a change to this file:** a caller of the resolver that task 1 finds and this file does
   not list; an outcome of task 2 that differs between Windows and the other systems.
+
+## Result of the first test
+
+Run on 2026-11-09 on Windows 11 (the dev box), against `internal/resolve/resolve.go` unchanged:
+`go test ./internal/resolve -run "TestResolve_SecondFolderWithAClientsName" -count=1 -v`. The test fails. This
+is outcome B: the second folder resolves to the client. The claim that was read from the code is now a result.
+
+| # | Assertion | Bases in order `one`, `two` | Bases in order `two`, `one` |
+|---|---|---|---|
+| 1 | The real folder and its subfolder resolve to `acme` (the control) | holds | holds |
+| 2 | `two/acme` gives no workspace | fails: it resolves to `acme` | fails: it resolves to `acme` |
+| 3 | `two/acme/app/src` gives no workspace | fails: it resolves to `acme` | fails: it resolves to `acme` |
+| 4 | `ListWorkspaces` returns one `acme`, under `one` | fails: two workspaces named `acme` | fails: two workspaces named `acme` |
+| 5 | `Find("acme")` returns the one under `one` | holds, by registry order only | fails: it returns the copy under `two` |
+| 6 | Windows only: `two/Acme` gives no workspace | fails: it resolves to `acme` | fails: it resolves to `acme` |
+
+The five other tests of the package pass unedited. The test was not run on Linux or macOS: the dev box has
+neither, so that run waits for CI. Nothing in the code path differs by system except the comparison of names
+without case, which assertion 6 covers on Windows only.
+
+What it means: a copy of a client's folder under another registered clients folder carries that client's
+identity, `tentaqles list` shows the client twice, and which folder `Find` returns depends on the order the
+clients folders were registered. Tasks 3 to 6 apply. No code changes until the owner has picked an option.
+
+## The plan (task 3)
+
+The owner picked on 2026-11-09, after seeing the test result:
+
+| Point | The owner's pick |
+|---|---|
+| Where the folder is recorded | Option A, the registry: `$TQ_HOME/config.yaml` gains a map from client name to its folder, beside `bases` |
+| A client with no record | It keeps working as today. `tentaqles doctor` flags it, and `tentaqles settings render` writes the record when exactly one folder claims the name. When two folders claim a name that has no record, both are refused until a person binds one |
+| What the refused folder is | Blocked: `Unreadable`, so the guard denies shell commands there, with a reason that names the client and where it lives |
+| A moved folder | A person-only command, run in the client's new folder, with a typed yes. It also binds an old client by hand |
+
+Decided by the author, for the owner to overturn:
+
+- **The command is `tentaqles bind`**, with no arguments, run inside the client's folder. It refuses inside an
+  agent session and takes no `--yes` flag.
+- **Paths are compared as the resolver compares today**: through `registry.Normalize`, ignoring case on Windows.
+- **`tentaqles reach` in a folder that holds a copied marker** no longer says "already a client". It names the
+  client's real folder and the two ways out: delete the copied marker, or run `tentaqles bind` if the client
+  moved. What `reach` asks when it creates or changes a client is untouched.
+
+What each caller does in the second folder after the change:
+
+| Caller | Today | After |
+|---|---|---|
+| `tentaqles env`, a terminal's activation | acme's identity | no identity; the reason names acme's folder |
+| `tentaqles run .` | runs as acme | as in any folder that is unreadable today |
+| The guard hook (`claude-hook`, `codex-hook`) | judges commands as acme's | denies shell commands, as for any unreadable folder |
+| `tentaqles list`, `tentaqles doctor` | acme twice | acme once; the copy is reported as an error with its reason |
+| `SyncGit` (the git include rules) | a rule for both folders | a rule for the real folder only |
+| `tentaqles settings render` | renders acme twice | renders acme once, and records the folder of a client that has no record |
+| `tentaqles drop acme` | may pick the copy's folder by registry order | uses the recorded folder and removes the record |
+| `tentaqles reach` in the copy | "This folder is already a client" | refuses, naming the real folder |
+
+Files to change:
+
+- `internal/registry/registry.go`: `Config.Clients`, `Folder`, `Bind`, `Unbind`.
+- `internal/workspace/scaffold.go`: `Add` binds the new client.
+- `internal/resolve/resolve.go`: `load` checks the record; the rule for no record; `Claim` for `bind`.
+- `internal/cmd/bind.go` (new) and `internal/cmd/root.go`: the `bind` command.
+- `internal/cmd/settings.go`: record an unbound client. `internal/doctor/doctor.go`: the finding.
+- `internal/cmd/drop.go`: the recorded folder first, and the record removed. `internal/cmd/reach.go`: the
+  copied marker.
+- Docs: `docs/reference/commands.md` (`bind`), `docs/reference/manifest.md` (the registry key),
+  `docs/how-it-works.md`, `docs/threat-model.md`, `CHANGELOG.md`, `CLAUDE.md`.
+
+The Evaluation's `BINDING` line becomes: append to `$TQ_HOME/config.yaml` the lines
+`clients:`, `  acme: <W>/one/acme` and `  beta: <W>/two/beta`. Checks 3 and 4 then expect no workspace as
+written, and the guard check gains one line: the same hook input with `cwd` in the copy is denied.
+
+## Result of the tester run
+
+Run on 2026-11-09 on Windows 11 in Git Bash, against a program built from the working tree
+(`CGO_ENABLED=0 go build ./cmd/tentaqles`), in a throwaway home. 9 of 9 pass.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | The real client resolves from a subfolder | pass |
+| 2 | A real client under the second clients folder resolves | pass |
+| 3 | The copy names no workspace | pass; the reason names the client's real folder |
+| 4 | A subfolder of the copy is no client | pass |
+| 5 | `list` shows `acme` once, under `one` | pass; the copy is listed under `errors` |
+| 6 | Only the real folder gets acme's Claude config folder | pass |
+| 7 | The guard still answers in the real folder | pass, `exit=0` |
+| 8 | Nothing was written into the copy | pass |
+| 9 | The guard denies in the copy | pass, `BLOCKED` and `exit=2` |
+
+Also seen: `doctor --json` reports one `client-folder-refused` finding for the copy.
+
+The same nine checks were first run, by mistake, against the installed program (0.14.x), because `tentaqles`
+is a shell function in an activated shell. That run is the "before": checks 3, 4, 5, 6 and 9 failed there, and
+the copy got acme's identity. The brief now says to call the built program by its full path.
+
+Left open:
+
+- Not run on Linux or macOS. CI does that once the branch is pushed.
+- The two person checks (an existing client after an upgrade; `tentaqles bind` on a throwaway client) are the
+  owner's.
+- The guard's deny line in the copy starts with "the client manifest of this folder cannot be read" and then
+  gives the real reason in brackets. The wording comes from the guard's existing text for an unreadable folder
+  and was left as it is.

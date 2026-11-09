@@ -88,6 +88,14 @@ func planDrop(target string) (*dropPlan, error) {
 			return nil, fmt.Errorf("%s holds no tentaqles client marker: name the client instead", abs)
 		}
 		name, root = client, abs
+		// A copied folder must never drop the real client.
+		normAbs, err := registry.Normalize(abs)
+		if err != nil {
+			normAbs = abs
+		}
+		if rec, ok := cfg.Folder(name); ok && !registry.SamePath(rec, normAbs) {
+			return nil, fmt.Errorf("%s holds a copy of the marker of client %s, which lives in %s: name the client instead, or delete the copied %s", abs, name, rec, manifest.FileName)
+		}
 	}
 	// The name builds paths under ~/.tentaqles: only a client name is accepted, never a path.
 	if !workspace.NameRe.MatchString(name) {
@@ -127,6 +135,11 @@ func planDrop(target string) (*dropPlan, error) {
 
 // markerFolder is the folder, in a registered clients folder, whose marker names client, or "".
 func markerFolder(cfg *registry.Config, client string) string {
+	if rec, ok := cfg.Folder(client); ok {
+		if kind, c, err := manifest.Peek(filepath.Join(rec, manifest.FileName)); err == nil && kind == manifest.KindMarker && c == client {
+			return rec
+		}
+	}
 	for _, b := range cfg.Bases {
 		root := filepath.Join(b, client)
 		if kind, c, err := manifest.Peek(filepath.Join(root, manifest.FileName)); err == nil && kind == manifest.KindMarker && c == client {
@@ -206,6 +219,7 @@ func (p *dropPlan) apply(c *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	changed := false
 	if p.base != "" {
 		kept := cfg.Bases[:0]
 		for _, b := range cfg.Bases {
@@ -214,6 +228,13 @@ func (p *dropPlan) apply(c *cobra.Command) error {
 			}
 		}
 		cfg.Bases = kept
+		changed = true
+	}
+	if _, ok := cfg.Folder(p.name); ok {
+		cfg.Unbind(p.name)
+		changed = true
+	}
+	if changed {
 		if err := cfg.Save(); err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", paths.Config(), err))
 		}

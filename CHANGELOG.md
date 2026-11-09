@@ -5,6 +5,20 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- A copy of a client's folder under another clients folder no longer gets that client's identity. tentaqles now
+  records the folder each client was created in (`clients:` in `~/.tentaqles/config.yaml`), and only that folder
+  is the client. A copy with the client's name and marker gets no identity, the hook denies shell commands
+  there, and `tentaqles list` shows the client once. Before, the copy resolved to the client and
+  `tentaqles list` showed it twice.
+- **`tentaqles bind`** binds the client in the current folder to that folder: run it after moving a client to
+  another clients folder. It shows the recorded folder and the new one, waits for `yes`, and refuses inside a
+  Claude Code session.
+- Clients created before this change keep working. `tentaqles settings render` records their folder, and
+  `tentaqles doctor` flags a client whose folder is not recorded yet (`client-folder-unrecorded`) and a folder
+  that is refused (`client-folder-refused`).
+- `tentaqles drop` removes the record, and refuses to drop a client when pointed at a copy of its folder.
+  `tentaqles reach` in such a copy names the client's real folder and no longer says it is already a client.
+
 ## [0.14.1] - 2026-11-09
 
 - The Windows installer no longer breaks when a tentaqles process is running, such as the launcher of an open Claude

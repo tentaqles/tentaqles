@@ -44,6 +44,12 @@ A marker copied into another folder lends it nothing: it names a client that is 
 neutral. A client whose manifest does not load is **unreadable**: its terminal gets no identity, and the Claude Code
 hook denies every shell command there until the manifest is fixed.
 
+tentaqles records the folder each client was created in, and only that folder is the client. A copy of a
+client's folder under another clients folder, with its marker inside, is unreadable too: it gets no identity and
+the hook denies shell commands there. Delete the copied marker, or run `tentaqles bind` in the folder if you
+moved the client. A client created before folders were recorded keeps working, and
+`tentaqles settings render` records its folder.
+
 ## A client's terminal
 
 The shell hook (`tentaqles hooks install`, which `reach` runs for you) adds a short block to your shell profile. At

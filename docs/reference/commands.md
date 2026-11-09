@@ -293,7 +293,8 @@ tentaqles drop <client or folder> [--yes]
 - the browser shims, `~/.tentaqles/shims/<client>/`;
 - the marker and `.gitconfig-tentaqles` in the client's folder, and the client's `includeIf` rule in
   `~/.gitconfig-tentaqles`;
-- the clients folder's registration, when no other client is left in it.
+- the clients folder's registration, when no other client is left in it;
+- the record of the client's folder.
 
 The folder itself stays with your files in it, as an ordinary folder; it is deleted only when nothing else is left in
 it. What every client shares stays: the shell profile block, and the `include.path` and `user.useConfigOnly` settings
@@ -315,6 +316,36 @@ Claude Code session.
 ```
 tentaqles drop acme
 tentaqles drop ~/clients/globex
+```
+
+---
+
+## tentaqles bind
+
+Bind the client in this folder to this folder.
+
+### Synopsis
+
+```
+tentaqles bind
+```
+
+### Description
+
+tentaqles records the folder each client was created in. Only that folder is the client. A copy of the client's
+folder somewhere else is refused.
+
+Run `bind` inside a client's folder after you moved it to another clients folder. Run it too for a client created
+before folders were recorded. It shows the recorded folder and this folder, and asks you to type `yes`. Nothing is
+written before that `yes`.
+
+`bind` refuses to run inside a Claude Code session. Run it in your own terminal.
+
+### Examples
+
+```
+cd ~/clients/acme
+tentaqles bind
 ```
 
 ---
@@ -659,6 +690,10 @@ For each client it writes:
   scope, for the PATH folders that hold it beside other tools. A stub prints
   `<name>: command not found (outside the scope of identity <client>)` and exits 127;
 - **its browser shims**, when the client lists a browser.
+
+It also records the folder of a client that has none recorded (a client created before tentaqles recorded
+folders), so that a copy of the folder elsewhere is refused from then on. A name that two folders claim is
+never recorded here: run [`tentaqles bind`](#tentaqles-bind) in the folder that is the client.
 
 Run it after editing a manifest by hand, and after upgrading tentaqles: the shims and stubs are copies of the binary.
 

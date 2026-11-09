@@ -14,6 +14,9 @@ import (
 
 type Config struct {
 	Bases []string `yaml:"bases"`
+	// Clients records, for each client, the folder it was created in (or was last bound to with
+	// tentaqles bind). A client with no entry was created before the record existed.
+	Clients map[string]string `yaml:"clients,omitempty"`
 }
 
 func Load() (*Config, error) {
@@ -112,4 +115,55 @@ func (c *Config) AddBase(dir string) (bool, error) {
 	}
 	c.Bases = append(c.Bases, n)
 	return true, nil
+}
+
+// Folder is the folder recorded for client name, and whether one is recorded. Names are compared
+// the way the filesystem compares them: without case on Windows.
+func (c *Config) Folder(name string) (string, bool) {
+	if v := c.Clients[name]; v != "" {
+		return v, true
+	}
+	if runtime.GOOS == "windows" {
+		for k, v := range c.Clients {
+			if v != "" && strings.EqualFold(k, name) {
+				return v, true
+			}
+		}
+	}
+	return "", false
+}
+
+// Bind records dir as the folder of client name, replacing any earlier record.
+func (c *Config) Bind(name, dir string) error {
+	if name == "" {
+		return fmt.Errorf("bind: client name is empty")
+	}
+	n, err := Normalize(dir)
+	if err != nil {
+		return err
+	}
+	if c.Clients == nil {
+		c.Clients = map[string]string{}
+	}
+	if runtime.GOOS == "windows" {
+		for k := range c.Clients {
+			if k != name && strings.EqualFold(k, name) {
+				delete(c.Clients, k)
+			}
+		}
+	}
+	c.Clients[name] = n
+	return nil
+}
+
+// Unbind removes the record of client name, if any.
+func (c *Config) Unbind(name string) {
+	delete(c.Clients, name)
+	if runtime.GOOS == "windows" {
+		for k := range c.Clients {
+			if strings.EqualFold(k, name) {
+				delete(c.Clients, k)
+			}
+		}
+	}
 }

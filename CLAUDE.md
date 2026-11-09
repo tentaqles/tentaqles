@@ -15,7 +15,7 @@ section for every command; `test/integration` fails when one is missing.
 ## Layout
 
 - `cmd/tentaqles/`, `cmd/tq/`: one program under two names; the release builds `./cmd/tentaqles` as both.
-- `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `drop`, `env`, `activate`, `hooks`, `run`, `login`,
+- `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `drop`, `bind`, `env`, `activate`, `hooks`, `run`, `login`,
   `open`, `settings render`, `statusline`, `doctor`, `list`, `providers`, `version`, `claude-hook`.
   `claudehook.go` is the hook (`session-start`, `pre-tool-use`); `codexhook.go` is the Codex CLI hook (`codex-hook`);
   `edit.go` is `add`/`remove`, `drop.go` is `drop`;
@@ -24,7 +24,7 @@ section for every command; `test/integration` fails when one is missing.
   changes only the keys the form owns.
 - `internal/workspace/`: creates a client (manifest, marker, identity folders, git include).
 - `internal/resolve/`: maps a folder to its client (marker in the folder, manifest under `~/.tentaqles`).
-- `internal/manifest/` (`language.go`: the client languages), `internal/registry/` (the clients folders), `internal/paths/`.
+- `internal/manifest/` (`language.go`: the client languages), `internal/registry/` (the clients folders and each client's folder), `internal/paths/`.
 - `internal/envplan/`: the identity environment: variables, the PATH layer and mask, the browser shims, the shell
   state that restores what was there on leaving. `internal/scope/` compiles what a client's terminal hides.
 - `internal/shell/`, `internal/hooks/`: the shell activation templates and the profile blocks.
@@ -73,6 +73,11 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
 - drop deletes nothing before the client's name is typed back, deletes nothing of another client, and keeps the
   user's files: `TestDrop_DeclinedDeletesNothing`, `TestDrop_UndoesTheClient`, `TestDrop_Refusals`.
 - A copied marker or manifest lends a folder nothing: `TestResolve_MarkerOrManifestOfAnotherClient`.
+- A client is the folder it was created in and no other: a copy of it under another clients folder gets no
+  identity and is denied, and only a person moves the record: `TestResolve_SecondFolderWithAClientsName`,
+  `TestResolve_ClientWithNoRecordedFolder`, `TestPreToolUse_CopiedFolderDenies`,
+  `TestEnv_SecondFolderGetsNoIdentity`, `TestBind_RefusedForAgents`, `TestBind_DeclinedWritesNothing`,
+  `TestDrop_RefusesACopiedFolder`.
 - A client with browsers opens links in its own profile: `TestBrowserShims`, `TestOpen_UsesTheClientsProfile`,
   `TestOpen_Refusals`.
 - The plugin installs from a pinned tag and sha, and the release ships both names as the same bytes:

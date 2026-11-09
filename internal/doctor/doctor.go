@@ -63,7 +63,16 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 	all, errs := resolve.ListWorkspaces(cfg)
 	providerFileFindings(add, all)
 	for _, e := range errs {
-		add("error", "manifest-invalid", "", e.Error(), "fix the client's manifest under ~/.tentaqles/identities")
+		if strings.Contains(e.Error(), "tentaqles bind") {
+			add("error", "client-folder-refused", "", e.Error(), "delete the copied .tentaqles.yaml, or run tentaqles bind in the client's own folder")
+		} else {
+			add("error", "manifest-invalid", "", e.Error(), "fix the client's manifest under ~/.tentaqles/identities")
+		}
+	}
+	for _, w := range all {
+		if _, ok := cfg.Folder(w.Name); !ok {
+			add("warn", "client-folder-unrecorded", w.Name, "the folder of client "+w.Name+" is not recorded (it was created before folders were recorded)", "tentaqles settings render "+w.Name)
+		}
 	}
 	provs := envplan.Providers()
 	provCat := providers.MustLoad()

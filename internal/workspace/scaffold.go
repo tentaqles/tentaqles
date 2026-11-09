@@ -140,6 +140,9 @@ func Add(o AddOptions) (*resolve.Workspace, error) {
 	if _, err := cfg.AddBase(base); err != nil {
 		return nil, err
 	}
+	if err := cfg.Bind(o.Name, root); err != nil {
+		return nil, err
+	}
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}

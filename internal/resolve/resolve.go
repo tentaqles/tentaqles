@@ -2,6 +2,7 @@
 package resolve
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ func Resolve(cwd string, cfg *registry.Config) Result {
 	if name == "" {
 		return Result{Reason: reason}
 	}
-	r := load(nb, root, name)
+	r := load(cfg, nb, root, name)
 	r.Name = name
 	return r
 }
@@ -122,7 +123,7 @@ func locate(root, name string) (path string, unreadable bool, reason string) {
 	return pp, false, ""
 }
 
-func load(base, root, name string) Result {
+func load(cfg *registry.Config, base, root, name string) Result {
 	p, unreadable, reason := locate(root, name)
 	if reason != "" {
 		return Result{Reason: reason, Unreadable: unreadable}
@@ -134,7 +135,39 @@ func load(base, root, name string) Result {
 	if !sameName(m.Client, name) {
 		return Result{Reason: fmt.Sprintf("manifest names client %q but the folder is %q", m.Client, name)}
 	}
+	if reason := bound(cfg, root, m.Client); reason != "" {
+		return Result{Reason: reason, Unreadable: true}
+	}
 	return Result{Workspace: &Workspace{Name: name, Root: root, Base: base, ManifestPath: p, Manifest: m}}
+}
+
+// bound checks root against the folder the registry records for client. A recorded client is
+// that folder and no other: a copy of it elsewhere is refused. A client with no record was
+// created before the record existed; it resolves as before unless a second folder under a
+// registered base claims the same name, and then both are refused until tentaqles bind picks
+// one. It returns "" when root is the client's folder, or the reason it is not.
+func bound(cfg *registry.Config, root, client string) string {
+	if rec, ok := cfg.Folder(client); ok {
+		if norm(rec) == norm(root) {
+			return ""
+		}
+		return fmt.Sprintf("client %q lives in %s; this folder is a copy of it (remove its %s, or run tentaqles bind here if the client moved)", client, rec, manifest.FileName)
+	}
+	for _, b := range cfg.Bases {
+		nb, err := registry.Normalize(b)
+		if err != nil {
+			nb = filepath.Clean(b)
+		}
+		other := filepath.Join(nb, client)
+		if norm(other) == norm(root) {
+			continue
+		}
+		kind, c, err := manifest.Peek(filepath.Join(other, manifest.FileName))
+		if err == nil && kind == manifest.KindMarker && sameName(c, client) {
+			return fmt.Sprintf("two folders claim client %q (%s and %s); run tentaqles bind in the one that is the client", client, root, other)
+		}
+	}
+	return ""
 }
 
 // ListWorkspaces returns every first-level child of every base that is a client, sorted by name.
@@ -160,7 +193,7 @@ func ListWorkspaces(cfg *registry.Config) ([]Workspace, []error) {
 			if _, err := os.Stat(filepath.Join(root, manifest.FileName)); err != nil {
 				continue
 			}
-			r := load(nb, root, e.Name())
+			r := load(cfg, nb, root, e.Name())
 			if r.Workspace == nil {
 				errs = append(errs, fmt.Errorf("%s: %s", root, r.Reason))
 				continue
@@ -181,4 +214,26 @@ func Find(cfg *registry.Config, name string) (*Workspace, error) {
 		}
 	}
 	return nil, fmt.Errorf("no client %q (errors: %v)", name, errs)
+}
+
+// Claim is the client folder cwd is in whose marker names it and whose manifest loads, whatever
+// folder the registry records for that client. tentaqles bind uses it to bind a client that
+// moved or has no record. It returns the client's name and the folder.
+func Claim(cwd string, cfg *registry.Config) (name, root string, err error) {
+	_, root, name, reason := folder(cwd, cfg)
+	if name == "" {
+		return "", "", errors.New(reason)
+	}
+	p, _, reason := locate(root, name)
+	if reason != "" {
+		return "", "", errors.New(reason)
+	}
+	m, err := manifest.Load(p)
+	if err != nil {
+		return "", "", fmt.Errorf("manifest invalid: %v", err)
+	}
+	if !sameName(m.Client, name) {
+		return "", "", fmt.Errorf("manifest names client %q but the folder is %q", m.Client, name)
+	}
+	return m.Client, root, nil
 }

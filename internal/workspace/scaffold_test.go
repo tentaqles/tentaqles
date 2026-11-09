@@ -141,6 +141,38 @@ func TestAdd_RejectsBadNameAndDuplicate(t *testing.T) {
 	}
 }
 
+func TestAdd_BindsTheClientToItsFolder(t *testing.T) {
+	isolateHome(t)
+	base := testutil.TempDir(t)
+	cfg := &registry.Config{}
+	cfg.AddBase(base)
+	cfg.Save()
+
+	ws, err := Add(AddOptions{Base: base, Name: "acme", GitName: "Maria", GitEmail: "m@acme.com", RunGit: fakeGit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := registry.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cfg2.Folder("acme")
+	if !ok || !registry.SamePath(got, ws.Root) {
+		t.Fatalf("Folder(acme) = %q, %v; want %q", got, ok, ws.Root)
+	}
+	raw, err := os.ReadFile(ws.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizedBase, err := registry.Normalize(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), base) || strings.Contains(string(raw), normalizedBase) {
+		t.Fatalf("the manifest must hold names only, not the base folder:\n%s", raw)
+	}
+}
+
 func TestAdd_RejectsControlCharsInGitFields(t *testing.T) {
 	isolateHome(t)
 	base := testutil.TempDir(t)

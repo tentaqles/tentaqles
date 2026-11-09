@@ -25,6 +25,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/manifest"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/reach"
+	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
 	"github.com/tentaqles/tentaqles/internal/workspace"
 )
@@ -74,6 +75,17 @@ func newReachCmd() *cobra.Command {
 				}
 			}
 			if _, err := os.Stat(filepath.Join(dir, manifest.FileName)); err == nil {
+				cfg, err := registry.Load()
+				if err != nil {
+					return err
+				}
+				nd, err := registry.Normalize(dir)
+				if err != nil {
+					nd = dir
+				}
+				if rec, ok := cfg.Folder(name); ok && !registry.SamePath(rec, nd) {
+					return fmt.Errorf("this folder holds a copy of the marker of client %s, which lives in %s: delete %s here, or run tentaqles bind here if you moved the client", name, rec, manifest.FileName)
+				}
 				show()
 				return reachShowExisting(c, name)
 			}
