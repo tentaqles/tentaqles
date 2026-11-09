@@ -366,8 +366,12 @@ the copy got acme's identity. The brief now says to call the built program by it
 Left open:
 
 - Not run on Linux or macOS. CI does that once the branch is pushed.
-- The two person checks (an existing client after an upgrade; `tentaqles bind` on a throwaway client) are the
-  owner's.
+- Person check, `tentaqles bind` on a throwaway client: done by the owner on 2026-11-09 with the development
+  build (`tqx` 0.15.0-lobe.1) in a throwaway home. In the copy, `bind` showed both folders and waited for
+  `yes`; afterwards `list` showed acme at the new folder and the old folder was refused with its reason.
+- Person check, an existing client after an upgrade: partly done. The development build lists the owner's five
+  real clients, each once, read-only. Opening a real client's terminal with the new build waits for an install
+  that replaces the released one, which the owner has not asked for.
 - The guard's deny line in the copy starts with "the client manifest of this folder cannot be read" and then
   gives the real reason in brackets. The wording comes from the guard's existing text for an unreadable folder
   and was left as it is.
