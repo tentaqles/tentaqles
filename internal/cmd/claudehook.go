@@ -92,29 +92,35 @@ func newSessionStartCmd() *cobra.Command {
 		Use:   "session-start",
 		Short: "SessionStart hook: print the client identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
-			p, _, err := readHookPayload(c.InOrStdin())
-			if errors.Is(err, errPayloadTooLarge) {
-				fmt.Fprintf(c.OutOrStdout(), "Tentaqles: tq could not resolve this folder (%s)\n", err)
-				return nil
-			}
-			cwd := strings.TrimSpace(p.Cwd)
-			if cwd == "" {
-				cwd, _ = os.Getwd()
-			}
-			cfg, err := registry.Load()
-			if err != nil {
-				fmt.Fprintf(c.OutOrStdout(), "Tentaqles: tq could not resolve this folder (%s)\n", err)
-				return nil
-			}
-			rep := doctor.RunForCwd(cfg, doctorDeps(cwd))
-			expectedDir := ""
-			if rep.Result.Workspace != nil {
-				expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
-			}
-			fmt.Fprint(c.OutOrStdout(), renderSessionStart(rep, expectedDir))
+			sessionStart(c.InOrStdin(), c.OutOrStdout())
 			return nil
 		},
 	}
+}
+
+// sessionStart writes the preamble for the folder the payload names (the process cwd when it
+// names none). The Claude and the Codex session-start hooks both print it.
+func sessionStart(in io.Reader, out io.Writer) {
+	p, _, err := readHookPayload(in)
+	if errors.Is(err, errPayloadTooLarge) {
+		fmt.Fprintf(out, "Tentaqles: tq could not resolve this folder (%s)\n", err)
+		return
+	}
+	cwd := strings.TrimSpace(p.Cwd)
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	cfg, err := registry.Load()
+	if err != nil {
+		fmt.Fprintf(out, "Tentaqles: tq could not resolve this folder (%s)\n", err)
+		return
+	}
+	rep := doctor.RunForCwd(cfg, doctorDeps(cwd))
+	expectedDir := ""
+	if rep.Result.Workspace != nil {
+		expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
+	}
+	fmt.Fprint(out, renderSessionStart(rep, expectedDir))
 }
 
 func doctorDeps(cwd string) doctor.Deps {
@@ -184,7 +190,7 @@ BLOCKED [identity/<rule>]: <reason> on stderr. Every other tool call is allowed.
 A payload tq cannot read, a client manifest it cannot read, and a check that does not finish
 within the hook deadline are denied as BLOCKED [tq/guard-error].`,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if code := runPreToolUse(c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), asJSON); code != 0 {
+			if code := runPreToolUse(c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), hookDialect{asJSON: asJSON}); code != 0 {
 				exitFunc(code)
 			}
 			return nil
@@ -208,9 +214,29 @@ var hookGuardDecide = guard.Decide
 // guardErrorID names the deny of a call the check cannot judge.
 const guardErrorID = "tq/guard-error"
 
+// hookDialect is the input and output contract of the harness a hook serves. Claude Code denies
+// with exit 2 and the reason on stderr (--json adds the decision object on stdout). The Codex CLI
+// reads a deny as one JSON object on stdout with exit 0, and anything else as an allow. The
+// decision, the deadline and the watchdog are the same for both.
+type hookDialect struct {
+	codex  bool
+	asJSON bool
+}
+
+// codexDialect is the Codex CLI contract.
+var codexDialect = hookDialect{codex: true}
+
+// denyCode is the exit code of a deny.
+func (d hookDialect) denyCode() int {
+	if d.codex {
+		return 0
+	}
+	return 2
+}
+
 // runPreToolUse decides one call and returns the exit code. The decision runs in its own
 // goroutine; a panic or a missed deadline is a deny.
-func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool) int {
+func runPreToolUse(in io.Reader, out, errw io.Writer, d hookDialect) int {
 	var bo, be bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
@@ -218,10 +244,10 @@ func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool) int {
 			if r := recover(); r != nil {
 				bo.Reset()
 				be.Reset()
-				done <- failClosed(&bo, &be, asJSON, fmt.Sprintf("tq guard error (%v)", r))
+				done <- failClosed(&bo, &be, d, fmt.Sprintf("tq guard error (%v)", r))
 			}
 		}()
-		done <- decide(in, &bo, &be, asJSON)
+		done <- decide(in, &bo, &be, d)
 	}()
 	timer := time.NewTimer(hookDeadline)
 	defer timer.Stop()
@@ -231,17 +257,17 @@ func runPreToolUse(in io.Reader, out, errw io.Writer, asJSON bool) int {
 		_, _ = io.Copy(errw, &be)
 		return code
 	case <-timer.C:
-		return failClosed(out, errw, asJSON, fmt.Sprintf("the check did not finish within %s", hookDeadline))
+		return failClosed(out, errw, d, fmt.Sprintf("the check did not finish within %s", hookDeadline))
 	}
 }
 
-func decide(in io.Reader, out, errw io.Writer, asJSON bool) int {
+func decide(in io.Reader, out, errw io.Writer, d hookDialect) int {
 	if hookDecideTestHook != nil {
 		hookDecideTestHook()
 	}
 	p, cmdline, err := readHookPayload(in)
 	if err != nil {
-		return failClosed(out, errw, asJSON, "the hook payload cannot be read ("+err.Error()+")")
+		return failClosed(out, errw, d, "the hook payload cannot be read ("+err.Error()+")")
 	}
 	if cmdline != "" {
 		cwd := strings.TrimSpace(p.Cwd)
@@ -250,32 +276,38 @@ func decide(in io.Reader, out, errw io.Writer, asJSON bool) int {
 		}
 		gin, res, err := gatherGuardInput(cwd, cmdline)
 		if err != nil {
-			return failClosed(out, errw, asJSON, "tq cannot read its registry ("+err.Error()+")")
+			return failClosed(out, errw, d, "tq cannot read its registry ("+err.Error()+")")
 		}
 		if res.Unreadable {
-			return failClosed(out, errw, asJSON, "the client manifest of this folder cannot be read ("+res.Reason+")")
+			return failClosed(out, errw, d, "the client manifest of this folder cannot be read ("+res.Reason+")")
 		}
-		if d := hookGuardDecide(gin); d.Block {
-			emitDecision(out, errw, asJSON, true, d.Rule, d.Reason)
-			return 2
+		if g := hookGuardDecide(gin); g.Block {
+			emitDecision(out, errw, d, true, g.Rule, g.Reason)
+			return d.denyCode()
 		}
 	}
-	if asJSON {
-		emitDecision(out, errw, true, false, "", "")
+	if d.asJSON {
+		emitDecision(out, errw, d, false, "", "")
 	}
 	return 0
 }
 
-func failClosed(out, errw io.Writer, asJSON bool, why string) int {
-	reason := "BLOCKED [" + guardErrorID + "]: " + why + "; tq denies a call it cannot judge. Report this to the developer instead of retrying; `tentaqles doctor` shows what is wrong"
-	emitDecision(out, errw, asJSON, true, guardErrorID, reason)
-	return 2
+// failClosed is the deny of a call tq cannot judge.
+func failClosed(out, errw io.Writer, d hookDialect, why string) int {
+	return hookStartupDeny(out, errw, d, why)
 }
 
-// emitDecision reports a decision: the --json object on stdout when asked for, and for a block
-// the reason on stderr (Claude Code shows the stderr of an exit-2 hook to the model).
-func emitDecision(out, errw io.Writer, asJSON, block bool, rule, reason string) {
-	if asJSON {
+// emitDecision reports a decision. Claude Code: the --json object on stdout when asked for, and for
+// a block the reason on stderr (Claude Code shows the stderr of an exit-2 hook to the model). Codex:
+// a block is the hookSpecificOutput object on stdout, and an allow prints nothing.
+func emitDecision(out, errw io.Writer, d hookDialect, block bool, rule, reason string) {
+	if d.codex {
+		if block {
+			emitCodexDeny(out, errw, reason)
+		}
+		return
+	}
+	if d.asJSON {
 		_ = json.NewEncoder(out).Encode(struct {
 			Block  bool   `json:"block"`
 			Rule   string `json:"rule"`

@@ -41,6 +41,9 @@ client's manifest lives at `~/.tentaqles/identities/<client>/manifest.yaml` (`$T
 | **Used by the Claude Code plugin** | |
 | [`tentaqles claude-hook pre-tool-use`](#tentaqles-claude-hook-pre-tool-use) | Decide whether a shell command may run |
 | [`tentaqles claude-hook session-start`](#tentaqles-claude-hook-session-start) | Print the client's preamble at the start of a session |
+| **Used by the OpenAI Codex CLI hooks** | |
+| [`tentaqles codex-hook pre-tool-use`](#tentaqles-codex-hook-pre-tool-use) | Decide whether a shell command may run |
+| [`tentaqles codex-hook session-start`](#tentaqles-codex-hook-session-start) | Print the client's preamble at the start of a session |
 | [`tentaqles statusline`](#tentaqles-statusline) | The status line a client's Claude settings run |
 
 Commands that change a client (`reach`, `add`, `remove`, `drop`) wait for a typed confirmation and refuse to run from
@@ -893,6 +896,41 @@ Prints the folder's client; its language, with the instruction to write the clie
 messages in it; its git provider, user and email; its clouds; the identity and its `CLAUDE_CONFIG_DIR`; the
 client's tools; the findings of `tentaqles doctor` for this folder; and one line on what the hook blocks. In a
 neutral folder it says so. It never fails: a session always starts. See [Claude hook](claude-hook.md).
+
+---
+
+## tentaqles codex-hook pre-tool-use
+
+Decide whether a shell command the OpenAI Codex CLI is about to run may run. The Codex hook calls it; you don't.
+
+### Synopsis
+
+```
+tentaqles codex-hook pre-tool-use
+```
+
+### Description
+
+Reads the hook's JSON on stdin. The same check as `claude-hook pre-tool-use`, with Codex's answer: a blocked command
+prints one JSON object on stdout (`permissionDecision` `deny`, the reason) and the reason on stderr, and exits 0; an
+allowed one prints nothing and exits 0. Every error is a deny the same way, since Codex runs a call whose hook gives no
+deny. See [Claude hook](claude-hook.md) for the rules.
+
+---
+
+## tentaqles codex-hook session-start
+
+Print the preamble OpenAI Codex CLI adds at the start of a session. The Codex hook calls it; you don't.
+
+### Synopsis
+
+```
+tentaqles codex-hook session-start
+```
+
+### Description
+
+Prints the same text as `claude-hook session-start` for the payload's folder. It never fails: a session always starts.
 
 ---
 
