@@ -38,12 +38,43 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
     Write-Host "Verified build provenance for $archive"
   }
 }
-Expand-Archive $zip -DestinationPath $binDir -Force
-Remove-Item $zip
-# One program under two names: tentaqles.exe, and tq.exe, which the plugin hook runs.
-foreach ($b in 'tentaqles.exe', 'tq.exe') {
-  if (-not (Test-Path (Join-Path $binDir $b))) { throw "the archive has no $b; tq is not fully installed" }
+# Unpack beside the binaries, never over them: a running tq locks its exe, and unzipping over it can stop halfway and
+# leave no working tq, which also shuts out the agent the hook guards. Windows lets a running exe be renamed, so each
+# file moves aside before the new one goes in, and any failure puts the old files back.
+$id = [guid]::NewGuid().ToString('N')
+$stage = Join-Path $binDir ".install-$id"
+$swapped = @()
+try {
+  Expand-Archive $zip -DestinationPath $stage -Force
+  # One program under two names: tentaqles.exe, and tq.exe, which the plugin hook runs.
+  foreach ($b in 'tentaqles.exe', 'tq.exe') {
+    if (-not (Test-Path (Join-Path $stage $b))) { throw "the archive has no $b; nothing was installed" }
+  }
+  foreach ($f in Get-ChildItem -LiteralPath $stage -File) {
+    $target = Join-Path $binDir $f.Name
+    $aside = $null
+    if (Test-Path -LiteralPath $target) {
+      $aside = "$($f.BaseName).old.$id$($f.Extension)"
+      Rename-Item -LiteralPath $target -NewName $aside
+    }
+    $swapped += , @($target, $aside)
+    Move-Item -LiteralPath $f.FullName -Destination $target
+  }
+} catch {
+  [array]::Reverse($swapped)
+  foreach ($s in $swapped) {
+    Remove-Item -LiteralPath $s[0] -Force -ErrorAction SilentlyContinue
+    if ($s[1]) { Rename-Item -LiteralPath (Join-Path $binDir $s[1]) -NewName (Split-Path $s[0] -Leaf) }
+  }
+  throw
+} finally {
+  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 }
+# A copy still in use stays until its process ends; the next install removes it.
+Get-ChildItem -LiteralPath $binDir -File |
+  Where-Object { $_.Name -match '^(tentaqles|tq|README|CHANGELOG|LICENSE)\.old\.[0-9a-f]+(\.\w+)?$' } |
+  ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $binDir) {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$binDir", 'User')
