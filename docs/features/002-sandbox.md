@@ -280,4 +280,9 @@ this feature starts. Nine later runs passed, four of them at once under load. No
 reads as an old timing weakness in that harness, not as a fault of this feature, but that is not proven.
 Future full runs keep their whole output so a second occurrence leaves a trace.
 
-Left open: Linux and macOS (CI, after a push); the owner's person check.
+Person check: done by the owner on 2026-11-09 with the development build, in a normal terminal with nothing
+exported. The command printed `SETUP FAIL TQ_HOME is not set`, created no folder, and left the real
+registry, git configuration and identity folders as they were. Run from inside the playground it
+refused too, because the playground's `TQ_HOME` is not inside the folder named.
+
+Left open: Linux and macOS (CI, after a push).
