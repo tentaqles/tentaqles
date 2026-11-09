@@ -1,6 +1,6 @@
 # 002: Sandbox with two test clients
 
-**Status** built and evaluated on Windows on 2026-11-09; CI on Linux and macOS not run yet · **Stage** Ground · **Entries** F-07 (the sandbox and the standard tester setup),
+**Status** built, evaluated and green in CI on Linux, macOS and Windows (2026-11-09); on the branch, not in main · **Stage** Ground · **Entries** F-07 (the sandbox and the standard tester setup),
 F-01 (paths), decision A-20 · **Needs** 001 · **Feeds** 003 and every later tester brief; 012, 013, 021
 
 ## Result
@@ -285,4 +285,6 @@ exported. The command printed `SETUP FAIL TQ_HOME is not set`, created no folder
 registry, git configuration and identity folders as they were. Run from inside the playground it
 refused too, because the playground's `TQ_HOME` is not inside the folder named.
 
-Left open: Linux and macOS (CI, after a push).
+Linux and macOS: green in CI on 2026-11-09 (run 42671975246, third attempt, commit `48f7b407`), with the
+plugin suite, the marketplace pin check and `govulncheck`. The first two attempts started few or no jobs
+during a GitHub Actions outage; no job of ours failed in them.
