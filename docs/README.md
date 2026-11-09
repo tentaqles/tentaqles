@@ -29,3 +29,19 @@ Every page of the docs, by what you need. New here? Start with [Getting started]
 ## Maintain
 
 - [Releasing](RELEASING.md): how a release is cut, published and pinned.
+
+## Planned: the Vertical Lobe
+
+A draft for review. Nothing on these pages is built yet.
+
+- [The Vertical Lobe: product requirements](prd/vertical-lobe.md): a per-client memory, code graph and rule enforcer
+  on top of the identity isolation. The promise, principles, architecture, build order and decisions.
+- [Foundation](prd/lobe-foundation.md): the per-client store, the fail-open engine, hook wiring, sharing, safety,
+  settings and commands.
+- [Sense](prd/lobe-sense.md): capturing failures and successes from every tool, scrubbing and fingerprints.
+- [Consolidate](prd/lobe-consolidate.md): turning events into lessons, the quality gate, fading, backfill and
+  starter rules.
+- [Graph](prd/lobe-graph.md): the code and knowledge graph, blast radius and optional documents.
+- [Recall](prd/lobe-recall.md): search, what is injected and when, agent tools and stale lessons.
+- [Enforce](prd/lobe-enforce.md): the rule ladder, silent trials, blocking and the check before a commit.
+- [Benchmarks](prd/lobe-benchmarks.md): how every claim is measured.
