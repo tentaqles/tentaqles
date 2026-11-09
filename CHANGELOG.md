@@ -5,6 +5,10 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- A child shell started from an activated client folder (an agent's `powershell -Command`, a `bash -lc`) no longer
+  prints `tq: shell state lost` on every command when it is in the same folder and already has that client's
+  identity: nothing needs restoring there, so the notice is silent. The notice still shows when the shell is elsewhere.
+
 ## [0.13.2] - 2026-11-08
 
 - **Docs rebuilt.** The README says what tentaqles is for, shows it working, and gets you to a first client in three

@@ -64,7 +64,10 @@ func newEnvCmd() *cobra.Command {
 			}
 			if lost {
 				envplan.FinishForget(&ops, real, senv)
-				maskNotice = ops.Notice
+				// A child shell already in this folder's identity has nothing to restore: no notice.
+				if !envplan.Settled(real, ops, wsName(res)) {
+					maskNotice = ops.Notice
+				}
 			}
 			ops.Notice = maskNotice
 			if asJSON {
