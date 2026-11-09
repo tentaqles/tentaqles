@@ -1,6 +1,6 @@
 # 003: A failed shell command in Claude Code is logged
 
-**Status** built and evaluated on Windows on 2026-11-09 (tests, plugin suite, tester brief 13 of 13); CI and the owner's checks pending · **Stage** Sense · **Entries** F-01 (folder, lock, append, repository key), F-02 (engine,
+**Status** built and evaluated on Windows on 2026-11-09 (tests, plugin suite, tester brief 13 of 13, the owner's real-session checks); CI pending · **Stage** Sense · **Entries** F-01 (folder, lock, append, repository key), F-02 (engine,
 client rule, deadline, watchdog, error file), F-03 (one Claude Code entry, the wrapper), S-01 (shell tools),
 S-05 (all), S-06 (the event id only), S-07 (day file, append), F-07 (notices); D-11, D-13 · **Needs** 002 ·
 **Feeds** 004, 005, 006, 007, 008, 010, 011, 012, 013
@@ -540,5 +540,13 @@ Built against the documentation, to be confirmed by the owner's capture: the pay
 Claude Code's hooks page documents for `PostToolUseFailure`. The capture session (Person check 1) confirms them on
 the owner's version; a difference changes the fixtures and the reader before this feature is closed.
 
-Left open: CI on Linux and macOS; the owner's capture session (Person check 1) and real session (Person checks 2
-and 3); the phase 0 question 2 result page.
+Person checks 2 and 3: done by the owner on 2026-11-09 in a real Claude Code session in the `yduqs` client, with the
+checkout's plugin loaded through `claude --plugin-dir` and the development build answering the hook. `ls
+/no/such/folder-xyz` wrote one `fail` line with `exit` 2 and the error text without its `Exit code` line;
+`echo ghp_A...; false` wrote a line whose command reads `echo [redacted:api-key]; false` and whose error is
+`[redacted:api-key]`; no `ghp_` is on disk under any memory folder; the four other clients have no memory
+folder; no error line was written. The phase 0 question 2 page records what these runs confirmed
+(`docs/prd/spikes/phase0-q2-claude-code-hooks.md`).
+
+Left open: CI on Linux and macOS; the owner's capture session (Person check 1), which confirms the fields of the
+other events for the features that need them.
