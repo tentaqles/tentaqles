@@ -13,7 +13,7 @@ import (
 )
 
 // documentedGroups are the commands whose subcommands the reference documents one by one.
-var documentedGroups = map[string]bool{"providers": true, "hooks": true, "claude-hook": true, "settings": true}
+var documentedGroups = map[string]bool{"providers": true, "hooks": true, "claude-hook": true, "codex-hook": true, "settings": true}
 
 // commandPaths are the command paths the reference must document: every top-level command, and the
 // subcommands of documentedGroups in their place.

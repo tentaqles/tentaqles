@@ -8,6 +8,9 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 - A child shell started from an activated client folder (an agent's `powershell -Command`, a `bash -lc`) no longer
   prints `tq: shell state lost` on every command when it is in the same folder and already has that client's
   identity: nothing needs restoring there, so the notice is silent. The notice still shows when the shell is elsewhere.
+- **`tentaqles codex-hook`** is the OpenAI Codex CLI counterpart of `claude-hook`: `pre-tool-use` runs the same identity
+  check and answers Codex's deny object (stdout, exit 0), and every error path denies the same way; `session-start`
+  prints the same preamble. The two share one decision path; `claude-hook` is unchanged.
 
 ## [0.13.2] - 2026-11-08
 
