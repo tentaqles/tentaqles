@@ -328,8 +328,13 @@ command = "echo hello"
 					}
 				}
 			}
-			if !reflect.DeepEqual(ah["state"], bh["state"]) {
-				t.Errorf("hooks.state changed: %v -> %v", bh["state"], ah["state"])
+			// Render adds trust for our handlers; every state entry the user had stays as it was.
+			bs, _ := bh["state"].(map[string]any)
+			as, _ := ah["state"].(map[string]any)
+			for k, v := range bs {
+				if !reflect.DeepEqual(as[k], v) {
+					t.Errorf("hooks.state[%s] changed: %v -> %v", k, v, as[k])
+				}
 			}
 		})
 	}
@@ -515,8 +520,10 @@ func TestHookTrust(t *testing.T) {
 			mustRender(t, home, testCommand)
 			editConfig(t, home, func(root map[string]any) { delete(mustHooks(t, root), "SessionStart") })
 		}, Missing},
-		{"rendered and never trusted", func(t *testing.T, home string) {
+		{"rendered, and the trust entries are gone", func(t *testing.T, home string) {
 			mustRender(t, home, testCommand)
+			dropState(t, home, ":pre_tool_use:")
+			dropState(t, home, ":session_start:")
 		}, Untrusted},
 		{"only PreToolUse trusted", func(t *testing.T, home string) {
 			mustRender(t, home, testCommand)
@@ -537,7 +544,18 @@ func TestHookTrust(t *testing.T) {
 		{"command changed after trust", func(t *testing.T, home string) {
 			mustRender(t, home, testCommand)
 			trustAll(t, home)
-			mustRender(t, home, "/opt/tq")
+			// The install moved: the file names another program, and nothing re-trusts it.
+			editConfig(t, home, func(root map[string]any) {
+				groups, _ := groupsOf(mustHooks(t, root)["PreToolUse"])
+				for _, g := range groups {
+					hs, _ := handlersOf(g)
+					for _, h := range hs {
+						if isOwnedHandler(h) {
+							h["command"] = "/opt/tq codex-hook pre-tool-use"
+						}
+					}
+				}
+			})
 		}, Modified},
 		{"developer_instructions changed after trust", func(t *testing.T, home string) {
 			mustRenderDI(t, home, "A")

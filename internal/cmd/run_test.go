@@ -94,7 +94,7 @@ func fakeExec(t *testing.T) *[]launched {
 	var calls []launched
 	prev := execCommand
 	bin := testutil.TempDir(t)
-	for _, n := range []string{"claude", "npm", "gh"} {
+	for _, n := range []string{"claude", "codex", "npm", "gh"} {
 		if runtime.GOOS == "windows" {
 			n += ".exe"
 		}

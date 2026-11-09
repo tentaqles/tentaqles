@@ -9,3 +9,4 @@ __tq_hook
 function tentaqles { '/opt/tq/bin/tq' "$@"; }
 function tq { '/opt/tq/bin/tq' "$@"; }
 function claude { '/opt/tq/bin/tq' run . -- claude "$@"; }
+function codex { '/opt/tq/bin/tq' run . -- codex "$@"; }

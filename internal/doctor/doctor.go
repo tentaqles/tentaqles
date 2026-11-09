@@ -81,6 +81,7 @@ func Run(cfg *registry.Config, d Deps) []Finding {
 		browserChecks(&w, add)
 		claudeChecks(&w, add)
 		guardHookCheck(&w, add)
+		codexGuardCheck(&w, add)
 		runWorkspaceChecks(&w, d, add)
 		wf := gitcfg.WorkspaceFile(w.Root)
 		wsGitFile[normPath(wf)] = w.Name

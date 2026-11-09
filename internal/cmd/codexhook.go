@@ -49,11 +49,12 @@ func newCodexSessionStartCmd() *cobra.Command {
 		Use:   "session-start",
 		Short: "SessionStart hook: print the client identity preamble (Codex CLI)",
 		Long: `Reads a Codex CLI SessionStart payload on stdin and prints the client's identity preamble, the
-same text as tentaqles claude-hook session-start. Codex adds the printed text to the model's
-developer context. It never fails: a session always starts.`,
+same text as tentaqles claude-hook session-start except that it names CODEX_HOME rather than
+CLAUDE_CONFIG_DIR. Codex adds the printed text to the model's developer context. It never fails:
+a session always starts.`,
 		RunE: func(c *cobra.Command, _ []string) error {
 			defer func() { _ = recover() }()
-			sessionStart(c.InOrStdin(), c.OutOrStdout())
+			sessionStart(c.InOrStdin(), c.OutOrStdout(), "CODEX_HOME")
 			return nil
 		},
 	}

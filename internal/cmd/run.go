@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/codexconfig"
 	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/guardplugin"
 	"github.com/tentaqles/tentaqles/internal/registry"
@@ -61,6 +62,90 @@ func claudeIsSession(args []string) bool {
 	return true
 }
 
+// codexSubcommands are the codex subcommands that run no agent session: they run no tool of the
+// agent. Everything else is a session, so a subcommand this list does not know (a new one, say)
+// needs the guard. exec, review, resume, fork, app-server, app, remote-control, sandbox, debug,
+// apply, cloud, queue and exec-server run tools or apply changes, so they are sessions
+// (codex --help, "Commands:").
+var codexSubcommands = []string{"agents", "archive", "completion", "delete", "doctor", "features", "help",
+	"login", "logout", "mcp", "migrate-rollouts", "plugin", "unarchive", "update"}
+
+// codexIsSession reports whether codex's arguments start a session: not one of the subcommands above,
+// and not --help or --version. The launcher adds nothing to codex's arguments.
+func codexIsSession(args []string) bool {
+	if len(args) > 0 && slices.Contains(codexSubcommands, args[0]) {
+		return false
+	}
+	for _, a := range args {
+		if a == "--help" || a == "-h" || a == "--version" || a == "-V" {
+			return false
+		}
+	}
+	return true
+}
+
+// codexHooksOff reports the first codex option in args that turns the hooks off for the session:
+// --disable hooks, --disable codex_hooks, and -c/--config features.hooks=false or
+// features.codex_hooks=false (also a features table that sets either to false). Each form is
+// matched with its value after a space, after =, or attached (-cfeatures.hooks=false). The
+// tentaqles guard runs in those hooks, so a session with one of them has no guard.
+func codexHooksOff(args []string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		var flag, value string
+		switch {
+		case a == "--disable" || a == "--config" || a == "-c":
+			flag = a
+			if i+1 < len(args) {
+				value = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--disable="):
+			flag, value = "--disable", strings.TrimPrefix(a, "--disable=")
+		case strings.HasPrefix(a, "--config="):
+			flag, value = "--config", strings.TrimPrefix(a, "--config=")
+		case strings.HasPrefix(a, "-c") && !strings.HasPrefix(a, "--"):
+			flag, value = "-c", strings.TrimPrefix(strings.TrimPrefix(a, "-c"), "=")
+		default:
+			continue
+		}
+		switch flag {
+		case "--disable":
+			if value == "hooks" || value == "codex_hooks" {
+				return flag + " " + value, true
+			}
+		default:
+			if configTurnsHooksOff(value) {
+				return flag + " " + value, true
+			}
+		}
+	}
+	return "", false
+}
+
+// configTurnsHooksOff reports a -c value (key=value, the value TOML) that sets a hook switch to false.
+func configTurnsHooksOff(v string) bool {
+	v = strings.ReplaceAll(v, " ", "")
+	key, val, ok := strings.Cut(v, "=")
+	if !ok {
+		return false
+	}
+	if key == "features" {
+		return strings.Contains(val, "hooks=false")
+	}
+	if rest, found := strings.CutPrefix(key, "features."); found {
+		return (rest == "hooks" || rest == "codex_hooks") && val == "false"
+	}
+	return false
+}
+
+// codexGuardRefusal is the refusal of a codex session that would start with no tentaqles guard, in
+// the same form as guardRefusal. The fix is the one line the check gives: tentaqles settings render.
+func codexGuardRefusal(ws string, g codexconfig.Guard) error {
+	return fmt.Errorf("codex won't start a session for %s without the tentaqles guard: %s\n  %s",
+		ws, g.Why, fixBlock(g.Fix))
+}
+
 // guardRefusal is the refusal of a session that would start with no tentaqles guard:
 // the reason in one line, then the fix to run, one copyable line each, in order. It is the error of
 // tentaqles run, not of claude.
@@ -77,14 +162,15 @@ func fixBlock(lines []string) string {
 	return "fix, in this order:\n    " + strings.Join(lines, "\n    ")
 }
 
-// agentProg names the agent a program is: "claude" for that name, with or
-// without a directory and a .exe/.cmd/.bat/.ps1 extension, and "" for any other.
+// agentProg names the agent a program is: "claude" or "codex" for that name, with or without a
+// directory and a .exe/.cmd/.bat/.ps1 extension, and "" for any other.
 func agentProg(name string) string {
 	b := strings.ToLower(filepath.Base(strings.ReplaceAll(name, `\`, "/")))
 	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1"} {
 		b = strings.TrimSuffix(b, ext)
 	}
-	if b == "claude" {
+	switch b {
+	case "claude", "codex":
 		return b
 	}
 	return ""
@@ -130,6 +216,19 @@ func (l launch) run() error {
 			}
 		}
 		args = launchClaudeArgs(args, agent)
+	case "codex":
+		// A codex session in an identity's folder starts only with the tentaqles hooks in the Codex
+		// config it runs with (CODEX_HOME, enabled and trusted), and no option that turns the hooks
+		// off for the session. A neutral folder, or a client without codex, is unchanged here.
+		if l.ws != nil && codexIsSession(args) {
+			if opt, off := codexHooksOff(args); off {
+				return fmt.Errorf("codex won't start a session for %s without the tentaqles guard: %s turns the Codex hooks off for this session\n  fix: run it without that option",
+					l.ws.Name, opt)
+			}
+			if g := codexconfig.CheckGuard(envplan.Desired(l.ws)["CODEX_HOME"], l.ws.Name); !g.OK {
+				return codexGuardRefusal(l.ws.Name, g)
+			}
+		}
 	}
 	env := envplan.Environ(l.ws, os.Environ())
 	name := l.name
@@ -201,6 +300,8 @@ func newRunCmd() *cobra.Command {
 		Short: "Run a command with a client's identity without cd-ing into its folder",
 		Long: "Run a command with a client's identity. `.` is the current folder's client (none in a neutral folder).\n" +
 			"For claude, the launcher starts in bypass, and refuses to start a session without the tentaqles plugin.\n" +
+			"For codex, a session refuses to start without the tentaqles hooks in its Codex config (tentaqles settings render),\n" +
+			"and with an option that turns those hooks off (--disable hooks, -c features.hooks=false).\n" +
 			"From inside a Claude Code session, only the client of the current folder runs.",
 		Example: "  tentaqles run acme -- claude\n  tentaqles run . -- claude -p \"...\"",
 		Args:    cobra.MinimumNArgs(1),

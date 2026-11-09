@@ -92,15 +92,16 @@ func newSessionStartCmd() *cobra.Command {
 		Use:   "session-start",
 		Short: "SessionStart hook: print the client identity preamble",
 		RunE: func(c *cobra.Command, _ []string) error {
-			sessionStart(c.InOrStdin(), c.OutOrStdout())
+			sessionStart(c.InOrStdin(), c.OutOrStdout(), "CLAUDE_CONFIG_DIR")
 			return nil
 		},
 	}
 }
 
 // sessionStart writes the preamble for the folder the payload names (the process cwd when it
-// names none). The Claude and the Codex session-start hooks both print it.
-func sessionStart(in io.Reader, out io.Writer) {
+// names none). The Claude and the Codex session-start hooks both print it; configVar is the
+// config variable the preamble shows for the client: CLAUDE_CONFIG_DIR or CODEX_HOME.
+func sessionStart(in io.Reader, out io.Writer, configVar string) {
 	p, _, err := readHookPayload(in)
 	if errors.Is(err, errPayloadTooLarge) {
 		fmt.Fprintf(out, "Tentaqles: tq could not resolve this folder (%s)\n", err)
@@ -118,18 +119,18 @@ func sessionStart(in io.Reader, out io.Writer) {
 	rep := doctor.RunForCwd(cfg, doctorDeps(cwd))
 	expectedDir := ""
 	if rep.Result.Workspace != nil {
-		expectedDir = envplan.Desired(rep.Result.Workspace)["CLAUDE_CONFIG_DIR"]
+		expectedDir = envplan.Desired(rep.Result.Workspace)[configVar]
 	}
-	fmt.Fprint(out, renderSessionStart(rep, expectedDir))
+	fmt.Fprint(out, renderSessionStart(rep, configVar, expectedDir))
 }
 
 func doctorDeps(cwd string) doctor.Deps {
 	return doctor.Deps{Env: os.LookupEnv, Cwd: cwd, RunGit: gitcfg.RunGit, RunGitIn: gitcfg.RunGitIn, LookPath: exec.LookPath}
 }
 
-// renderSessionStart is the preamble: the client, its language, its git and cloud identity, the Claude config
-// home, and what the hook checks.
-func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
+// renderSessionStart is the preamble: the client, its language, its git and cloud identity, the config
+// home configVar (CLAUDE_CONFIG_DIR or CODEX_HOME) at expectedDir, and what the hook checks.
+func renderSessionStart(rep doctor.CwdReport, configVar, expectedDir string) string {
 	ws := rep.Result.Workspace
 	var b strings.Builder
 	if ws == nil {
@@ -139,8 +140,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	}
 	m := ws.Manifest
 	fmt.Fprintf(&b, "Client: %s\n", m.Client)
-	l := m.ClientLanguage()
-	fmt.Fprintf(&b, "Language: %s (%s). Write every report, document, email and message for this client's people (clients and teammates) in %s.\n", l.Name, l.Tag, l.Name)
+	b.WriteString(m.LanguageLine() + "\n")
 	if m.Git.Provider != "" || m.Git.User != "" || m.Git.Email != "" {
 		line := "Git: " + m.Git.Provider
 		if m.Git.User != "" {
@@ -157,7 +157,7 @@ func renderSessionStart(rep doctor.CwdReport, expectedDir string) string {
 	}
 	identity := "Identity: " + ws.Name
 	if expectedDir != "" {
-		identity += " · CLAUDE_CONFIG_DIR=" + expectedDir
+		identity += " · " + configVar + "=" + expectedDir
 	}
 	b.WriteString(identity + "\n")
 	fmt.Fprintf(&b, "Tools: %s. Other providers' CLIs are not on this terminal's PATH.\n", strings.Join(m.Scope(), ", "))

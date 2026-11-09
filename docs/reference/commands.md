@@ -544,6 +544,18 @@ For `claude`:
   folder) switches the plugin or all hooks off. The refusal prints the lines that fix it. See
   [Claude hook](claude-hook.md).
 
+For `codex`:
+
+- a session starts only with the tentaqles hooks in the client's Codex config (`CODEX_HOME`) enabled and trusted.
+  `run` refuses when they are missing, not trusted, or turned off (`enabled = false` under the hooks, or
+  `hooks = false` or `codex_hooks = false` under `[features]`), and prints `tentaqles settings render <client>` as the
+  fix;
+- a session also refuses an option that turns the hooks off for that run: `--disable hooks`, `--disable codex_hooks`,
+  `-c features.hooks=false` or `-c features.codex_hooks=false`, in any of their spellings;
+- a session is any codex command except the subcommands that run no agent (`login`, `logout`, `completion`, `doctor`,
+  `features`, `plugin`, `mcp`, `update`, `help`, and the like) and `--help` or `--version`. A subcommand tentaqles does
+  not know is a session, so it needs the hooks.
+
 From inside a Claude Code session, `run` runs only the client of the current folder: another client's name, or a
 neutral folder, is refused, and a nested `claude` gets no bypass flag.
 
@@ -624,6 +636,11 @@ For each client it writes:
 
   Only what tentaqles wrote earlier is ever removed; anything added by hand stays. tentaqles records what it wrote in
   `.tq-settings-state.json` beside the settings;
+- **its Codex `config.toml`**, when codex is in the client's scope: the PreToolUse and SessionStart hooks that run
+  `tentaqles codex-hook` (the command is the absolute path of tentaqles, quoted), trusted and enabled, and the
+  client's language line as `developer_instructions`. Every other key and state entry stays. Nothing is written for a
+  client without codex, and nothing is removed. `--dry-run` says it did not check the Codex config. The hooks are
+  trusted here because opting the client into codex is the consent;
 - **its PATH mask**, `~/.tentaqles/identities/<client>/path-mask/`: one stub per CLI of a provider outside the client's
   scope, for the PATH folders that hold it beside other tools. A stub prints
   `<name>: command not found (outside the scope of identity <client>)` and exits 127;

@@ -58,6 +58,7 @@ type Trust int
 
 const (
 	Missing   Trust = iota // our hooks are not in the file
+	Disabled               // our hooks are off: enabled = false, or hooks/codex_hooks = false under [features]
 	Untrusted              // no trusted_hash for our hooks
 	Modified               // trusted_hash differs from the current hash
 	Trusted                // trusted_hash matches the current hash
@@ -68,6 +69,8 @@ func (t Trust) String() string {
 	switch t {
 	case Missing:
 		return "missing"
+	case Disabled:
+		return "disabled"
 	case Untrusted:
 		return "untrusted"
 	case Modified:
@@ -145,12 +148,90 @@ func Render(codexHome string, m Managed) (changed bool, err error) {
 	if err := writeOwned(codexHome, next); err != nil {
 		return changed, err
 	}
-	return changed, nil
+	// Trust comes last: the key of each hook is the config path and the group index, and the
+	// file must exist (and hold the groups just rendered) before Codex's key can be computed.
+	trusted, err := trustHooks(codexHome)
+	if err != nil {
+		return changed, err
+	}
+	return changed || trusted, nil
+}
+
+// TrustHooks records that Codex trusts tentaqles' hook handlers in codexHome/config.toml: each
+// owned handler gets [hooks.state."<key>"] with trusted_hash set to its current hash and
+// enabled = true. No other state entry and no other key is touched, and a file without owned
+// handlers is left as it is. Render calls it, so rendering the hooks trusts them.
+func TrustHooks(codexHome string) error {
+	_, err := trustHooks(codexHome)
+	return err
+}
+
+// trustHooks is TrustHooks, reporting whether it changed the file.
+func trustHooks(codexHome string) (bool, error) {
+	path := filepath.Join(codexHome, configFile)
+	old, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	root, err := parseConfig(old)
+	if err != nil {
+		return false, fmt.Errorf("codexconfig: %s: %w", path, err)
+	}
+	keyPath, err := configKeyPath(path)
+	if err != nil {
+		return false, err
+	}
+	var stateErr error
+	owned := 0
+	err = ownedHandlers(root, keyPath, func(ev hookEvent, key string, g, h map[string]any) {
+		owned++
+		if stateErr != nil {
+			return
+		}
+		state, err := stateTable(root)
+		if err != nil {
+			stateErr = err
+			return
+		}
+		entry, _ := state[key].(map[string]any)
+		if entry == nil {
+			entry = map[string]any{}
+			state[key] = entry
+		}
+		entry["trusted_hash"] = hookHash(ev.label, g, h)
+		entry["enabled"] = true
+	})
+	if err == nil {
+		err = stateErr
+	}
+	if err != nil {
+		return false, fmt.Errorf("codexconfig: %s: %w", path, err)
+	}
+	if owned == 0 {
+		// Nothing of ours to trust: the file stays byte for byte as the user wrote it.
+		return false, nil
+	}
+	out, err := toml.Marshal(root)
+	if err != nil {
+		return false, fmt.Errorf("codexconfig: encode %s: %w", path, err)
+	}
+	if bytes.Equal(old, out) {
+		return false, nil
+	}
+	if err := writeAtomic(path, out); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // HookTrust reports the state of the tentaqles hooks in codexHome/config.toml. Both the
-// PreToolUse and the SessionStart hook must be trusted for Trusted; when they differ,
-// the worst wins, in the order Missing, Untrusted, Modified, Trusted.
+// PreToolUse and the SessionStart hook must be trusted for Trusted; when they differ, the
+// worst wins, in the order Missing, Disabled, Untrusted, Modified, Trusted. A hook is Disabled
+// when its state entry has enabled = false, or when [features] sets hooks or codex_hooks to
+// false, which turns off every hook in the file.
 func HookTrust(codexHome string) (Trust, error) {
 	path := filepath.Join(codexHome, configFile)
 	data, err := os.ReadFile(path)
@@ -168,40 +249,105 @@ func HookTrust(codexHome string) (Trust, error) {
 	if err != nil {
 		return Missing, err
 	}
-	hooks, err := hooksTable(root)
+	state := hookState(root)
+	off := featuresOff(root)
+
+	worst := Trusted
+	found := map[string]bool{}
+	err = ownedHandlers(root, keyPath, func(ev hookEvent, key string, g, h map[string]any) {
+		found[ev.label] = true
+		t := trustOf(state, key, hookHash(ev.label, g, h))
+		if off || entryDisabled(state, key) {
+			t = Disabled
+		}
+		if t < worst {
+			worst = t
+		}
+	})
 	if err != nil {
 		return Missing, fmt.Errorf("codexconfig: %s: %w", path, err)
 	}
-	state, _ := hooks["state"].(map[string]any)
-
-	worst := Trusted
 	for _, ev := range hookEvents {
-		groups, err := groupsOf(hooks[ev.table])
-		if err != nil {
-			return Missing, fmt.Errorf("codexconfig: %s: hooks.%s: %w", path, ev.table, err)
-		}
-		found := false
-		for gi, g := range groups {
-			handlers, err := handlersOf(g)
-			if err != nil {
-				return Missing, fmt.Errorf("codexconfig: %s: hooks.%s: %w", path, ev.table, err)
-			}
-			for hi, h := range handlers {
-				if !isOwnedHandler(h) {
-					continue
-				}
-				found = true
-				t := trustOf(state, hookKey(keyPath, ev.label, gi, hi), hookHash(ev.label, g, h))
-				if t < worst {
-					worst = t
-				}
-			}
-		}
-		if !found {
-			worst = Missing
+		if !found[ev.label] {
+			return Missing, nil
 		}
 	}
 	return worst, nil
+}
+
+// ownedHandlers calls visit for every handler tentaqles owns, with its event, its Codex hook key
+// (keyPath, label, group index, handler index), and its group and handler tables.
+func ownedHandlers(root map[string]any, keyPath string, visit func(ev hookEvent, key string, g, h map[string]any)) error {
+	raw, ok := root["hooks"]
+	if !ok {
+		return nil
+	}
+	hooks, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New(`"hooks" is not a table`)
+	}
+	for _, ev := range hookEvents {
+		groups, err := groupsOf(hooks[ev.table])
+		if err != nil {
+			return fmt.Errorf("hooks.%s: %w", ev.table, err)
+		}
+		for gi, g := range groups {
+			handlers, err := handlersOf(g)
+			if err != nil {
+				return fmt.Errorf("hooks.%s: %w", ev.table, err)
+			}
+			for hi, h := range handlers {
+				if isOwnedHandler(h) {
+					visit(ev, hookKey(keyPath, ev.label, gi, hi), g, h)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// stateTable returns root.hooks.state, creating it when absent.
+func stateTable(root map[string]any) (map[string]any, error) {
+	hooks, err := hooksTable(root)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := hooks["state"]
+	if !ok {
+		t := map[string]any{}
+		hooks["state"] = t
+		return t, nil
+	}
+	t, ok := v.(map[string]any)
+	if !ok {
+		return nil, errors.New(`"hooks.state" is not a table`)
+	}
+	return t, nil
+}
+
+// hookState returns root.hooks.state, or nil when there is none.
+func hookState(root map[string]any) map[string]any {
+	hooks, _ := root["hooks"].(map[string]any)
+	state, _ := hooks["state"].(map[string]any)
+	return state
+}
+
+// entryDisabled reports whether the state entry for key says enabled = false.
+func entryDisabled(state map[string]any, key string) bool {
+	entry, _ := state[key].(map[string]any)
+	on, isBool := entry["enabled"].(bool)
+	return isBool && !on
+}
+
+// featuresOff reports whether [features] turns the hooks off: hooks = false or codex_hooks = false.
+func featuresOff(root map[string]any) bool {
+	features, _ := root["features"].(map[string]any)
+	for _, k := range []string{"hooks", "codex_hooks"} {
+		if on, isBool := features[k].(bool); isBool && !on {
+			return true
+		}
+	}
+	return false
 }
 
 // renderHooks replaces tentaqles' handlers in hooks.PreToolUse and hooks.SessionStart
@@ -295,11 +441,23 @@ func isOwnedHandler(h map[string]any) bool {
 }
 
 // ownedCommand reports whether cmd is "<program> codex-hook <pre-tool-use|session-start>"
-// with a non-empty program.
+// with a non-empty program. The program may be quoted, as Render writes it when its path has
+// spaces ("C:\Program Files\tentaqles\tentaqles.exe" codex-hook pre-tool-use); the quotes are not
+// part of the program.
 func ownedCommand(cmd string) bool {
 	for _, ev := range hookEvents {
 		suffix := " codex-hook " + ev.sub
-		if strings.HasSuffix(cmd, suffix) && strings.TrimSpace(strings.TrimSuffix(cmd, suffix)) != "" {
+		if !strings.HasSuffix(cmd, suffix) {
+			continue
+		}
+		prog := strings.TrimSpace(strings.TrimSuffix(cmd, suffix))
+		if strings.HasPrefix(prog, `"`) {
+			if len(prog) > 2 && strings.HasSuffix(prog, `"`) {
+				return true
+			}
+			continue
+		}
+		if prog != "" {
 			return true
 		}
 	}

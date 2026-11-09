@@ -11,6 +11,11 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 - **`tentaqles codex-hook`** is the OpenAI Codex CLI counterpart of `claude-hook`: `pre-tool-use` runs the same identity
   check and answers Codex's deny object (stdout, exit 0), and every error path denies the same way; `session-start`
   prints the same preamble. The two share one decision path; `claude-hook` is unchanged.
+- A codex session in a client folder starts only with the tentaqles hooks enabled and trusted in the client's Codex
+  config, and refuses `--disable hooks` and `-c features.hooks=false`. `tentaqles settings render` writes and trusts those
+  hooks (and the client's language) when codex is in the client's scope; `tentaqles doctor` reports a client whose
+  hooks are missing, off, untrusted or unreadable, and `codex` in a client folder runs through `tentaqles run` in every
+  shell.
 
 ## [0.13.2] - 2026-11-08
 
