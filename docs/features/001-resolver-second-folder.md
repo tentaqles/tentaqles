@@ -1,6 +1,6 @@
 # 001: Resolver refuses a second folder with a client's name
 
-**Status** built and evaluated on Windows on 2026-11-09; not committed; CI on Linux and macOS not run · **Stage** Ground · **Entries** D-12, M-03 (attack L-09) · **Needs** none ·
+**Status** built, evaluated and green in CI on Linux, macOS and Windows (2026-11-09); on the branch, not in main · **Stage** Ground · **Entries** D-12, M-03 (attack L-09) · **Needs** none ·
 **Feeds** 002, 013
 
 ## Result
@@ -365,7 +365,8 @@ the copy got acme's identity. The brief now says to call the built program by it
 
 Left open:
 
-- Not run on Linux or macOS. CI does that once the branch is pushed.
+- Linux and macOS: green in CI on 2026-11-09 (run 42656746289, commit `59e8258c`), with the plugin suite,
+  the marketplace pin check and `govulncheck`.
 - Person check, `tentaqles bind` on a throwaway client: done by the owner on 2026-11-09 with the development
   build (`tqx` 0.15.0-lobe.1) in a throwaway home. In the copy, `bind` showed both folders and waited for
   `yes`; afterwards `list` showed acme at the new folder and the old folder was refused with its reason.
