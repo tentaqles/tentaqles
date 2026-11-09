@@ -52,6 +52,9 @@ func loadYAMLProvider(name string, data []byte, source string) (Provider, error)
 // parseProvider decodes and validates one provider file named for id; its errors do not
 // repeat the file name (the caller adds it).
 func parseProvider(data []byte, id, source string) (Provider, error) {
+	if id == "lobe" {
+		return Provider{}, errors.New(`the provider id "lobe" is reserved: tentaqles keeps a client's memory in identities/<client>/lobe`)
+	}
 	if err := checkKnownKeys(data); err != nil {
 		return Provider{}, err
 	}

@@ -18,7 +18,8 @@ section for every command; `test/integration` fails when one is missing.
 - `internal/cmd/`: every command (`root.go` registers them): `reach`, `add`, `remove`, `drop`, `bind`, `env`, `activate`, `hooks`, `run`, `login`,
   `open`, `settings render`, `statusline`, `doctor`, `list`, `providers`, `version`, `claude-hook`.
   `claudehook.go` is the hook (`session-start`, `pre-tool-use`); `codexhook.go` is the Codex CLI hook (`codex-hook`);
-  `edit.go` is `add`/`remove`, `drop.go` is `drop`;
+  `edit.go` is `add`/`remove`, `drop.go` is `drop`; `lobe.go` is the `lobe` group and `lobe_sandbox.go` its first
+  command, `lobe sandbox` (a throwaway home with two test clients);
   `render.go` writes the PATH mask and the browser shims.
 - `internal/reach/`: the form's options and answers, `Change` (what `add`/`remove` mean), and `Edit`, which
   changes only the keys the form owns.
@@ -38,6 +39,8 @@ section for every command; `test/integration` fails when one is missing.
 - `plugin/`: the Claude Code plugin: `hooks/hooks.json` and `scripts/tq_hook.sh`, which runs `tentaqles claude-hook`.
 - `test/integration/`: git identity end to end, the marketplace pins, the release config, the docs.
 - `installers/`, `.goreleaser.yaml`, `.github/workflows/`: release and CI. Steps in `docs/RELEASING.md`.
+- `dev/tqx.ps1`: builds this checkout as `tqx` beside the released program, never over it, and opens a
+  playground on a throwaway home (`-Playground`).
 
 ## Must not trade off
 

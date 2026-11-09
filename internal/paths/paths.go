@@ -37,3 +37,7 @@ func ShimsDir(ws string) string { return filepath.Join(ShimsRoot(), ws) }
 // ManifestPath is the manifest of workspace ws, ~/.tentaqles/identities/<ws>/manifest.yaml. The
 // client's folder keeps only a name-only marker at <root>/.tentaqles.yaml.
 func ManifestPath(ws string) string { return filepath.Join(IdentitiesRoot(), ws, "manifest.yaml") }
+
+// LobeDir is the folder of client ws's memory, $TQ_HOME/identities/<ws>/lobe. It is the path
+// IdentityDir(ws, "lobe") would give, which is why no provider may have the id "lobe".
+func LobeDir(ws string) string { return filepath.Join(IdentitiesRoot(), ws, "lobe") }

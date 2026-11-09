@@ -1,6 +1,6 @@
 # 002: Sandbox with two test clients
 
-**Status** not started · **Stage** Ground · **Entries** F-07 (the sandbox and the standard tester setup),
+**Status** built and evaluated on Windows on 2026-11-09; CI on Linux and macOS not run yet · **Stage** Ground · **Entries** F-07 (the sandbox and the standard tester setup),
 F-01 (paths), decision A-20 · **Needs** 001 · **Feeds** 003 and every later tester brief; 012, 013, 021
 
 ## Result
@@ -168,8 +168,9 @@ tentaqles lobe sandbox "$W"            # prints a line that starts with SETUP FA
 
 ## Evaluation
 
-A tester agent runs this in an empty working folder, with the built `tentaqles` first on `PATH` and `git` on
-`PATH`. Bash (Git Bash on Windows). No network. The tester is an agent and stays one: it never clears
+A tester agent runs this in an empty working folder, with `git` on `PATH`. Call the built program by its
+full path and read every `tentaqles` below as that path: in an activated shell `tentaqles` is a shell
+function that runs the installed program, whatever `PATH` says (found in feature 001). Bash (Git Bash on Windows). No network. The tester is an agent and stays one: it never clears
 `CLAUDECODE`. First, the standard tester setup, exactly as every later brief uses it:
 
 ```bash
@@ -255,3 +256,28 @@ PASS needs 12 of 12. "Could not run" is a FAIL.
   line could break (option B writes into the manifest too); a later feature needing a third client or a
   single-client builder (013's attack L-14 asks for a new `acme` after a drop, which this builder refuses by
   design; 013 raises it with the owner).
+
+## Result of the build and the tester run
+
+Built on 2026-11-09 by one Haiku builder from a written brief; evaluated by the main session.
+
+- Brief check (task 1): the brief fits the code. Feature 001 makes `workspace.Add` record the client's folder,
+  so both sandbox clients are bound. A manifest with an unknown top-level key loads. The Codex agent's id is
+  `codex`.
+- Tests: `TestLobeDirIsUnderTheIdentity`, `TestProviderIDLobeIsReserved`, `TestLobeSandbox_BuildsTheStandardPair`,
+  `TestLobeSandbox_RefusesARealHome` (5 cases), `TestLobeSandbox_LobeIsTheLastKey`,
+  `TestLobeSandbox_WorksInsideAnAgent`, `TestLobeCommandTable`, all green on Windows with `go vet` and
+  `go build` clean. No existing test was edited; `documentedGroups` in the docs test gained `lobe`.
+- Tester brief: 12 of 12 on Windows 11 in Git Bash, against a program built from the working tree, with
+  `CLAUDECODE=1` left set. Check 8 is refused on `TQ_HOME`, the first variable read, not on `HOME`.
+- `dev/tqx.ps1` builds this checkout as `tqx` beside the released program and opens a playground that uses
+  this feature's sandbox. It is tooling for the owner's side-by-side testing, outside the feature's scope.
+
+One thing seen once and not explained: in 1 of 10 runs of the `internal/cmd` tests, the package stopped with
+`panic: (cmd.hookExitSentinel)` about 13 seconds in. That value belongs to the guard-hook test harness
+(`internal/cmd/claudehook_test.go`), and the point in the run is inside the hook tests, before any test of
+this feature starts. Nine later runs passed, four of them at once under load. No stack trace was kept. It
+reads as an old timing weakness in that harness, not as a fault of this feature, but that is not proven.
+Future full runs keep their whole output so a second occurrence leaves a trace.
+
+Left open: Linux and macOS (CI, after a push); the owner's person check.

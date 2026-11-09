@@ -5,6 +5,11 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **`tentaqles lobe sandbox <folder>`** builds a throwaway tentaqles home with two test clients, `acme` and
+  `globex`, for test agents, benchmarks and CI. It refuses, before it writes anything, unless `TQ_HOME`, `HOME`
+  and `USERPROFILE` all point inside the folder, so it cannot touch a real home. It is the first command of the
+  new `tentaqles lobe` group. A provider can no longer have the id `lobe`: that name is kept for a client's
+  memory folder.
 - A copy of a client's folder under another clients folder no longer gets that client's identity. tentaqles now
   records the folder each client was created in (`clients:` in `~/.tentaqles/config.yaml`), and only that folder
   is the client. A copy with the client's name and marker gets no identity, the hook denies shell commands

@@ -38,6 +38,8 @@ client's manifest lives at `~/.tentaqles/identities/<client>/manifest.yaml` (`$T
 | [`tentaqles providers check`](#tentaqles-providers-check) | Check which provider CLIs are installed |
 | [`tentaqles providers add`](#tentaqles-providers-add) | Add or override a provider with a file of your own |
 | [`tentaqles version`](#tentaqles-version) | Print the version and commit |
+| **Test setup** | |
+| [`tentaqles lobe sandbox`](#tentaqles-lobe-sandbox) | Build a throwaway home with two test clients, acme and globex |
 | **Used by the Claude Code plugin** | |
 | [`tentaqles claude-hook pre-tool-use`](#tentaqles-claude-hook-pre-tool-use) | Decide whether a shell command may run |
 | [`tentaqles claude-hook session-start`](#tentaqles-claude-hook-session-start) | Print the client's preamble at the start of a session |
@@ -919,6 +921,50 @@ tentaqles version
 ### Description
 
 A binary built with `go install` or `go build` prints `dev (commit unknown (dev build))`.
+
+---
+
+## tentaqles lobe sandbox
+
+Build a throwaway tentaqles home with two test clients, `acme` and `globex`.
+
+### Synopsis
+
+```
+tentaqles lobe sandbox <folder>
+```
+
+### Description
+
+`lobe sandbox` builds a fresh home under `<folder>`, with two clients. Test agents, benchmarks and CI use it to get
+clients without a person answering the `tentaqles reach` form. A developer's own setup does not need it.
+
+It writes:
+
+- the clients `acme` and `globex`, under `<folder>/clients`;
+- the Codex agent for `acme`. `globex` has none;
+- a `lobe:` mapping at the end of each manifest, holding `model: off`.
+
+It installs no plugin and writes no shell profile. It also runs inside a Claude Code session.
+
+Before it writes anything, the command refuses unless:
+
+- `TQ_HOME`, `HOME` and `USERPROFILE` all point inside `<folder>`;
+- `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` are unset. Git's global config goes under `HOME`;
+- the home (`TQ_HOME`) and `<folder>/clients` are each empty or absent.
+
+So the command never touches a real home. A refusal creates nothing.
+
+It prints `ok acme globex` when it succeeds. On a refusal or a failure it prints one line that starts with
+`SETUP FAIL`, and it exits with status 1.
+
+### Examples
+
+```
+export TQ_HOME="$PWD/sandbox/home/.tentaqles" HOME="$PWD/sandbox/home" USERPROFILE="$PWD/sandbox/home"
+unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
+tentaqles lobe sandbox "$PWD/sandbox"
+```
 
 ---
 
