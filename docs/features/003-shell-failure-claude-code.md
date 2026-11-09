@@ -1,6 +1,6 @@
 # 003: A failed shell command in Claude Code is logged
 
-**Status** built and evaluated on Windows on 2026-11-09 (tests, plugin suite, tester brief 13 of 13, the owner's real-session checks); CI pending · **Stage** Sense · **Entries** F-01 (folder, lock, append, repository key), F-02 (engine,
+**Status** built, evaluated (tests, plugin suite, tester brief 13 of 13, the owner's real-session checks) and green in CI on Linux, macOS and Windows (2026-11-09); on the branch, not in main · **Stage** Sense · **Entries** F-01 (folder, lock, append, repository key), F-02 (engine,
 client rule, deadline, watchdog, error file), F-03 (one Claude Code entry, the wrapper), S-01 (shell tools),
 S-05 (all), S-06 (the event id only), S-07 (day file, append), F-07 (notices); D-11, D-13 · **Needs** 002 ·
 **Feeds** 004, 005, 006, 007, 008, 010, 011, 012, 013
@@ -554,5 +554,8 @@ the payload names were spelled two ways, and `sense.Locate` found no repository.
 the way the resolver does (`registry.Normalize`). A Windows junction is not resolved by either, consistently;
 `TestLobeSenseLocateThroughALink` covers the link on Unix and the short name on Windows.
 
-Left open: CI on Linux and macOS; the owner's capture session (Person check 1), which confirms the fields of the
+CI: green on Linux, macOS and Windows on 2026-11-09 (run 42694441107, commit `597a8477`), with the plugin suite, the
+marketplace pin check and `govulncheck`, after the fix above.
+
+Left open: the owner's capture session (Person check 1), which confirms the fields of the
 other events for the features that need them.
