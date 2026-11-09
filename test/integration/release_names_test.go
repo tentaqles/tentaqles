@@ -87,5 +87,9 @@ func TestGoreleaserBuildsOneProgramUnderTwoNames(t *testing.T) {
 		if !strings.Contains(s, "tentaqles") || !strings.Contains(s, "tq") || strings.Contains(s, "tq init") {
 			t.Errorf("%s does not install both names or still points at tq init", inst)
 		}
+		// A running tq locks its exe: unzipping over the install folder can stop halfway and leave no working tq.
+		if inst == "install.ps1" && strings.Contains(s, "-DestinationPath $binDir") {
+			t.Error("install.ps1 unpacks over the installed binaries; unpack to a staging folder and swap")
+		}
 	}
 }

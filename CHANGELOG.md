@@ -5,6 +5,12 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-09
+
+- The Windows installer no longer breaks when a tentaqles process is running, such as the launcher of an open Claude
+  session. It unpacks to a staging folder, moves each existing file aside, and puts them all back if a step fails, so
+  an upgrade can't leave you without a working `tq`. A copy still in use is removed by the next install.
+
 ## [0.14.0] - 2026-11-09
 
 - A child shell started from an activated client folder (an agent's `powershell -Command`, a `bash -lc`) no longer
