@@ -196,13 +196,109 @@ def test_hooks_json_pretooluse_matcher_covers_the_shell_tools_only():
         assert not rx.search(tool), tool
 
 
+# The owner approved this change on 2026-11-09 (decision D-11 of the Vertical Lobe requirements): the
+# memory's hook entries ship in this plugin next to the guard's. The guard's two entries stay exactly as
+# they are; every other entry is a memory hook, which runs scripts/lobe_hook.sh and fails open.
+LOBE_CMD = re.compile(r'^bash "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/lobe_hook\.sh" [a-z-]+$')
+
+
 def test_the_plugin_holds_only_the_guard_hook():
     assert not (ROOT / "skills").exists()
     hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
-    assert sorted(hooks) == ["PreToolUse", "SessionStart"]
-    for group in hooks.values():
-        for g in group:
+    assert sorted(hooks) == ["PostToolUseFailure", "PreToolUse", "SessionStart"]
+
+    session = hooks["SessionStart"]
+    assert len(session) == 1 and "matcher" not in session[0]
+    assert len(session[0]["hooks"]) == 1
+    h = session[0]["hooks"][0]
+    assert "tq_hook.sh" in h["command"] and h["timeout"] == 15
+    assert h["command"] == 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh" session-start'
+
+    pre = hooks["PreToolUse"]
+    assert len(pre) == 1 and pre[0]["matcher"] == "^(Bash|PowerShell)$"
+    assert len(pre[0]["hooks"]) == 1
+    h = pre[0]["hooks"][0]
+    assert "tq_hook.sh" in h["command"] and h["timeout"] == 15
+    assert h["command"] == 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh" pre-tool-use'
+
+    others = {k: v for k, v in hooks.items() if k not in ("SessionStart", "PreToolUse")}
+    assert set(others) == {"PostToolUseFailure"}
+    for event, groups in others.items():
+        word = re.sub(r"(?<!^)(?=[A-Z])", "-", event).lower()
+        for g in groups:
             for h in g["hooks"]:
-                assert "tq_hook.sh" in h["command"]
-                assert h["timeout"]
+                assert LOBE_CMD.match(h["command"]), h["command"]
+                assert h["timeout"] == 5, h
+                assert h["command"].split()[-1] == word, (event, h["command"])
+
     assert not list(ROOT.rglob("*.py")) or all("tests" in p.parts for p in ROOT.rglob("*.py"))
+
+
+LOBE = ROOT / "scripts" / "lobe_hook.sh"
+
+
+def run_lobe(event, env, payload='{"tool_name":"Bash"}', timeout=30, cwd=None):
+    return subprocess.run(
+        [BASH, str(LOBE), event],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=timeout,
+        cwd=cwd,
+    )
+
+
+@needs_bash
+@pytest.mark.parametrize("status", [1, 2, 3, 134, 137])
+def test_lobe_hook_always_exits_zero(tmp_path, status):
+    fake_tq(tmp_path, "cat >/dev/null; echo boom >&2; echo out; exit %d" % status)
+    p = run_lobe("post-tool-use-failure", env_with(tmp_path))
+    assert p.returncode == 0, (status, p.returncode)
+    assert p.stdout == "out\n", p.stdout
+    assert p.stderr == "", p.stderr
+
+
+@needs_bash
+def test_lobe_hook_missing_binary(tmp_path):
+    p = run_lobe("post-tool-use-failure", env_with(tmp_path))
+    assert p.returncode == 0
+    assert p.stdout == ""
+    assert p.stderr == ""
+
+
+@needs_bash
+def test_lobe_hook_unknown_event(tmp_path):
+    fake_tq(tmp_path, "touch ran.marker; echo ran")
+    p = run_lobe("bogus", env_with(tmp_path), cwd=str(tmp_path))
+    assert p.returncode == 0
+    assert p.stdout == ""
+    assert not (tmp_path / "ran.marker").exists(), "the fake tq ran for an unknown event"
+
+
+@needs_bash
+def test_lobe_hook_no_hooks_switch(tmp_path):
+    fake_tq(tmp_path, "touch ran.marker; echo ran")
+    p = run_lobe("post-tool-use-failure", env_with(tmp_path, TQ_LOBE_NO_HOOKS="1"), cwd=str(tmp_path))
+    assert p.returncode == 0
+    assert p.stdout == ""
+    assert not (tmp_path / "ran.marker").exists(), "the fake tq ran with TQ_LOBE_NO_HOOKS=1"
+
+
+@needs_bash
+def test_lobe_hook_passes_stdin_and_stdout(tmp_path):
+    payload = '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+    fake_tq(tmp_path, 'cat > captured.json; echo \'{"hookSpecificOutput":{"x":1}}\'')
+    p = run_lobe("post-tool-use-failure", env_with(tmp_path), payload=payload, cwd=str(tmp_path))
+    assert p.returncode == 0
+    assert (tmp_path / "captured.json").read_bytes() == payload.encode("utf-8")
+    assert p.stdout == '{"hookSpecificOutput":{"x":1}}\n', p.stdout
+
+
+@needs_bash
+def test_lobe_hook_prints_nothing_on_stderr_failure(tmp_path):
+    fake_tq(tmp_path, "echo fail >&2; exit 2")
+    p = run_lobe("post-tool-use-failure", env_with(tmp_path))
+    assert p.returncode == 0
+    assert p.stdout == ""
+    assert p.stderr == ""

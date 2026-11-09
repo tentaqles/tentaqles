@@ -26,6 +26,12 @@ builds:
 archives:
   - ids: [tq, tentaqles]
     format_overrides: [{ goos: windows, formats: [zip] }]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - CHANGELOG.md
+      - third_party/licenses/**/*
 checksum: { name_template: checksums.txt }
 release:
   github: { owner: tentaqles, name: tentaqles }

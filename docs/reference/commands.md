@@ -915,12 +915,21 @@ Print the version and the commit the binary was built from.
 ### Synopsis
 
 ```
-tentaqles version
+tentaqles version [--notices]
 ```
 
 ### Description
 
 A binary built with `go install` or `go build` prints `dev (commit unknown (dev build))`.
+
+With `--notices`, the command prints the notices built into the binary instead. It prints the NOTICE file, the
+tentaqles license, and the license text of each project tentaqles draws on. The version line is not printed.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--notices` | off | Print the NOTICE file, the tentaqles license, and the license texts of the projects tentaqles draws on. |
 
 ---
 
@@ -965,6 +974,70 @@ export TQ_HOME="$PWD/sandbox/home/.tentaqles" HOME="$PWD/sandbox/home" USERPROFI
 unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
 tentaqles lobe sandbox "$PWD/sandbox"
 ```
+
+---
+
+## tentaqles lobe selftest
+
+Prove the memory's store works on this machine, with the installed program. A tester runs it in a client's folder.
+
+### Synopsis
+
+```
+tentaqles lobe selftest
+```
+
+### Description
+
+Run inside a client's folder, `lobe selftest` runs three checks of the store, the same ones the store's tests make, from
+the installed program:
+
+- twenty writer processes each append 500 lines to one file under the store lock. The command then reads the file and
+  counts its lines, the lines that do not parse as JSON (`torn`), and the writer and line pairs that are missing
+  (`lost`);
+- one file is replaced 1000 times while a reader reads it in a loop. A read whose bytes are not a complete JSON object
+  counts as `partial`;
+- the store gives the key of the client's `app` folder (`repo-key`).
+
+All of it runs in a scratch folder under the client's memory folder, `tmp/<random>` inside the store, and the scratch
+folder is removed at the end. The `tmp` folder itself may stay, empty.
+
+It prints three lines:
+
+```
+writers=20 lines=10000 torn=0 lost=0
+replaces=1000 partial=0
+repo-key app=r_a172cedc
+```
+
+It exits 0 only when `lines` is 10000, `torn`, `lost` and `partial` are 0, and the key is `r_a172cedc`. Otherwise it
+prints the lines and exits 1. Outside every client's folder it prints `tentaqles lobe selftest: run it inside a client's
+folder` and exits 1.
+
+The command's writer children run the same program with hidden flags. A person never runs those.
+
+---
+
+## tentaqles lobe-hook claude
+
+The entry point of the memory's hooks. The Claude Code plugin starts it; you don't.
+
+### Synopsis
+
+```
+tentaqles lobe-hook claude <event>
+```
+
+### Description
+
+The plugin starts `tentaqles lobe-hook claude <event>` with the hook's JSON on stdin. The command records what the memory
+needs about the call and prints nothing or a little context. On any problem it prints nothing and exits 0, so it never
+blocks a tool call.
+
+The seven events are `session-start`, `user-prompt-submit`, `pre-tool-use`, `post-tool-use`, `post-tool-use-failure`,
+`stop` and `session-end`.
+
+Setting `TQ_LOBE_NO_HOOKS=1` switches the hooks off. A person never needs to run this command.
 
 ---
 

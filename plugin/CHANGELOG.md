@@ -4,6 +4,10 @@ Notable changes to the Tentaqles plugin. Versions follow [semver](https://semver
 
 ## [Unreleased]
 
+- A new hook entry on `PostToolUseFailure` runs `scripts/lobe_hook.sh post-tool-use-failure`, which starts
+  `tentaqles lobe-hook claude post-tool-use-failure` to record the failed call in that client's memory. It fails
+  open (exit 0, no output, whatever goes wrong) and does nothing when `TQ_LOBE_NO_HOOKS=1`. The guard's two
+  entries are unchanged.
 - The README describes the session-start preamble in full; a comment in `scripts/tq_hook.sh` no longer names a
   removed plan step. No behaviour change.
 

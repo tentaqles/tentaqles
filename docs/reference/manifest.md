@@ -187,6 +187,8 @@ no identity, and the hook denies shell commands there.
 │       │   ├── settings.json
 │       │   └── .tq-settings-state.json   what tentaqles wrote in settings.json last
 │       ├── <cli>/                one config home per identity (gh, az, aws, gcloud, …)
+│       ├── lobe/                 the client's memory: store.json, lock, events/ (one file per UTC day),
+│       │                         stats/hook-errors.jsonl; created by the first memory hook
 │       └── path-mask/            stubs for out-of-scope CLIs in shared PATH folders
 ├── shims/
 │   └── <client>/                 tq-open, xdg-open, open: open URLs in the client's browser profile
@@ -220,6 +222,7 @@ it (`.tq-backup`).
 | `TQ_HOME` | Moves `~/.tentaqles`. |
 | `TQ_ENABLED` | `0` turns the shell hook off in that shell. |
 | `TQ_NO_BANNER` | `1` hides reach's banner (as `--no-banner`). |
+| `TQ_LOBE_NO_HOOKS` | `1` switches the memory's hooks off: `tentaqles lobe-hook` does nothing and writes nothing. The identity guard is not affected. |
 | `NO_COLOR` | Prints the banner and `settings render` output without color. |
 | `CLAUDECODE` | Set by Claude Code for the commands it runs. With it, `reach`, `add`, `remove` and `drop` refuse to run, and `tentaqles run` runs only the current folder's client. It is a convenience check: a session can unset it. |
 | `TQ_BIN_DIR` | Where `install.sh` and `install.ps1` put the binaries (default `~/.local/bin`, and `%LOCALAPPDATA%\tentaqles\bin` on Windows). |

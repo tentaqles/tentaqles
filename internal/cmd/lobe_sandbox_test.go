@@ -259,7 +259,7 @@ func TestLobeCommandTable(t *testing.T) {
 	}
 	sort.Strings(names)
 	// Each later lobe feature adds its own row here.
-	if want := []string{"sandbox"}; !slices.Equal(names, want) {
+	if want := []string{"sandbox", "selftest"}; !slices.Equal(names, want) {
 		t.Fatalf("lobe subcommands = %v, want %v", names, want)
 	}
 }

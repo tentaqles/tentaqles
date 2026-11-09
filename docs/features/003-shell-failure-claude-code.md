@@ -1,6 +1,6 @@
 # 003: A failed shell command in Claude Code is logged
 
-**Status** not started · **Stage** Sense · **Entries** F-01 (folder, lock, append, repository key), F-02 (engine,
+**Status** built and evaluated on Windows on 2026-11-09 (tests, plugin suite, tester brief 13 of 13); CI and the owner's checks pending · **Stage** Sense · **Entries** F-01 (folder, lock, append, repository key), F-02 (engine,
 client rule, deadline, watchdog, error file), F-03 (one Claude Code entry, the wrapper), S-01 (shell tools),
 S-05 (all), S-06 (the event id only), S-07 (day file, append), F-07 (notices); D-11, D-13 · **Needs** 002 ·
 **Feeds** 004, 005, 006, 007, 008, 010, 011, 012, 013
@@ -352,8 +352,9 @@ Names are the requirements' unless marked. Counts are for this slice; a later fe
 
 ## Evaluation
 
-The tester is a fresh agent with the built `tentaqles` first on `PATH`, an empty working folder, and the
-repository's `plugin` folder to read (`PLUGIN` is its path). Use bash (Git Bash on Windows). No network. Run
+The tester is a fresh agent with the built program called by its full path (`$T`; read every `tentaqles` below as
+`$T`, because in an activated shell `tentaqles` is a shell function that runs the installed program), an empty
+working folder, and the repository's `plugin` folder to read (`PLUGIN` is its path). Use bash (Git Bash on Windows). No network. Run
 the standard setup of feature 002 first:
 
 ```bash
@@ -402,8 +403,10 @@ Every hook call must print nothing on stdout and exit 0; say so when one does no
    abcdefghijklmnopqrstuvwxyz012345\" https://api.example.test/v1/items?api_key=Zx81kQpL0029aaBB'
    'password=hunter2 rejected for postgres://app:s3cretPW@db.example.test:5432/main' | $F` (one line, a
    space where the line breaks here). `n` prints `5`.
-   `grep -r -l -E 'abcdefghijklmnopqrstuvwxyz012345|Zx81kQpL0029aaBB|hunter2|s3cretPW' "$ID" | wc -l` prints
-   `0`, and `grep -o '\[redacted:' "$LOG" | wc -l` prints 4 or more.
+   `grep -r -l -E 'abcdefghijklmnopqrstuvwxyz012345|Zx81kQpL0029aaBB|hunter2|s3cretPW' "$ID/acme/lobe" | wc -l`
+   prints `0`, and `grep -o '\[redacted:' "$LOG" | wc -l` prints 4 or more. (The search covers the memory folder
+   only: the identity folder also holds the PATH-mask stubs, which are copies of the program, and a program
+   holds the alphabet constant that the first marker string is a part of.)
 4. **A secret under a key, and sorted keys.** Pipe to `$F`, with `APP` replaced:
    `{"session_id":"s1","cwd":"APP","tool_name":"Bash","tool_use_id":"toolu_06",
    "tool_input":{"password":"hunter2","note":"hi","command":"deploy"},"error":"nope"}`.
@@ -438,9 +441,9 @@ Every hook call must print nothing on stdout and exit 0; say so when one does no
     `exit=0`. A binary that fails: `mkdir "$W/fake"`, then
     `printf '#!/bin/sh\ncat >/dev/null\necho boom >&2\nexit 2\n' > "$W/fake/tq"; chmod +x "$W/fake/tq"`, then
     `printf '{}' | PATH="$W/fake:$PATH" bash "$K" post-tool-use-failure; echo "exit=$?"` prints only `exit=0`.
-    The real binary under the wrapper: `mkdir "$W/bin"; T="$(command -v tentaqles)"`, then
-    `case "$T" in *.exe) cp "$T" "$W/bin/tq.exe";; *) cp "$T" "$W/bin/tq";; esac`, then
-    `ev s1 "$APP" Bash toolu_16 'x --wrapped' 'no' | PATH="$W/bin:$PATH" bash "$K" post-tool-use-failure`
+    The real binary under the wrapper: `mkdir "$W/bin"; cp "$T" "$W/bin/tq"; cp "$T" "$W/bin/tq.exe"`, then
+    `BIN="$(cd "$W/bin" && pwd)"` (a POSIX path: a `C:/...` entry on `PATH` is split at its colon), then
+    `ev s1 "$APP" Bash toolu_16 'x --wrapped' 'no' | PATH="$BIN:$PATH" bash "$K" post-tool-use-failure`
     prints nothing, and `n` prints `30`.
 11. **The guard is unchanged.** `printf 'not json' | tentaqles claude-hook pre-tool-use; echo "exit=$?"` prints
     a `BLOCKED` line and ends with `exit=2`.
@@ -512,3 +515,30 @@ Every hook call must print nothing on stdout and exit 0; say so when one does no
   018, so neither can mislead a lesson.
 - **A session started outside tentaqles**, with no `CLAUDE_CONFIG_DIR`, gets no capture and no notice.
   `tentaqles lobe status` says why from 005 on.
+
+## Result of the build and the tester run
+
+Built on 2026-11-09 by Haiku builders from written briefs, one piece at a time, each read and rerun by the main
+session before the next started: capture scripts, license and notices, the scrubber (three passes), the store
+(one fix round), the event log, the capture, the hook engine, then the plugin entry, the import-rule tests and
+the commands in parallel. Two phase 0 results are written: question 3 in `docs/prd/spikes/phase0-q3-log-append.md`
+(no torn line on Windows, with or without the lock); question 2 waits for the owner's capture session.
+
+- Tests: the whole repository is green on Windows (`go vet`, `go build`, `go test ./...`, 31 packages) and the
+  plugin suite passes (34 tests). No existing test was edited except the two designed to grow
+  (`test_the_plugin_holds_only_the_guard_hook`, with the owner's yes of D-11, and `TestLobeCommandTable`).
+- Tester brief: 13 of 13 on Windows 11 in Git Bash, against a program built from the working tree. Two checks
+  were corrected in this file after the run, not in the product: check 3 searched the whole identity folder and
+  hit the PATH-mask stubs, which are copies of the program; check 10 put a `C:/...` path on `PATH`, which Git
+  Bash splits at the colon, so the wrapper found the installed program instead of the built one.
+- Measured on this machine: the hook answers bad input in under 5 ms, a step that ignores its deadline is cut at
+  the deadline, twenty hooks at once leave a well-formed log, and the scrubber takes about 6 ms for a full-size
+  input and error (target 5 ms, proposed).
+
+Built against the documentation, to be confirmed by the owner's capture: the payload fields `session_id`, `cwd`,
+`tool_name`, `tool_use_id`, `tool_input`, `error` and `is_interrupt`, and the `Exit code N` first line, are what
+Claude Code's hooks page documents for `PostToolUseFailure`. The capture session (Person check 1) confirms them on
+the owner's version; a difference changes the fixtures and the reader before this feature is closed.
+
+Left open: CI on Linux and macOS; the owner's capture session (Person check 1) and real session (Person checks 2
+and 3); the phase 0 question 2 result page.

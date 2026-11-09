@@ -173,7 +173,7 @@ func exists(p string) bool {
 func (p *dropPlan) lines() []string {
 	var out []string
 	if p.identity != "" {
-		out = append(out, p.identity+" (manifest, Claude config, logins)")
+		out = append(out, p.identity+" (manifest, Claude config, logins, and the client's memory)")
 	}
 	if p.shims != "" {
 		out = append(out, p.shims+" (browser shims)")

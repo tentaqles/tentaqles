@@ -5,6 +5,22 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **The memory begins: a failed shell command in Claude Code is recorded.** The plugin gains a hook on
+  `PostToolUseFailure` that runs `tentaqles lobe-hook claude post-tool-use-failure`. When a `Bash` or
+  `PowerShell` call fails in a client's folder, and the session is logged in as that client, one line is
+  added to that client's event log, `~/.tentaqles/identities/<client>/lobe/events/events-<day>.jsonl`:
+  the command and the error with every secret replaced by a marker, the exit code, the repository and the
+  folder. Nothing is printed into the session. The hook fails open: on any problem it exits 0 with no
+  output, under a deadline and a watchdog. A session logged in as another client, a folder that is no
+  client, or `TQ_LOBE_NO_HOOKS=1` writes nothing. Other tools, Codex, duplicates, expiry and the use of
+  the log come in the next features.
+- **`tentaqles lobe selftest`** proves the memory's store on this machine: twenty writers at once, a
+  thousand replacements under a reader, and the repository key.
+- **`tentaqles version --notices`** prints the `NOTICE` file and the license texts of the projects whose
+  logic tentaqles rebuilds (Trail-code, agentmemory, Graphify, Graft). The repository root now has the MIT
+  `LICENSE`, `NOTICE` and `third_party/licenses/`, which ship in every release archive.
+- `tentaqles drop` names the client's memory among what it deletes (it was always deleted with the
+  identity folder).
 - **`tentaqles lobe sandbox <folder>`** builds a throwaway tentaqles home with two test clients, `acme` and
   `globex`, for test agents, benchmarks and CI. It refuses, before it writes anything, unless `TQ_HOME`, `HOME`
   and `USERPROFILE` all point inside the folder, so it cannot touch a real home. It is the first command of the
