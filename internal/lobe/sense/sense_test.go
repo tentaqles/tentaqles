@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -259,6 +260,67 @@ func TestLobeSenseLocate(t *testing.T) {
 	if got := Locate(client, filepath.Join(client, "docs")); got != (Place{Cwd: "docs"}) {
 		t.Errorf("above the client: Locate = %+v, want {Cwd:docs}", got)
 	}
+}
+
+func TestLobeSenseLocateThroughALink(t *testing.T) {
+	c := t.TempDir()
+	for _, d := range []string{
+		filepath.Join(c, "app", ".git"),
+		filepath.Join(c, "app", "src"),
+	} {
+		if err := os.MkdirAll(d, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", "mklink", "/J", link, c).CombinedOutput()
+		if err != nil {
+			t.Fatalf("mklink /J %s %s: %v: %s", link, c, err, out)
+		}
+	} else if err := os.Symlink(c, link); err != nil {
+		t.Fatal(err)
+	}
+	want := store.RepoKey(c, filepath.Join(c, "app"))
+
+	// A symbolic link is resolved, so one side through the link and the other the real way still
+	// meet (this is the macOS temp folder case, /var/folders to /private/var/folders). A Windows
+	// junction is not resolved by Go's EvalSymlinks, and so not by the resolver either: a client
+	// reached through a junction is a different folder for the whole program, consistently, which
+	// the third case below checks.
+	if runtime.GOOS != "windows" {
+		// The client folder spelled the real way, the working folder through the link.
+		if got := Locate(c, filepath.Join(link, "app", "src")); got != (Place{Repo: want, Cwd: "src"}) {
+			t.Errorf("link cwd: Locate = %+v, want {Repo:%s Cwd:src}", got, want)
+		}
+		// The reverse: the client folder through the link, the working folder the real way.
+		if got := Locate(link, filepath.Join(c, "app", "src")); got != (Place{Repo: want, Cwd: "src"}) {
+			t.Errorf("link client: Locate = %+v, want {Repo:%s Cwd:src}", got, want)
+		}
+	}
+	// Both through the link, at the repository root.
+	if got := Locate(link, filepath.Join(link, "app")); got != (Place{Repo: want, Cwd: "."}) {
+		t.Errorf("link client and cwd: Locate = %+v, want {Repo:%s Cwd:.}", got, want)
+	}
+
+	if runtime.GOOS == "windows" {
+		short := shortName(t, c)
+		if short == "" || strings.EqualFold(filepath.Clean(short), filepath.Clean(c)) {
+			t.Logf("short names are off on this volume: %q for %q; skipping the short-name check", short, c)
+		} else if got := Locate(c, filepath.Join(short, "app")); got != (Place{Repo: want, Cwd: "."}) {
+			t.Errorf("short-name cwd: Locate = %+v, want {Repo:%s Cwd:.}", got, want)
+		}
+	}
+}
+
+// shortName is the 8.3 short name of the Windows folder dir, or "" when cmd gives none.
+func shortName(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("cmd", "/c", "for %I in ("+dir+") do @echo %~sI").Output()
+	if err != nil {
+		t.Fatalf("short name of %s: %v", dir, err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func TestLobeSenseCallText(t *testing.T) {

@@ -50,6 +50,7 @@ the lock within 3 ms.
 
 ## Still open
 
-- **Linux and macOS.** The same test runs in CI on both. Its lines in the CI log start with `phase0-q3`. This
-  page is updated with those numbers after the first run.
+- **Linux and macOS: no torn line either.** The same test passed in CI on Ubuntu and macOS on 2026-11-09 (run
+  42693137171), and it asserts 10,000 lines with 0 torn, 0 lost and 0 twice in both ways. The timings are not
+  in the CI log, which runs the tests without `-v`; the Windows numbers above are the only measured ones.
 - **A process killed during its write.** Not tested here. The repair of a torn last line is feature 011.

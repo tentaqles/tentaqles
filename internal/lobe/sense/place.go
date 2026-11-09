@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
+	"github.com/tentaqles/tentaqles/internal/registry"
 )
 
 // Place says where a call ran: the repository's key (empty outside a repository) and the working
@@ -16,9 +17,14 @@ type Place struct {
 }
 
 // Locate finds the place of cwd inside the client folder clientDir.
+//
+// Both paths are normalized the way the resolver normalizes them (registry.Normalize: absolute,
+// cleaned, with symbolic links and Windows short names resolved), so a folder reached through a
+// link or a short name is the same folder as its real spelling. A path that cannot be normalized
+// keeps its absolute, cleaned form.
 func Locate(clientDir, cwd string) Place {
-	c := absClean(clientDir)
-	w := absClean(cwd)
+	c := normalized(clientDir)
+	w := normalized(cwd)
 	rel, err := filepath.Rel(c, w)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return Place{Cwd: "."}
@@ -39,6 +45,18 @@ func Locate(clientDir, cwd string) Place {
 	return Place{Cwd: slashed(parts)}
 }
 
+// normalized is p as the resolver normalizes it. If that fails, it is the absolute, cleaned form
+// of p, which does not resolve symbolic links.
+func normalized(p string) string {
+	if n, err := registry.Normalize(p); err == nil {
+		return n
+	}
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return filepath.Clean(p)
+}
+
 // hasGit reports whether dir holds an entry named .git: a folder or a file. The entry is looked at
 // without following a link.
 func hasGit(dir string) bool {
@@ -52,12 +70,4 @@ func slashed(parts []string) string {
 		return "."
 	}
 	return strings.Join(parts, "/")
-}
-
-// absClean is the absolute, cleaned form of p. It does not resolve symbolic links.
-func absClean(p string) string {
-	if a, err := filepath.Abs(p); err == nil {
-		return a
-	}
-	return filepath.Clean(p)
 }

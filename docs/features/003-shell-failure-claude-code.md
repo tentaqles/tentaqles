@@ -548,5 +548,11 @@ checkout's plugin loaded through `claude --plugin-dir` and the development build
 folder; no error line was written. The phase 0 question 2 page records what these runs confirmed
 (`docs/prd/spikes/phase0-q2-claude-code-hooks.md`).
 
+Found by the first CI run (2026-11-09) and fixed: on GitHub's macOS and Windows runners the temp folder is reached
+through a symbolic link or an 8.3 short name, so the client folder as the resolver reports it and the folder
+the payload names were spelled two ways, and `sense.Locate` found no repository. It now normalizes both paths
+the way the resolver does (`registry.Normalize`). A Windows junction is not resolved by either, consistently;
+`TestLobeSenseLocateThroughALink` covers the link on Unix and the short name on Windows.
+
 Left open: CI on Linux and macOS; the owner's capture session (Person check 1), which confirms the fields of the
 other events for the features that need them.
