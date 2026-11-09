@@ -441,7 +441,7 @@ func isOwnedHandler(h map[string]any) bool {
 }
 
 // ownedCommand reports whether cmd is "<program> codex-hook <pre-tool-use|session-start>"
-// with a non-empty program. The program may be quoted, as Render writes it when its path has
+// with a non-empty program. The program may be quoted, as it is written on POSIX systems when its path has
 // spaces ("C:\Program Files\tentaqles\tentaqles.exe" codex-hook pre-tool-use); the quotes are not
 // part of the program.
 func ownedCommand(cmd string) bool {

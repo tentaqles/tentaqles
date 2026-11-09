@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -170,13 +171,20 @@ func renderCodex(c *cobra.Command, ws *resolve.Workspace, dryRun bool) error {
 	return nil
 }
 
-// hookProgramPath is the tentaqles program a Codex hook runs; tests replace it.
-var hookProgramPath = statuslineExe
+// hookProgramPath is the tentaqles program a Codex hook runs, hookShortPath its 8.3 form and hookGOOS
+// the system; tests replace them.
+var (
+	hookProgramPath = statuslineExe
+	hookShortPath   = shortPath
+	hookGOOS        = runtime.GOOS
+)
 
 // codexHookProgram is the program part of the Codex hook commands: the absolute path of the installed
-// tentaqles, quoted, as statuslineExe finds it. Codex runs a hook through cmd /C on Windows and through
-// a shell elsewhere, and the quotes keep a path with spaces one word in both. A path with a quote or a
-// percent sign cannot be written into a hook command safely, so it is refused.
+// tentaqles. Codex treats a hook that fails to start as an allow, so the command has to run. On Windows
+// a quoted program fails when Codex starts it (tested with Codex 0.154), so the path is written bare, or
+// as its 8.3 short form when it holds a space or a character cmd reads. A path with no safe form is
+// refused: no hook is better than one that silently never runs, because tentaqles run then refuses the
+// session. Elsewhere Codex uses a POSIX shell, where quotes keep the path one word.
 func codexHookProgram() (string, error) {
 	exe := hookProgramPath()
 	if exe == "" {
@@ -186,11 +194,23 @@ func codexHookProgram() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if strings.ContainsAny(abs, `"%`) {
-		return "", fmt.Errorf("the tentaqles program path %s has a quote or a percent sign, which a Codex hook command cannot hold", abs)
+	if hookGOOS != "windows" {
+		if strings.ContainsAny(abs, "\"$`") {
+			return "", fmt.Errorf("the tentaqles program path %s holds a character a Codex hook command cannot carry", abs)
+		}
+		return `"` + abs + `"`, nil
 	}
-	return `"` + abs + `"`, nil
+	if cmdSafe(abs) {
+		return abs, nil
+	}
+	if short := hookShortPath(abs); short != "" && cmdSafe(short) {
+		return short, nil
+	}
+	return "", fmt.Errorf("the tentaqles program path %s has a space or a special character and no short name, so a Codex hook could not run it; install tentaqles in a folder without them", abs)
 }
+
+// cmdSafe reports whether cmd.exe reads a path as one plain word.
+func cmdSafe(p string) bool { return !strings.ContainsAny(p, " \t\"%&|<>^()!;,=") }
 
 func newStatuslineCmd() *cobra.Command {
 	return &cobra.Command{

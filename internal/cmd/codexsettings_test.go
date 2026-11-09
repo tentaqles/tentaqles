@@ -36,12 +36,10 @@ func TestSettingsRenderCodex(t *testing.T) {
 	}
 }
 
-// The hook command is the quoted absolute path of tentaqles, so a path with spaces stays one word.
-func TestSettingsRenderCodexQuotesTheProgramPath(t *testing.T) {
-	program := filepath.Join(t.TempDir(), "my tools", "tentaqles.exe")
-	if err := os.MkdirAll(filepath.Dir(program), 0o755); err != nil {
-		t.Fatal(err)
-	}
+// The hook command is a path Codex can start: the settings render writes codexHookProgram's answer,
+// and the hooks it wrote are trusted.
+func TestSettingsRenderCodexWritesTheProgramPath(t *testing.T) {
+	program := filepath.Join(t.TempDir(), "tentaqles.exe")
 	prev := hookProgramPath
 	hookProgramPath = func() string { return program }
 	t.Cleanup(func() { hookProgramPath = prev })
@@ -56,32 +54,50 @@ func TestSettingsRenderCodexQuotesTheProgramPath(t *testing.T) {
 	if err := toml.Unmarshal([]byte(readFileOrEmpty(t, codexconfig.ConfigPath(home))), &root); err != nil {
 		t.Fatal(err)
 	}
-	want := `"` + program + `" codex-hook pre-tool-use`
-	if got := firstPreToolUseCommand(root); got != want {
-		t.Fatalf("the hook command is %q, want %q", got, want)
+	want, err := codexHookProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := firstPreToolUseCommand(root); got != want+" codex-hook pre-tool-use" {
+		t.Fatalf("the hook command is %q, want %q", got, want+" codex-hook pre-tool-use")
 	}
 	if got, _ := codexconfig.HookTrust(home); got != codexconfig.Trusted {
 		t.Fatalf("HookTrust = %v, want trusted", got)
 	}
 }
 
+// Windows: never quoted (a quoted program fails under Codex, and a failed hook is an allow); a path
+// with a space uses its short name, and one with no safe form is refused. POSIX: quoted.
 func TestCodexHookProgram(t *testing.T) {
-	prev := hookProgramPath
-	t.Cleanup(func() { hookProgramPath = prev })
-
-	hookProgramPath = func() string { return "" }
-	if _, err := codexHookProgram(); err == nil {
-		t.Error("no tentaqles program: want an error, not a bare command")
-	}
-	hookProgramPath = func() string { return filepath.FromSlash("C:/50%/tentaqles.exe") }
-	if _, err := codexHookProgram(); err == nil || !strings.Contains(err.Error(), "percent sign") {
-		t.Errorf("a percent sign in the path: want a refusal, got %v", err)
-	}
+	prevP, prevS, prevG := hookProgramPath, hookShortPath, hookGOOS
+	t.Cleanup(func() { hookProgramPath, hookShortPath, hookGOOS = prevP, prevS, prevG })
 	dir := t.TempDir()
-	hookProgramPath = func() string { return filepath.Join(dir, "tentaqles") }
-	got, err := codexHookProgram()
-	if err != nil || got != `"`+filepath.Join(dir, "tentaqles")+`"` {
-		t.Errorf("codexHookProgram = %q, %v", got, err)
+	if cmdSafe(dir) == false {
+		t.Skip("temp folder holds a character cmd reads")
+	}
+	spaced := filepath.Join(dir, "my tools", "tentaqles.exe")
+	plain := filepath.Join(dir, "tentaqles.exe")
+	short := filepath.Join(dir, "MYTOOL~1", "TENTAQ~1.EXE")
+	cases := []struct {
+		name, goos, exe, short, want string
+		wantErr                      bool
+	}{
+		{"none", "windows", "", "", "", true},
+		{"windows plain is bare", "windows", plain, "", plain, false},
+		{"windows space uses the short name", "windows", spaced, short, short, false},
+		{"windows space, no short name", "windows", spaced, "", "", true},
+		{"windows space, short name unsafe", "windows", spaced, spaced, "", true},
+		{"windows percent, no short name", "windows", filepath.Join(dir, "50%", "t.exe"), "", "", true},
+		{"posix is quoted", "linux", spaced, "", `"` + spaced + `"`, false},
+	}
+	for _, c := range cases {
+		hookGOOS = c.goos
+		hookProgramPath = func() string { return c.exe }
+		hookShortPath = func(string) string { return c.short }
+		got, err := codexHookProgram()
+		if (err != nil) != c.wantErr || got != c.want {
+			t.Errorf("%s: got %q, %v; want %q (err %v)", c.name, got, err, c.want, c.wantErr)
+		}
 	}
 }
 
