@@ -27,7 +27,7 @@ opened in the wrong browser profile.
 | A folder that copies another client's marker or manifest | A marker must name its own folder, and the manifest's `client` must too | `TestResolve_MarkerOrManifestOfAnotherClient` |
 | A link opened in the wrong browser profile | `BROWSER`, `xdg-open` and `open` shims, and `tentaqles open`, start the client's browser with its profile | `TestBrowserShims`, `TestOpen_UsesTheClientsProfile`, `TestOpen_Refusals` |
 | A Codex command under the wrong identity | The client's Codex home (`CODEX_HOME`) with tentaqles' PreToolUse hook, which applies the Claude Code hook's rules and answers with Codex's deny; `tentaqles run` refuses a Codex session unless both hooks are present, enabled and trusted | `TestCodexPreToolUse_WrongGitEmailDenies`, `TestCodexPreToolUse_NeutralFolderBlocksPush`, `TestCodexPreToolUse_MatchingIdentityAllows` |
-| A Codex hook that errors, or is missing from the client's config | Every error path of `codex-hook pre-tool-use` answers the deny object, so a call tq cannot judge is refused. `tentaqles run` checks the two hooks are there, and `tentaqles doctor` reports a missing, disabled or untrusted one | `TestCodexPreToolUse_UnreadablePayloadDenies`, `TestCodexPreToolUse_PanicDenies`, `TestCodexPreToolUse_DeadlineDenies`, `TestCodexPreToolUse_WatchdogDenies` |
+| A Codex hook that errors, or is missing from the client's config | Every error path of `codex-hook pre-tool-use` answers the deny object, so a call tq cannot judge is refused. `tentaqles run` checks the two hooks are there, and `tentaqles doctor` reports a missing, disabled or untrusted one | `TestCodexPreToolUse_UnreadablePayloadDenies`, `TestCodexPreToolUse_PanicDenies`, `TestCodexPreToolUse_DeadlineDenies`, `TestCodexPreToolUse_WatchdogDenies`, `TestRunCodex_RefusesWithoutTheHooks`, `TestRunCodex_RefusesHooksOffOptions`, `TestCodexHookProgram`, `TestDoctor_CodexGuard` |
 
 ## What it does not do
 
@@ -41,7 +41,8 @@ opened in the wrong browser profile.
 - **Codex fails open when its hook is missing or crashes.** Codex allows a call when its hook gives no answer: a hook
   whose binary is gone, or one that dies outside tentaqles' own error paths. tentaqles answers deny on every error it
   can see, and `tentaqles run` checks the hooks are present, enabled and trusted, but a Codex started by its full path,
-  outside `tentaqles run`, is not checked at all.
+  outside `tentaqles run`, skips that check. So does a setting only Codex reads: tentaqles reads the top-level
+  `[features]` of the client's config, not a `[profiles.<name>.features]` table or a project's `.codex/config.toml`.
 - **A failed lookup allows.** The `gh-user` rule asks `gh` for the active user with a 4-second limit; when the
   lookup fails or times out, the call is allowed.
 - **"Inside Claude Code" is a convenience check, not a boundary.** The refusals of `reach`, `add`, `remove`,

@@ -60,6 +60,9 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
   `test_tq_hook_*` tests.
 - No Claude session starts in a client's folder without the plugin hook: `TestRun_RefusesWithNoGuardHook`,
   `TestRun_DisabledPluginIsNoHook`, `TestRun_ForeignHookIsNoHook`, `TestRun_ProjectSettingsCountToo`.
+- No Codex session starts in a client's folder without tentaqles' enabled, trusted hooks, and a hook error is a deny:
+  `TestRunCodex_RefusesWithoutTheHooks`, `TestRunCodex_RefusesHooksOffOptions`, `TestCodexPreToolUse_PanicDenies`,
+  `TestCodexPreToolUse_WatchdogDenies`, `TestCodexHookProgram`.
 - A Claude session runs only its own folder's client: `TestRunOtherClient_RefusedForAgents`,
   `TestRunOtherClient_NeutralFolderRefused`, `TestRunOtherClient_InheritedEnvIgnored`,
   `TestRunOtherClient_HumanAllowed`.
