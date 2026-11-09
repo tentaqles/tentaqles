@@ -41,6 +41,9 @@ client's manifest lives at `~/.tentaqles/identities/<client>/manifest.yaml` (`$T
 | **Used by the Claude Code plugin** | |
 | [`tentaqles claude-hook pre-tool-use`](#tentaqles-claude-hook-pre-tool-use) | Decide whether a shell command may run |
 | [`tentaqles claude-hook session-start`](#tentaqles-claude-hook-session-start) | Print the client's preamble at the start of a session |
+| **Used by the OpenAI Codex CLI hooks** | |
+| [`tentaqles codex-hook pre-tool-use`](#tentaqles-codex-hook-pre-tool-use) | Decide whether a shell command may run |
+| [`tentaqles codex-hook session-start`](#tentaqles-codex-hook-session-start) | Print the client's preamble at the start of a session |
 | [`tentaqles statusline`](#tentaqles-statusline) | The status line a client's Claude settings run |
 
 Commands that change a client (`reach`, `add`, `remove`, `drop`) wait for a typed confirmation and refuse to run from
@@ -69,8 +72,8 @@ digit. Its parent folder is registered as a clients folder. A `<path>` that does
 2. the client's language, the one Claude writes the client's reports, documents, emails and messages in. The list
    starts on English (United States), selected; the rest follow by English name. Typing filters it (`por` leaves
    Portuguese (Brazil) and Portuguese (Portugal)), the arrows move through it, and enter chooses;
-3. the git provider, the clouds, the team and meeting platforms, the data platforms, the task management provider
-   and the email provider. A name typed under *Other* goes into the manifest's `other_providers`, and reach says that
+3. the git provider, the clouds, the team and meeting platforms, the data platforms, the AI agents besides Claude Code,
+   the task management provider and the email provider. A name typed under *Other* goes into the manifest's `other_providers`, and reach says that
    tentaqles can't isolate it;
 4. the browsers, with a profile for each.
 
@@ -90,7 +93,8 @@ It then prints what it is about to do and waits for a typed `yes`. Nothing is wr
 - adds the activation block to the profile of each shell it detects, when the block isn't there yet.
 
 **An existing client.** In a folder that already is a client, reach shows the client and what it can use, then
-offers a menu: nothing, the providers, the browser and profile, the email, or the language. The chosen part of the
+offers a menu: nothing, the providers, the AI agents besides Claude Code, the browser and profile, the email, or the
+language. The chosen part of the
 form opens with the current answers. reach lists the changes and waits for `yes`, then rewrites only those keys of
 the manifest (other keys and comments stay), makes the folders of new identities, rewrites the folder's git email
 when it changed, and renders the client's files again. A provider taken out keeps its identity folder, with any
@@ -154,8 +158,12 @@ step, `tentaqles login <client> <cli>`.
 | `cloud` | a list: `azure`, `aws`, `gcp` (also `az`, `gcloud`, `google`, `amazon`); the first is the primary | adds the values |
 | `team` | a list: `teams`, `slack`, `discord`, `zoom`, `google-meet` | adds the values |
 | `data` | a list: `databricks`, `snowflake`, `colab` | adds the values |
+| `agent` | a list of AI coding agents besides Claude Code: `cline`, `codex`, `continue`, `copilot`, `cursor`, `gemini`, `goose`, `opencode` | adds the values |
 | `browser` | a list of browsers, each with a profile: `chrome`, `edge` | adds the browser, or changes its profile (default `Default`) |
 | `other` | names tentaqles does not manage | adds the names |
+
+Claude Code is every client's agent, so `claude` is not a value of `agent`. `codex` gets its own Codex home
+(`CODEX_HOME`), and the client's Codex config with its two guard hooks.
 
 A value alone finds its category: `tentaqles add aws` is `tentaqles add cloud aws`. With no value, `add <category>`
 opens that category's part of the form with the current answers ticked; `email` is the exception and needs the
@@ -184,6 +192,12 @@ tentaqles add cloud aws --client acme
 
 # a value alone finds its category
 tentaqles add aws
+
+# an AI agent besides Claude Code, for one client
+tentaqles add codex --client personal
+
+# the same, with the category named
+tentaqles add agent gemini
 
 # open the task part of the form
 tentaqles add task
@@ -225,7 +239,7 @@ tentaqles remove <provider>            [--client <name or folder>] [--yes]
 | `email`, `language` | refused: a client always has one |
 | `git`, `task`, `mail` | clears it; a value, when given, must be the current one |
 | `cloud` | removes the values; the next cloud becomes the primary |
-| `team`, `data`, `other` | removes the values |
+| `team`, `data`, `agent`, `other` | removes the values |
 | `browser` | removes the browser named |
 
 A value alone finds its category: `tentaqles remove slack`. `gh` alone means the git host GitHub: when GitHub is the
@@ -247,6 +261,9 @@ sessions need a restart to see the change, as with `add`.
 ```
 # take a team tool out
 tentaqles remove slack
+
+# stop using Codex for one client
+tentaqles remove codex --client personal
 
 # take gh out of a client that moved to Azure DevOps
 tentaqles remove gh --client globex
@@ -541,6 +558,18 @@ For `claude`:
   folder) switches the plugin or all hooks off. The refusal prints the lines that fix it. See
   [Claude hook](claude-hook.md).
 
+For `codex`:
+
+- a session starts only with the tentaqles hooks in the client's Codex config (`CODEX_HOME`) enabled and trusted.
+  `run` refuses when they are missing, not trusted, or turned off (`enabled = false` under the hooks, or
+  `hooks = false` or `codex_hooks = false` under `[features]`), and prints `tentaqles settings render <client>` as the
+  fix;
+- a session also refuses an option that turns the hooks off for that run: `--disable hooks`, `--disable codex_hooks`,
+  `-c features.hooks=false` or `-c features.codex_hooks=false`, in any of their spellings;
+- a session is any codex command except the subcommands that run no agent (`login`, `logout`, `completion`, `doctor`,
+  `features`, `plugin`, `mcp`, `update`, `help`, and the like) and `--help` or `--version`. A subcommand tentaqles does
+  not know is a session, so it needs the hooks.
+
 From inside a Claude Code session, `run` runs only the client of the current folder: another client's name, or a
 neutral folder, is refused, and a nested `claude` gets no bypass flag.
 
@@ -621,6 +650,11 @@ For each client it writes:
 
   Only what tentaqles wrote earlier is ever removed; anything added by hand stays. tentaqles records what it wrote in
   `.tq-settings-state.json` beside the settings;
+- **its Codex `config.toml`**, when codex is in the client's scope: the PreToolUse and SessionStart hooks that run
+  `tentaqles codex-hook` (the command is the absolute path of tentaqles, quoted), trusted and enabled, and the
+  client's language line as `developer_instructions`. Every other key and state entry stays. Nothing is written for a
+  client without codex, and nothing is removed. `--dry-run` says it did not check the Codex config. The hooks are
+  trusted here because opting the client into codex is the consent;
 - **its PATH mask**, `~/.tentaqles/identities/<client>/path-mask/`: one stub per CLI of a provider outside the client's
   scope, for the PATH folders that hold it beside other tools. A stub prints
   `<name>: command not found (outside the scope of identity <client>)` and exits 127;
@@ -893,6 +927,41 @@ Prints the folder's client; its language, with the instruction to write the clie
 messages in it; its git provider, user and email; its clouds; the identity and its `CLAUDE_CONFIG_DIR`; the
 client's tools; the findings of `tentaqles doctor` for this folder; and one line on what the hook blocks. In a
 neutral folder it says so. It never fails: a session always starts. See [Claude hook](claude-hook.md).
+
+---
+
+## tentaqles codex-hook pre-tool-use
+
+Decide whether a shell command the OpenAI Codex CLI is about to run may run. The Codex hook calls it; you don't.
+
+### Synopsis
+
+```
+tentaqles codex-hook pre-tool-use
+```
+
+### Description
+
+Reads the hook's JSON on stdin. The same check as `claude-hook pre-tool-use`, with Codex's answer: a blocked command
+prints one JSON object on stdout (`permissionDecision` `deny`, the reason) and the reason on stderr, and exits 0; an
+allowed one prints nothing and exits 0. Every error is a deny the same way, since Codex runs a call whose hook gives no
+deny. See [Claude hook](claude-hook.md) for the rules.
+
+---
+
+## tentaqles codex-hook session-start
+
+Print the preamble OpenAI Codex CLI adds at the start of a session. The Codex hook calls it; you don't.
+
+### Synopsis
+
+```
+tentaqles codex-hook session-start
+```
+
+### Description
+
+Prints the same text as `claude-hook session-start` for the payload's folder. It never fails: a session always starts.
 
 ---
 

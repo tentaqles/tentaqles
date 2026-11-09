@@ -110,6 +110,18 @@ Then `tentaqles open https://example.com` opens it in acme's profile, and so do 
 tools that open links through `BROWSER`. A link you click in the terminal window itself opens your default browser:
 the terminal app hands it to the operating system, not to the shell.
 
+## Optional: Using Codex
+
+If the client uses the OpenAI Codex CLI, add it and log in once:
+
+```sh
+tentaqles add codex --client acme
+tentaqles login acme codex
+```
+
+Codex gets its own home under the client's folder, with tentaqles' two hooks in its config. Start `codex` in the
+client's folder as you start `claude`: `tentaqles run` refuses a Codex session whose hooks are missing or off.
+
 ## 6. Add the next client
 
 Repeat step 2 with another folder: `tentaqles reach ~/clients/globex`. Two terminals can now be two clients at once,

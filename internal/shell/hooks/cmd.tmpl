@@ -1,5 +1,5 @@
 @rem tentaqles shell hook (cmd.exe): call this after every cd, or use `tentaqles run <client> -- <cmd>` to run one command under a client's identity.
-@rem cmd.exe has no functions: start claude with `tentaqles run . -- claude` (the folder's identity and the tentaqles plugin).
+@rem cmd.exe has no functions: start claude with `tentaqles run . -- claude` (the folder's identity and the tentaqles plugin), and codex with `tentaqles run . -- codex` (its identity and the tentaqles hooks).
 @rem Each line tq prints is run from the for variable, which cmd.exe never parses again: a %, &, |, <, > or quote in a value stays as it is. With delayed expansion on ("!!" is then empty) tq escapes ! and ^.
 @rem tq prints UTF-8: the code page is 65001 for the call and the previous one is put back after, so a PATH folder with accents or CJK characters arrives as it is.
 @for /f "tokens=2 delims=:." %%C in ('chcp') do @set "__TQ_CP=%%C"

@@ -36,7 +36,7 @@ func newChangeCmd(add bool) *cobra.Command {
 		Long: "tentaqles " + verb + " changes one part of a client's setup, as tentaqles reach's menu does, without the menu.\n\n" +
 			"Categories: " + strings.Join(reach.Categories, ", ") + ".\n" +
 			"  git, task and mail hold one value: add replaces it, remove clears it.\n" +
-			"  cloud, team, data, browser and other are lists: add and remove change the values named.\n" +
+			"  cloud, team, data, agent, browser and other are lists: add and remove change the values named.\n" +
 			"  email is the client's git email: add sets it; it cannot be removed.\n" +
 			"  language is the language Claude writes the client's documents and messages in: add sets it,\n" +
 			"  by name or tag (tentaqles add language portuguese, tentaqles add language pt-BR).\n" +
@@ -45,12 +45,13 @@ func newChangeCmd(add bool) *cobra.Command {
 			"Values: git " + strings.Join(reach.Values(reach.CatGit), ", ") + " (also gh, glab, ado);\n" +
 			"cloud " + strings.Join(reach.Values(reach.CatCloud), ", ") + " (also az, gcloud); team " + strings.Join(reach.Values(reach.CatTeam), ", ") + ";\n" +
 			"data " + strings.Join(reach.Values(reach.CatData), ", ") + "; task " + strings.Join(reach.Values(reach.CatTask), ", ") + ";\n" +
+			"agent " + strings.Join(reach.Values(reach.CatAgent), ", ") + " (Claude Code is always set up);\n" +
 			"mail " + strings.Join(reach.Values(reach.CatMail), ", ") + "; browser chrome or edge, then a profile.\n\n" +
 			"It works on the client of the current folder, or --client (a name or a folder). It lists every change\n" +
 			"and waits for a typed yes (--yes skips that), then rewrites the manifest and renders the client's files.\n" +
 			"It refuses to run from inside a Claude Code session.",
 		Example: "  tentaqles add git azure-devops\n  tentaqles add cloud aws\n  tentaqles remove gh --client yduqs\n" +
-			"  tentaqles add browser chrome \"Profile 2\"\n  tentaqles add email dev@acme.example\n  tentaqles add language pt-BR\n  tentaqles add task",
+			"  tentaqles add browser chrome \"Profile 2\"\n  tentaqles add email dev@acme.example\n  tentaqles add language pt-BR\n  tentaqles add task\n  tentaqles add codex --client personal",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if insideAgent() {
@@ -119,11 +120,11 @@ func runCategoryForm(cat string, cur *reach.Answers) (*reach.Answers, error) {
 		return nil, errNoTerminal
 	}
 	a := *cur
-	a.Clouds, a.Team, a.Data = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data)
+	a.Clouds, a.Team, a.Data, a.Agent = slices.Clone(cur.Clouds), slices.Clone(cur.Team), slices.Clone(cur.Data), slices.Clone(cur.Agent)
 	a.Browsers, a.Other = slices.Clone(cur.Browsers), slices.Clone(cur.Other)
 	run := func(f huh.Field) error { return huh.NewForm(huh.NewGroup(f)).Run() }
 	titles := map[string]string{reach.CatGit: "Git provider", reach.CatCloud: "Cloud providers",
-		reach.CatTeam: "Team and meeting platforms", reach.CatData: "Data platforms",
+		reach.CatTeam: "Team and meeting platforms", reach.CatData: "Data platforms", reach.CatAgent: "AI agents besides Claude Code",
 		reach.CatTask: "Task management provider", reach.CatMail: "Email provider"}
 	options := func() []huh.Option[string] {
 		out := []huh.Option[string]{}
@@ -147,8 +148,8 @@ func runCategoryForm(cat string, cur *reach.Answers) (*reach.Answers, error) {
 		if v != reachSkip {
 			*field = v
 		}
-	case reach.CatCloud, reach.CatTeam, reach.CatData:
-		field := map[string]*[]string{reach.CatCloud: &a.Clouds, reach.CatTeam: &a.Team, reach.CatData: &a.Data}[cat]
+	case reach.CatCloud, reach.CatTeam, reach.CatData, reach.CatAgent:
+		field := map[string]*[]string{reach.CatCloud: &a.Clouds, reach.CatTeam: &a.Team, reach.CatData: &a.Data, reach.CatAgent: &a.Agent}[cat]
 		vs := slices.Clone(*field)
 		if err := run(huh.NewMultiSelect[string]().Title(titles[cat]).Options(options()...).Value(&vs)); err != nil {
 			return nil, err

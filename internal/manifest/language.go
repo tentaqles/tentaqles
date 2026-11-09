@@ -139,6 +139,13 @@ func (m *Manifest) ClientLanguage() Language {
 	return l
 }
 
+// LanguageLine is the instruction that tells the agent the client's language: the line the Claude
+// session-start preamble prints, and the Codex developer_instructions tentaqles writes.
+func (m *Manifest) LanguageLine() string {
+	l := m.ClientLanguage()
+	return fmt.Sprintf("Language: %s (%s). Write every report, document, email and message for this client's people (clients and teammates) in %s.", l.Name, l.Tag, l.Name)
+}
+
 func (m *Manifest) validateLanguage() error {
 	if m.Language == "" {
 		return nil

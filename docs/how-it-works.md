@@ -142,6 +142,26 @@ It writes no permission setting.
 `tentaqles run` refuses to start a Claude session in a client whose config has no enabled tentaqles plugin, so no
 session there runs without the check.
 
+## Codex
+
+A client that uses the OpenAI Codex CLI has its own Codex home, `~/.tentaqles/identities/<client>/codex`, which
+tentaqles sets as `CODEX_HOME`. Its login and its `config.toml` live there, apart from every other client's.
+
+tentaqles writes two hooks into the client's `config.toml`:
+
+- **SessionStart** runs `tentaqles codex-hook session-start`, which prints the same identity preamble as the Claude
+  Code hook.
+- **PreToolUse**, on Bash calls only (Codex reports PowerShell commands as Bash too), runs
+  `tentaqles codex-hook pre-tool-use`. It applies the Claude Code hook's rules and denies a command that would run
+  under the wrong identity. See the [Claude Code hook reference](reference/claude-hook.md#codex).
+
+tentaqles also writes the client's language line into `developer_instructions`, and marks both hooks trusted.
+Codex skips a hook nobody has reviewed; the typed yes when you add `codex` is that review.
+
+`tentaqles run` refuses to start a Codex session unless both hooks are present, enabled and trusted. The shell's
+`codex` goes through `tentaqles run`. A Codex started by its full path does not, and is not checked; see the
+[threat model](threat-model.md).
+
 ## Language
 
 Each client has a language, a tag such as `pt-BR`, stored in its manifest; a manifest without one is `en-US`. Claude
@@ -167,8 +187,8 @@ opened by the operating system itself, such as a click in the terminal window, g
 
 | Command | Writes |
 |---|---|
-| `tentaqles reach` | The manifest, the marker, a folder per identity, the folder's `.gitconfig-tentaqles`, the client's rule in `~/.gitconfig-tentaqles`, the include and `useConfigOnly` in `~/.gitconfig`, the clients folder in `config.yaml`, the client's Claude settings, PATH mask and browser shims, the tentaqles plugin in the client's Claude config, and the activation block in each shell profile that lacks it. |
-| `tentaqles add`, `tentaqles remove` | The manifest keys they change (every other key and comment stays), a folder for each new identity, the folder's git email when it changed, and the client's settings, mask and shims again. A removed identity's folder stays, with any login in it. |
+| `tentaqles reach` | The manifest, the marker, a folder per identity, the folder's `.gitconfig-tentaqles`, the client's rule in `~/.gitconfig-tentaqles`, the include and `useConfigOnly` in `~/.gitconfig`, the clients folder in `config.yaml`, the client's Claude settings, PATH mask and browser shims, the tentaqles plugin in the client's Claude config, the client's Codex config and its hooks when codex is in scope, and the activation block in each shell profile that lacks it. |
+| `tentaqles add`, `tentaqles remove` | The manifest keys they change (every other key and comment stays), a folder for each new identity, the folder's git email when it changed, the client's Codex config when codex changed, and the client's settings, mask and shims again. A removed identity's folder stays, with any login in it. |
 | `tentaqles drop` | Deletes the client's identity folder (manifest, Claude config, logins), its shims, its marker and `.gitconfig-tentaqles`, its git rule, and the clients folder's registration when no other client is in it. Your files stay; a folder left empty is deleted. `~/.gitconfig`'s include and `useConfigOnly`, and the shell profile block, stay: every client uses them. |
 | `tentaqles settings render` | The client's `settings.json` keys above, the PATH mask and the browser shims. |
 | `tentaqles hooks install` | The activation block in your shell profiles. |

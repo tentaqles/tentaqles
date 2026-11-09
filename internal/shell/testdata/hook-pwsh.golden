@@ -32,4 +32,5 @@ function global:tq {
   & '/opt/tq/bin/tq' @__a
 }
 function global:claude { & '/opt/tq/bin/tq' run . -- claude @args }
+function global:codex { & '/opt/tq/bin/tq' run . -- codex @args }
 __tq_hook

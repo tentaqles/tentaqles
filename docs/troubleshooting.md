@@ -199,6 +199,27 @@ refuses to start one. The message gives the reason and the fix:
 - the installed plugin's hook is not the tentaqles hook: uninstall it, then install it again;
 - the client has no `claude` identity: add it to the manifest's identities, then `tentaqles settings render <client>`.
 
+### `codex-guard-missing`
+
+Error. A codex client's Codex config (`CODEX_HOME`) has no tentaqles hooks, so `tentaqles run <client> -- codex`
+refuses to start a session. Fix: `tentaqles settings render <client>`.
+
+### `codex-guard-disabled`
+
+Error. The tentaqles hooks are in the Codex config but turned off: `enabled = false` under the hooks, or
+`hooks = false` or `codex_hooks = false` under `[features]`. Remove that line from `[features]` if it is there (or turn
+the hooks on in Codex's `/hooks`), then `tentaqles settings render <client>`.
+
+### `codex-guard-untrusted`
+
+Error. Codex has not trusted the tentaqles hooks, or they changed since it did (the tentaqles program moved, say).
+Fix: `tentaqles settings render <client>`, which trusts them.
+
+### `codex-guard-unreadable`
+
+Error. The Codex `config.toml` cannot be read as TOML, so the hooks' state is unknown. Repair the file, then
+`tentaqles settings render <client>`.
+
 ### `settings-drift`
 
 Warning. The client's Claude `settings.json` differs from what `tentaqles settings render` writes (its `env`,

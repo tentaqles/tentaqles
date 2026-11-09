@@ -144,7 +144,7 @@ func TestPreToolUse_ExpectedUserIsGitHubOnly(t *testing.T) {
 func TestRenderSessionStart_GitWithoutUser(t *testing.T) {
 	ws := &resolve.Workspace{Name: "acme", Manifest: &manifest.Manifest{Client: "acme",
 		Git: manifest.Git{Provider: "azure-devops", Email: "dev@acme.example"}}}
-	got := renderSessionStart(doctor.CwdReport{Result: resolve.Result{Workspace: ws}}, "")
+	got := renderSessionStart(doctor.CwdReport{Result: resolve.Result{Workspace: ws}}, "CLAUDE_CONFIG_DIR", "")
 	if !strings.Contains(got, "Git: azure-devops (dev@acme.example)\n") {
 		t.Fatalf("got:\n%s", got)
 	}
@@ -265,7 +265,7 @@ func TestGHEnv_NoWorkspaceDirKeepsBase(t *testing.T) {
 
 func TestRenderSessionStart_Neutral(t *testing.T) {
 	rep := doctor.CwdReport{Result: resolve.Result{Reason: "outside any base"}}
-	got := renderSessionStart(rep, "")
+	got := renderSessionStart(rep, "CLAUDE_CONFIG_DIR", "")
 	want := "Client: none (neutral folder: outside any base)\n\nRules: remote git, gh and cloud CLI commands are blocked here; cd into a client folder first.\n"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -281,7 +281,7 @@ func TestRenderSessionStart_Workspace(t *testing.T) {
 		Cloud:      map[string]any{"provider": "azure", "also": []any{"aws"}},
 	}}
 	rep := doctor.CwdReport{Result: resolve.Result{Workspace: ws}}
-	got := renderSessionStart(rep, "/home/acme/.tentaqles/identities/acme/claude")
+	got := renderSessionStart(rep, "CLAUDE_CONFIG_DIR", "/home/acme/.tentaqles/identities/acme/claude")
 	want := "Client: acme\n" +
 		"Language: Portuguese (Brazil) (pt-BR). Write every report, document, email and message for this client's people (clients and teammates) in Portuguese (Brazil).\n" +
 		"Git: github as acme-bot (dev@acme.com)\n" +

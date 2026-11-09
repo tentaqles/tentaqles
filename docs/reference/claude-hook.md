@@ -125,6 +125,32 @@ The hook reads text. It catches mistakes, not intent:
 
 See the [threat model](../threat-model.md).
 
+## Codex
+
+The OpenAI Codex CLI runs the same check through `tentaqles codex-hook`. It uses the same rules, deadlines and
+fail-closed paths as the Claude Code hook. For a client with codex in scope, tentaqles writes these two hooks into the
+client's `config.toml` in its Codex home, and marks them trusted:
+
+| Hook | Event | Matcher | Command |
+|---|---|---|---|
+| tentaqles session start | SessionStart | every session | `tentaqles codex-hook session-start` |
+| tentaqles pre-tool-use | PreToolUse | `^Bash$` | `tentaqles codex-hook pre-tool-use` |
+
+- **`session-start`** prints the same preamble as the Claude Code `session-start`. It never fails.
+- **`pre-tool-use`** checks shell commands only. Codex reports PowerShell commands as Bash too, so both are checked.
+  Every other tool call is allowed. The rules and messages are the ones in [`pre-tool-use`](#pre-tool-use) above.
+- **Deny** is one JSON object on stdout, with exit 0. The reason also goes to stderr, for a person:
+
+  ```json
+  {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"BLOCKED [identity/<rule>]: ..."}}
+  ```
+
+- **Allow** prints nothing and exits 0. Codex reads any other output as an allow, so the JSON object is the only deny.
+- **Fail closed:** every error path of `pre-tool-use` answers with the deny object, exit 0: an unreadable payload, an
+  unreadable manifest, a panic, a missed deadline, a tq that cannot start. tq never allows a call it failed to judge.
+  A hook that does not run at all (its binary is gone, or it crashes outside tq) gives Codex no answer, and Codex then
+  allows the call. `tentaqles run` checks that the hooks are in place; see the [threat model](../threat-model.md).
+
 ## The plugin is required
 
 `tentaqles run <client> -- claude` refuses to start a session, with the reason and the lines that fix it, when:

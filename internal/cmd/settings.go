@@ -3,14 +3,20 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tentaqles/tentaqles/internal/claudesettings"
+	"github.com/tentaqles/tentaqles/internal/codexconfig"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -33,6 +39,8 @@ func newSettingsRenderCmd() *cobra.Command {
   - its Claude settings.json: the manifest's claude.env, the client's language and the
     tentaqles status line (which replaces a missing status line, an @latest or ccstatusline
     command, or a previous tentaqles one; any other status line stays);
+  - when codex is in its scope, its Codex config.toml: tentaqles' PreToolUse and SessionStart
+    hooks (enabled and trusted) and the client's language line;
   - its PATH mask: a stub for each CLI of a provider outside its scope;
   - its browser shims, when the client lists a browser.
 
@@ -81,6 +89,9 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.
 				for _, ch := range res.Changes {
 					fmt.Fprintf(c.OutOrStdout(), "  %s\n", ch)
 				}
+				if err := renderCodex(c, ws, dryRun); err != nil {
+					return fmt.Errorf("%s: %w", ws.Name, err)
+				}
 				renderScope(c, ws, dryRun)
 			}
 			if n == 0 {
@@ -122,8 +133,84 @@ func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not rendered: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
 		}
 	}
+	if err := renderCodex(c, ws, false); err != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "warning: %s: codex config not rendered: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
+	}
 	renderScope(c, ws, false)
 }
+
+// codexScope is the catalog provider whose scope puts a client's Codex config under tentaqles' care.
+const codexScope = "codex"
+
+// renderCodex writes a client's Codex config when its scope includes codex: tentaqles' PreToolUse and
+// SessionStart hooks, their trust, and the client's language as developer_instructions. A client
+// without codex is left alone, and nothing is deleted. dryRun changes nothing and says so: the
+// config is not compared, since codexconfig only writes.
+func renderCodex(c *cobra.Command, ws *resolve.Workspace, dryRun bool) error {
+	if ws == nil || ws.Manifest == nil || !slices.Contains(ws.Manifest.Scope(), codexScope) {
+		return nil
+	}
+	home := envplan.Desired(ws)["CODEX_HOME"]
+	if dryRun {
+		fmt.Fprintf(c.OutOrStdout(), "%s: codex config not checked (dry run; %s)\n", ws.Name, codexconfig.ConfigPath(home))
+		return nil
+	}
+	program, err := codexHookProgram()
+	if err != nil {
+		return err
+	}
+	changed, err := codexconfig.Render(home, codexconfig.Managed{Command: program, DeveloperInstructions: ws.Manifest.LanguageLine()})
+	if err != nil {
+		return err
+	}
+	verb := "up to date"
+	if changed {
+		verb = "written"
+	}
+	fmt.Fprintf(c.OutOrStdout(), "%s: codex config %s (%s)\n", ws.Name, verb, codexconfig.ConfigPath(home))
+	return nil
+}
+
+// hookProgramPath is the tentaqles program a Codex hook runs, hookShortPath its 8.3 form and hookGOOS
+// the system; tests replace them.
+var (
+	hookProgramPath = statuslineExe
+	hookShortPath   = shortPath
+	hookGOOS        = runtime.GOOS
+)
+
+// codexHookProgram is the program part of the Codex hook commands: the absolute path of the installed
+// tentaqles. Codex treats a hook that fails to start as an allow, so the command has to run. On Windows
+// a quoted program fails when Codex starts it (tested with Codex 0.154), so the path is written bare, or
+// as its 8.3 short form when it holds a space or a character cmd reads. A path with no safe form is
+// refused: no hook is better than one that silently never runs, because tentaqles run then refuses the
+// session. Elsewhere Codex uses a POSIX shell, where quotes keep the path one word.
+func codexHookProgram() (string, error) {
+	exe := hookProgramPath()
+	if exe == "" {
+		return "", errors.New("cannot find the tentaqles program to write its Codex hooks")
+	}
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		return "", err
+	}
+	if hookGOOS != "windows" {
+		if strings.ContainsAny(abs, "\"$`") {
+			return "", fmt.Errorf("the tentaqles program path %s holds a character a Codex hook command cannot carry", abs)
+		}
+		return `"` + abs + `"`, nil
+	}
+	if cmdSafe(abs) {
+		return abs, nil
+	}
+	if short := hookShortPath(abs); short != "" && cmdSafe(short) {
+		return short, nil
+	}
+	return "", fmt.Errorf("the tentaqles program path %s has a space or a special character and no short name, so a Codex hook could not run it; install tentaqles in a folder without them", abs)
+}
+
+// cmdSafe reports whether cmd.exe reads a path as one plain word.
+func cmdSafe(p string) bool { return !strings.ContainsAny(p, " \t\"%&|<>^()!;,=") }
 
 func newStatuslineCmd() *cobra.Command {
 	return &cobra.Command{

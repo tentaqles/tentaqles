@@ -50,7 +50,7 @@ func TestHook_DefinesLaunchers(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"TQ_ENABLED", "run . -- claude",
+			"TQ_ENABLED", "run . -- claude", "run . -- codex",
 		} {
 			if !strings.Contains(h, want) {
 				t.Errorf("%s hook: missing %q", sh, want)
@@ -336,7 +336,8 @@ func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 		". '" + slash(hookPath) + "'\n" +
 		"echo \"S:$?:${TQ_WS:-}\"\n" +
 		"case \";$PROMPT_COMMAND;\" in *';__tq_hook;'*) echo P:ok;; esac\n" +
-		"claude x\n"
+		"claude x\n" +
+		"codex x\n"
 	cmd := exec.Command(b, "-c", script)
 	cmd.Env = shellEnv(t, "TQ_FAKE_LOG="+slash(log))
 	out, err := cmd.CombinedOutput()
@@ -353,6 +354,9 @@ func TestHook_BashAliasFirstAndQuotedPath(t *testing.T) {
 	raw, _ := os.ReadFile(log)
 	if !strings.Contains(string(raw), "run . -- claude --dangerously-skip-permissions x") {
 		t.Fatalf("the alias must reach tq's launcher: %q", raw)
+	}
+	if !strings.Contains(string(raw), "run . -- codex --yolo x") {
+		t.Fatalf("codex must reach tq's launcher through its alias too: %q", raw)
 	}
 }
 
