@@ -338,7 +338,7 @@ the lobe.
    calls have their own cap and are not counted here, and C-07's calls are.
 7. Template: fixed sentences for a `flag`, `env`, `wrapper`, `step`, `cwd` or `shell` difference, such as title
    `<key>: use <flag text>`, Do ``Run `<key>` with `<flag text>`.``, Avoid ``Running `<key>` without it.`` and
-   Why `Without it the call failed here.` A template sets `when.command` to the key, copies no error text and
+   Why `Otherwise the call fails here.` A template sets `when.command` to the key, copies no error text and
    writes no `avoid` block. A correction is templated from its events, never from its prompt. With evidence (a)
    it gets the template of its pair. With evidence (d), when the named word is the program of a call after the
    prompt and the last call of that pairing class before the prompt ran another program: title `Use <new

@@ -998,7 +998,8 @@ stale or impossible to rerun from their own repository. These rules keep us from
    manifest names that commit. A change after seeing results starts a new run. Results that go against us are
    published like the others.
 10. **Receipts.** A published figure carries a marker, `<!-- bench:<run-id>/summary.json#<key> -->`. The action
-    `check-claims` reads the README, `CHANGELOG.md`, the plugin's README and `docs/` except `docs/prd/`. It fails
+    `check-claims` reads the README, `CHANGELOG.md`, the plugin's README and `docs/`, leaving out `docs/prd/`
+    and `docs/features/`, which quote example figures. It fails
     on a banned phrase, on a figure near a claim word (tokens, cost, cheaper, faster, fewer, errors, saved) with no
     marker, on a figure that differs from its receipt after rounding, on a missing interval, model or date, on a
     receipt marked not publishable, and on a table whose markers name two runs. A figure is a number written with

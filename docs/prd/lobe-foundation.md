@@ -271,7 +271,7 @@ A-12).
    | Event | Class, cutoff | Steps, in this order |
    |---|---|---|
    | `session-start` | inject, 1.5 s | R-05 prints the brief |
-   | `user-prompt-submit` | inject, 1.5 s | C-02 notes a correction; R-02 adds code pointers and lessons |
+   | `user-prompt-submit` | inject, 1.5 s | R-02 adds code pointers and lessons; then C-02 notes a correction |
    | `pre-tool-use` | inject, 1.5 s | E-01 and E-04 decide a deny, which ends the event. Otherwise R-04 and C-08 note, E-02 opens a fire for each rule that matched, E-06 warns before a commit |
    | `post-tool-use` | capture, then inject; 1.5 s | S-03 and S-04 append the event line (S-02 for Codex); F-05's tamper check; E-02 judges the open fires; after a `hidden-fail` outcome (for Codex also a `fail`) C-08 prints a starter rule's fix and R-04 the lesson for this exact error; G-08 marks the edited files; after an edit E-05 notes argument counts and G-09 lists the blast radius, walking this repository's index only |
    | `post-tool-use-failure` | capture, then inject; 1.5 s | S-01 appends the event line; F-05's tamper check; E-02 judges the open fires; C-08 prints a starter rule's fix and R-04 the lesson for this exact error |
