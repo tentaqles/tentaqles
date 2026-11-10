@@ -1,6 +1,6 @@
 # 009: A failure that looks like a success is caught
 
-**Status** not started · **Stage** Sense · **Entries** S-04 (for Claude Code); S-03 (step 2, the call into S-04)
+**Status** built · **Stage** Sense · **Entries** S-04 (for Claude Code); S-03 (step 2, the call into S-04)
 · **Needs** 006, 008 · **Feeds** 010, 018
 
 ## Result
@@ -96,7 +96,8 @@ prints nothing and adds one line with `"kind":"hidden-fail"`, an `error` that st
 4. **Rule B, shell tools** (S-04 step 3). A test runner's own summary; the first format found decides, each
    with its zero guard. The formats are listed there: the `Test Files`, `Tests` and `Test Suites:` lines, TAP,
    `Ran N tests in`, `test result:`, Go output, and the `N failed`, `N errors`, `N failing` counts. Read the
-   list in S-04; do not shorten it.
+   list in S-04; do not shorten it. Rule B, like rule C, skips a command whose first program only reads
+   (owner, 2026-11-10).
 5. **Rule C, `Bash` only** (S-04 step 4). It runs only when the command hides its exit code: its last
    top-level pipe segment starts with `tail`, `head`, `less`, `more` or `cat` (Trail-code's list), `grep` or
    `tee` (proposed), or the command ends in `|| true`. It is skipped when the first program only reads (the
@@ -286,7 +287,42 @@ There are no person checks. PASS needs 11 of 11.
   alarm, and a success read as `hidden-fail` gives a wrong rule a hit. 041 counts both.
 - Check 7 pins a limit, not a wish: a hidden failure in a PowerShell pipeline is stored as `ok`. If the owner
   wants PowerShell covered, that is a change to S-04 first.
+- Rule B's count (`N failed`, `N errors`, `N failing`) reads the output of every shell command that does not only
+  read, so text that merely names a count is a `hidden-fail`: `git commit -m 'fix 3 errors'` echoes its message,
+  and so do `gh pr view` or a script that prints a report. A command that starts with a reading program
+  (`echo "== run ==" && npm test | tail -5`) is not judged at all, since only a leading `cd` is skipped (owner,
+  2026-11-10). Both are recorded limits from the review; 041 measures them.
 - Trail-code's remark that most failed commands in its authors' sessions exited 0 because of a pipe is their
   observation, not our measurement. No number about hidden failures is claimed from this feature.
 - The fingerprint in check 4 is not stated, because S-08 prints no vector for that text. `fp_90da432fb402b004`
   and `fp_48622a622f4928cc` are S-04's and S-01's own vectors.
+
+## Result of the build, the review and the tester run
+
+Built on 2026-11-10 by two Haiku builders (the pipe reader and the three rules; the wiring and docs), reviewed as
+one change by a Sonnet reviewer.
+
+- **Brief changes.** `shellwords` gained `Parts`, a split that keeps which separator joined each part, since
+  `Statements` drops them and rule C needs the last pipeline. The owner decided that rule B, like rule C, skips
+  a command whose first program only reads (leading `cd` statements skipped), so a commit title or an old log
+  read with `git log` or `cat` is never a hidden failure.
+- **Phase 0 facts** (task 2, on the [phase 0 page](../prd/spikes/phase0-q2-claude-code-hooks.md)): the shell
+  result is an object with `stdout` and `stderr`. A fourth capture with a made-up MCP server
+  (`spike/hook-capture/mcp_fail_server.py`, at the owner's choice) showed both an `isError` result and a
+  JSON-RPC error arrive on `PostToolUseFailure`, which 004 already records. Rule A is kept as written; on
+  Claude Code it is a side path that the capture never saw fire.
+- **The review** found no blocking defect. Fixed from it, with tests: a decimal such as `0.5 failed` read as a
+  count; a flag with no text gave an empty `error` (now a fixed text). Recorded as limits under Risks: a count
+  echoed by a command that does not only read (`git commit -m 'fix 3 errors'`), and a command that starts with
+  a reading program.
+- Also in this change: the selftest command test kills a run still going after 8 minutes, after one was left
+  spinning for hours past its test binary's timeout.
+- Tests: `go vet` and `go build` clean; `sense`, `shellwords` and `test/integration` green. The full suite on
+  Windows ran while an unrelated training job held the CPU near 95%: the store-lock, cutoff and timing tests
+  failed there in the same way on the last green commit, `801b3974`, so CI decides.
+- Tester brief: 11 of 11 on Windows 11 in Git Bash against a program built from the working tree.
+
+The owner's check, 2026-11-10, in a real yduqs session with this checkout's plugin: a `Bash` call of
+`printf 'FAIL src/cart.test.ts\n  total is wrong\nTests: 1 failed, 3 passed\n' | tail -5` left one line with
+`"kind":"hidden-fail"`, the full command and its `description` as input, an `error` from the `FAIL` line on and
+`"fp":"fp_90da432fb402b004"`; `tentaqles lobe status` counted `hidden_fail 1`.

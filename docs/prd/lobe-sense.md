@@ -433,7 +433,8 @@ Trail-code's source says that in its authors' sessions most failed commands exit
 3. Rule B, shell tools: a test runner's own summary. The first format found decides, each with a zero guard:
    lines starting `Test Files`, `Tests` or `Test Suites:` fail on `[1-9]\d* failed`; TAP `# fail N` when N is not
    0; `Ran N tests in` on a line starting `FAILED`; `test result:` on `test result: FAILED`; Go output on a line
-   starting `FAIL`, `--- FAIL` or `panic:`; `N failed`, `N errors` and `N failing` when N is 1 or more.
+   starting `FAIL`, `--- FAIL` or `panic:`; `N failed`, `N errors` and `N failing` when N is 1 or more. Rule B, like rule C, skips a command whose first program
+   only reads (owner, 2026-11-10).
 4. Rule C, `Bash` only, when the command hides its exit code: its last top-level pipe segment starts with `tail`,
    `head`, `less`, `more` or `cat` (Trail's list), `grep` or `tee` (proposed), or it ends in `|| true`. It is
    skipped when the first program only reads: `cat`, `grep`, `rg`, `head`, `tail`, `less`, `ls`, `find`, `echo`,

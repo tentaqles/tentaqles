@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // buildTentaqles builds the real program into a temp folder and returns the binary's path. It runs
@@ -25,15 +27,26 @@ func buildTentaqles(t *testing.T) string {
 	return bin
 }
 
+// selftestLimit bounds one run of the program. A run that is still going then is killed and fails the
+// test, so a stuck selftest never outlives `go test` (one was once left spinning for hours after the
+// test binary's own timeout ended it).
+const selftestLimit = 8 * time.Minute
+
 // runSelftestBinary runs bin with args in folder dir and returns its stdout, stderr and exit code.
 func runSelftestBinary(t *testing.T, bin, dir string, args ...string) (string, string, int) {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), selftestLimit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("%s %v still running after %s, killed\nstdout:\n%s\nstderr:\n%s", bin, args, selftestLimit, stdout.String(), stderr.String())
+	}
 	if err == nil {
 		return stdout.String(), stderr.String(), 0
 	}

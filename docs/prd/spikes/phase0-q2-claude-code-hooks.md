@@ -75,14 +75,32 @@ names and types only. Every successful call fired `PostToolUse` once, with `cwd`
 Not seen: `NotebookEdit`, `MultiEdit`, `WebSearch`, a `PowerShell` call in the background, and a run moved to
 the background after its timeout.
 
+## Confirmed for feature 009, 2026-11-10
+
+Two facts this feature needs (task 2). The shell result form is in the success capture above: `Bash` and
+`PowerShell` hand `tool_response` as an object whose standard output and standard error are `stdout` and
+`stderr`. The MCP rows come from a fourth capture session (same machine and mode), with the made-up server
+`spike/hook-capture/mcp_fail_server.py` (named `capture`, `setup.py --mcp`), whose three tools answer with fixed
+text:
+
+| Call | Event | What arrived |
+|---|---|---|
+| `flag_error`: a normal result with `isError` true | `PostToolUseFailure`, once | `error` (string) holds the tool's text; no `tool_response`; `is_interrupt` `false` |
+| `rpc_error`: a JSON-RPC error answer | `PostToolUseFailure`, once | `error` (string) holds the error's message; no `tool_response`; `is_interrupt` `false` |
+| `ok_echo`: a normal result | `PostToolUse`, once | `tool_response` is an array (the content parts); the earlier capture's MCP success arrived as a string |
+
+So on Claude Code an MCP tool's error is a failure, recorded by 004 as `fail`, and never a `PostToolUse` with an
+error flag. Rule A of S-04 is kept as written (it costs nothing unused and Codex may need it, 010), but on Claude
+Code it is a side path that this capture never saw fire. Every MCP payload also carries `mcp_server` (object).
+
 ## Still from the hooks page only (web, not machine-checked)
 
 Each feature that needs a row confirms it before it is closed.
 
 | Situation | What the page says | Needed by |
 |---|---|---|
-| A failed `WebFetch` or MCP call, or an `Edit` that fails while running | `PostToolUseFailure` with the same fields; `error` is the tool's own text, with no `Exit code` line. An `Edit` that fails its input check fires nothing (confirmed above) | 004, 063 |
-| A hidden failure (`npm test \| tail`, an MCP error flag) | `PostToolUse`; the error is inside `tool_response` | 009 |
+| A failed `WebFetch`, or an `Edit` that fails while running | `PostToolUseFailure` with the same fields; `error` is the tool's own text, with no `Exit code` line. An `Edit` that fails its input check fires nothing, and a failed MCP call is a `PostToolUseFailure` (both confirmed above) | 004, 063 |
+| A hidden failure (`npm test \| tail`) | `PostToolUse`; the error is inside `tool_response`. An MCP error flag does not arrive here on Claude Code (confirmed above) | 009 |
 | A call interrupted while running | the page says cancelling a running tool does not fire `PostToolUseFailure`; the tool result carries the interruption text | 004 |
 | A call declined at the permission prompt | `PermissionDenied` (and `PermissionRequest` before it); no `PostToolUseFailure` | 004 |
 | `is_interrupt` | optional boolean on `PostToolUseFailure`, true when the failure reached Claude Code as an abort | 004 |

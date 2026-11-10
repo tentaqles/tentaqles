@@ -5,6 +5,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **A success that shows a failure is stored as `hidden-fail`.** A successful call whose result has an error flag, a test runner's failing summary in shell output, or a failing line behind a pipe that hides the exit code is written to the memory's event log as `hidden-fail`, with its full input, the failing part of the output as `error` and an `fp`. Commands that only read (`cat`, `git log` and the like) are never judged by their output text.
+
 - **A successful call is recorded too, minimally.** After a tool call succeeds, the memory's event log gets one `ok` line
   with the tool, the time and the part of the input that identifies the call (a shell command, a file path, a search
   pattern, a URL, or the top-level values of an MCP tool cut to 200 characters). The output is never stored. A command

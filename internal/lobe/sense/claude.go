@@ -123,32 +123,46 @@ func FromClaudeFailure(c Call, pl Place, now time.Time, tail []eventlog.TailEven
 	}
 }
 
-// FromClaudePostTool builds the ok event of a successful call in Claude Code (S-03). The steps run in
+// FromClaudePostTool builds the event of a successful call in Claude Code (S-03, S-04). The steps run in
 // this order; the caller has already applied the skip rules of a success (the own tools, see the hook's
 // recordSuccess):
 //
 //  1. Background start: when the result only says the command went to the background
 //     (BackgroundStart), no event is built and the second result is false.
-//  2. The result is dropped: nothing below reads response, and no byte of it reaches an event.
-//  3. The input: the scrubbed full input when the full-input exception applies (KeepsFullInput),
+//  2. Hidden failure (S-04): when Hidden says the call failed although the host marked it a success,
+//     the event has kind hidden-fail, the full scrubbed input, and the scrubbed error that Hidden gives.
+//     Its exit stays nil.
+//  3. The result is dropped: nothing below reads response, and no byte of it reaches an event.
+//  4. The input: the scrubbed full input when the full-input exception applies (KeepsFullInput),
 //     otherwise the scrubbed projection (Project). Both go through scrub.Input, so a success and a
 //     failure of one object input have the same bytes.
 //
 // tail is the tail of today's event file, read by the caller before the call; tailOK is false when it
-// could not be read. The event has kind ok, host claude, no error, no fingerprint and no exit: a
-// PostToolUse payload states no exit code. id, at, repo and cwd are as for a failure.
+// could not be read. A success event has kind ok, host claude, no error, no fingerprint and no exit: a
+// PostToolUse payload states no exit code. A hidden-fail event has no fingerprint yet; Record gives it
+// one. id, at, repo and cwd are as for a failure.
 func FromClaudePostTool(c Call, response json.RawMessage, pl Place, now time.Time, tail []eventlog.TailEvent, tailOK bool) (eventlog.Event, bool) {
 	if BackgroundStart(c.Tool, response) {
 		return eventlog.Event{}, false
 	}
+	errText, hidden := Hidden(c.Tool, c.Input, response)
 	response = nil
 	tool := toolName(c.Tool)
-	input := okInput(tool, c.Input, c.Session, tail, tailOK)
+	kind := eventlog.KindOK
+	var input scrub.Clean
+	var errOut scrub.Clean
+	if hidden {
+		kind = eventlog.KindHiddenFail
+		input = scrub.Input(NormalInput(c.Input))
+		errOut = scrub.Text(errText)
+	} else {
+		input = okInput(tool, c.Input, c.Session, tail, tailOK)
+	}
 	var id string
 	if c.CallID != "" {
 		id = eventlog.ID("claude", c.Session, c.CallID)
 	} else {
-		id = eventlog.IDWithoutCall("claude", c.Session, tool, eventlog.KindOK, input.String(), now.UnixNano())
+		id = eventlog.IDWithoutCall("claude", c.Session, tool, kind, input.String(), now.UnixNano())
 	}
 	return eventlog.Event{
 		V:       1,
@@ -157,10 +171,11 @@ func FromClaudePostTool(c Call, response json.RawMessage, pl Place, now time.Tim
 		Session: c.Session,
 		Host:    "claude",
 		Tool:    tool,
-		Kind:    eventlog.KindOK,
+		Kind:    kind,
 		Repo:    pl.Repo,
 		Cwd:     pl.Cwd,
 		Input:   input,
+		Error:   errOut,
 	}, true
 }
 
@@ -183,8 +198,8 @@ func okInput(tool string, input json.RawMessage, session string, tail []eventlog
 }
 
 // KeepsFullInput is the exception of S-03 step 5 (decision A-18): a success keeps its full scrubbed input
-// when the tail of today's event file holds an earlier failure (kind fail) of the same session and tool.
-// A reference line counts, since it carries those fields. A tail that could not be read keeps only the
+// when the tail of today's event file holds an earlier failure of the same session and tool, a fail or a
+// hidden-fail (S-04). A reference line counts, since it carries those fields. A tail that could not be read keeps only the
 // projection (owner, 2026-11-10: otherwise every success, a Write's whole content included, would be
 // stored in full whenever the log's end is unreadable; that one call then loses only its pairing). An
 // empty session never matches.
@@ -196,7 +211,7 @@ func KeepsFullInput(session, tool string, tail []eventlog.TailEvent, tailOK bool
 		return false
 	}
 	for _, e := range tail {
-		if e.Kind == eventlog.KindFail && e.Session == session && e.Tool == tool {
+		if (e.Kind == eventlog.KindFail || e.Kind == eventlog.KindHiddenFail) && e.Session == session && e.Tool == tool {
 			return true
 		}
 	}

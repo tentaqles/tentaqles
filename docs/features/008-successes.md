@@ -378,3 +378,5 @@ Built on 2026-11-10 by Haiku builders, reviewed as one change by a Sonnet review
 The owner's check, 2026-11-10, in a real yduqs session with this checkout's plugin: `git --version` left one
 `ok` line whose input is `{"command":"git --version"}`, with no error, no exit and no output; a command sent
 to the background left no line; the event count went from 5 to 6.
+
+CI green on Linux, macOS and Windows for `801b3974` on 2026-11-10. Nothing is left open.

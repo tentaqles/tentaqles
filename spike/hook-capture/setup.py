@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Write <scratch-folder>/.claude/settings.json so that ten hook events run capture.sh.
 
-Usage: python setup.py <scratch-folder>
+Usage: python setup.py <scratch-folder> [--mcp]
+
+With --mcp it also writes <scratch-folder>/.mcp.json with the made-up server
+mcp_fail_server.py (named "capture") and turns on that folder's project MCP
+servers, so its three tools can be called in the session.
 
 If the settings file already exists, this prints one line and exits 1
 without changing anything.
@@ -31,11 +35,14 @@ def forward(path):
 
 
 def main(argv):
-    if len(argv) != 2:
-        print("usage: python setup.py <scratch-folder>", file=sys.stderr)
+    args = argv[1:]
+    mcp = "--mcp" in args
+    args = [a for a in args if a != "--mcp"]
+    if len(args) != 1:
+        print("usage: python setup.py <scratch-folder> [--mcp]", file=sys.stderr)
         return 2
 
-    scratch = os.path.abspath(argv[1])
+    scratch = os.path.abspath(args[0])
     settings_path = os.path.join(scratch, ".claude", "settings.json")
     if os.path.exists(settings_path):
         print(f"Settings file already exists, nothing changed: {forward(settings_path)}")
@@ -56,8 +63,19 @@ def main(argv):
             {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
         ]
 
+    settings = {"hooks": hooks}
+    if mcp:
+        settings["enableAllProjectMcpServers"] = True
+        server = forward(os.path.join(here, "mcp_fail_server.py"))
+        mcp_path = os.path.join(scratch, ".mcp.json")
+        with open(mcp_path, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump({"mcpServers": {"capture": {"command": sys.executable.replace("\\", "/"),
+                                                  "args": ["-I", server]}}}, fh, indent=2)
+            fh.write("\n")
+        print(f"Wrote the made-up MCP server: {forward(mcp_path)}")
+
     with open(settings_path, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump({"hooks": hooks}, fh, indent=2)
+        json.dump(settings, fh, indent=2)
         fh.write("\n")
 
     print(f"Wrote hook settings: {forward(settings_path)}")

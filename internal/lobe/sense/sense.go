@@ -15,8 +15,8 @@ type Outcome struct {
 	Tool    string
 	CallID  string
 	Call    string // CallText of the call
-	Kind    string // eventlog.KindFail here
-	FP      string // the fingerprint of a fail event (S-08); empty for ok
+	Kind    string // eventlog.KindFail or KindHiddenFail for a failure, else KindOK
+	FP      string // the fingerprint of a fail or hidden-fail event (S-08); empty for ok
 	State   string // StateFull, StateRef, StateReplay or StateDropped
 }
 
@@ -32,8 +32,8 @@ const (
 func Record(ctx context.Context, s *store.Store, e eventlog.Event, c Call) (Outcome, error) {
 	// S-08: a failure gets its fingerprint from the event's own tool and scrubbed error, between the
 	// scrubbing (S-05, done when the event was built) and the append (S-07), so a reader can work the same
-	// fp out again from the stored line. An ok line has none.
-	if e.Kind == eventlog.KindFail {
+	// fp out again from the stored line. An ok line has none; a hidden-fail line has one, as a fail does.
+	if e.Kind == eventlog.KindFail || e.Kind == eventlog.KindHiddenFail {
 		e.FP, _ = fingerprint.Of(e.Tool, e.Error.String())
 	}
 	out := Outcome{

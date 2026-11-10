@@ -145,6 +145,22 @@ func TestLobeSenseOkFullAfterFailure(t *testing.T) {
 	if got[3].Input != `{"q":"`+a200+`"}` {
 		t.Errorf("success in s3 (no failure in s3): input %q, want the projection", got[3].Input)
 	}
+
+	// S-04: a hidden failure of the tool in s4 is a failure for the exception too: the success after it
+	// keeps its full input.
+	runHook(t, evPostToolUse, successJSON("s4", app, "mcp__acme__ping", "toolu_05",
+		`{"q":"x"}`, `{"isError":true,"content":[{"type":"text","text":"boom"}]}`))
+	runHook(t, evPostToolUse, ok("s4", "toolu_06"))
+	got = decodeLogged(t, lines(t, "acme"))
+	if len(got) != 6 {
+		t.Fatalf("%d lines after the hidden failure, want 6", len(got))
+	}
+	if got[4].Kind != "hidden-fail" {
+		t.Errorf("hidden failure in s4: kind %q, want hidden-fail", got[4].Kind)
+	}
+	if got[5].Kind != "ok" || got[5].Input != `{"q":"`+a250+`"}` {
+		t.Errorf("success in s4 after its hidden failure: %+v, want the full input", got[5])
+	}
 }
 
 // failureFor is a failed MCP call of the given session and tool, as PostToolUseFailure sends it.

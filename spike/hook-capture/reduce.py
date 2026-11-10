@@ -35,6 +35,8 @@ SAFE_TEXT = re.compile(r"[A-Za-z0-9_\- \[\]]{0,40}")
 SAFE_KEY = re.compile(r"[A-Za-z0-9_.\-]{1,40}")
 EVENT_NAME = re.compile(r"[A-Za-z0-9_\-]{1,40}")
 EXIT_LINE = re.compile(r"Exit code [0-9]+")
+OWN_MCP = "mcp__capture__"
+MARKERS = ("CAPTURE-FAIL-MARKER", "CAPTURE-OK")
 
 
 def _safe_text(value):
@@ -58,6 +60,9 @@ def safe_value(key, value):
     if key == TOOL_KEY:
         if not isinstance(value, str):
             return "<other>"
+        # The made-up server of mcp_fail_server.py is ours, so its tool names may print.
+        if value.startswith(OWN_MCP) and SAFE_TEXT.fullmatch(value):
+            return value
         if value.startswith("mcp__"):
             return "mcp__*"
         return _safe_text(value)
@@ -175,6 +180,20 @@ def extra_lines(payloads):
             if isinstance(r, dict) and isinstance(r.get("backgroundTaskId"), str) and r["backgroundTaskId"].strip()
         )
         lines.append(f"- tool_response has a non-empty backgroundTaskId: {task} of {len(responses)}")
+    # Feature 009: where an MCP tool's error lands. Counts only, never text.
+    own = [p for p in payloads if str(p.get(TOOL_KEY, "")).startswith(OWN_MCP)]
+    if own:
+        flagged = sum(
+            1 for p in own
+            if isinstance(p.get("tool_response"), dict)
+            and (p["tool_response"].get("isError") is True or p["tool_response"].get("is_error") is True)
+        )
+        lines.append(f"- tool_response is an object with isError or is_error true: {flagged} of {len(own)}")
+        for marker in MARKERS:
+            for field in ("tool_response", "error"):
+                n = sum(1 for p in own if field in p and marker in json.dumps(p[field]))
+                if n:
+                    lines.append(f"- {field} holds {marker}: {n} of {len(own)}")
     for key in sorted(TEXT_KEYS + BOOL_KEYS):
         values = Counter(safe_value(key, p[key]) for p in payloads if key in p)
         if values:
@@ -244,7 +263,8 @@ def render(files, events):
                 "| field | JSON type(s) | present in |",
                 "|---|---|---|",
             ]
-            for field, types, present in field_rows(group_payloads, group.startswith("mcp__")):
+            outside = group.startswith("mcp__") and not group.startswith(OWN_MCP)
+            for field, types, present in field_rows(group_payloads, outside):
                 out.append(f"| {field} | {types} | {present} |")
             extra = extra_lines(group_payloads)
             if extra:

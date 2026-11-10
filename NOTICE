@@ -11,6 +11,8 @@ Trail-code
   License: MIT
   Copyright (c) 2026 Context Graph Engine contributors
   Ported file: internal/lobe/fingerprint/signature.go (the line pick of src/trace/failure.ts)
+  Ported file: internal/lobe/sense/hidden.go (the result window, the test runner summaries and the error lines of src/trace/failure.ts and src/trace/checks.ts)
+  Ported file: internal/lobe/sense/pipes.go (the filter programs of src/trace/shell.ts)
 
 agentmemory
   https://github.com/rohitg00/agentmemory at 77f45358a8300299158e3a416e9010176408ea87

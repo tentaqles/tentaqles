@@ -148,6 +148,8 @@ func TestLobeSenseKeepsFullInput(t *testing.T) {
 		{"another tool", "s1", "Edit", []eventlog.TailEvent{fail("s1", "Bash")}, true, false},
 		{"a success is not a failure", "s1", "Bash", []eventlog.TailEvent{{Session: "s1", Tool: "Bash", Kind: eventlog.KindOK}}, true, false},
 		{"a reference line counts", "s1", "Bash", []eventlog.TailEvent{{Session: "s1", Tool: "Bash", Kind: eventlog.KindFail, Dup: "evt_1"}}, true, true},
+		{"a hidden failure counts", "s1", "Bash", []eventlog.TailEvent{{Session: "s1", Tool: "Bash", Kind: eventlog.KindHiddenFail}}, true, true},
+		{"a hidden failure of another tool does not", "s1", "Edit", []eventlog.TailEvent{{Session: "s1", Tool: "Bash", Kind: eventlog.KindHiddenFail}}, true, false},
 		{"empty session never matches", "", "Bash", []eventlog.TailEvent{fail("", "Bash")}, true, false},
 		{"tail unreadable keeps only the projection", "s1", "Bash", nil, false, false},
 		{"empty tail", "s1", "Bash", nil, true, false},

@@ -1394,7 +1394,8 @@ every secret replaced by a marker. Four rules leave the line out or change it:
 
 On `post-tool-use`, which Claude Code sends when a call succeeds, the memory records the call with the same skips for
 the memory's own commands and with `capture off`. Each success writes one `ok` line with no error: the tool's name, the
-time, and the part of its input that identifies the call. The output of the call is never written anywhere. The input
+time, and the part of its input that identifies the call, unless the result shows a failure (see `hidden-fail` below).
+The output of the call is never written anywhere. The input
 keeps `command` for a shell tool, `file_path` or `notebook_path` for an edit, a write or a read, `pattern` and `path`
 for a search, and `url` or `query` for a web fetch. Any other tool, MCP tools included, keeps each top-level key, with
 text values cut to 200 characters and nested values left as `{}` or `[]`. The full scrubbed input is kept for a success
@@ -1403,6 +1404,12 @@ cannot be read, the success is projected. A `grep` that found nothing is a succe
 larger than 1 MiB is not recorded at all. A shell command whose result only says it went to the background (a result with a `backgroundTaskId`, the text
 `Command running in background with ID:`, or a run moved to the background after its timeout) writes nothing,
 because it started and did not yet work.
+
+A successful call whose result shows a failure is written as `hidden-fail` instead of `ok`: an MCP result with an error
+flag, a test runner's failing summary in shell output, or, for `Bash`, a failing line behind a pipe that hides the exit
+code (such as `npm test | tail -5`). The line keeps the full input, the failing part of the output as `error` (at most 20
+lines), and an `fp` fingerprint like a `fail` line's. A command whose first program only reads (`cat`, `grep`, `git log`
+and the like) is never judged by its output text (an error flag still counts), so `git log` showing a commit titled "fix 2 failing tests" stays `ok`.
 
 On `stop`, which Claude Code sends when the agent ends its turn, the memory records a call Claude Code rejected before
 it ran, such as an edit whose text is not in the file. It reads the payload's `transcript_path`, and only when that
