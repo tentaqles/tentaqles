@@ -35,11 +35,13 @@ section for every command; `test/integration` fails when one is missing.
   `developer_instructions`.
 - `internal/providers/`: the catalog (`catalog/*.yaml`, embedded) and user provider files.
 - `internal/lobe/`: the memory ("the Vertical Lobe"), one package per part, imports only `internal/resolve`,
-  `internal/paths`, `internal/registry` and `internal/manifest` from this repository, no `init` and no
+  `internal/paths`, `internal/registry` and `internal/manifest` from this repository (and other lobe packages), no `init` and no
   package-level call: `hook/` (the `lobe-hook` entry, fail open, bounded, answered in `main` before cobra),
   `store/` (the per-client folder, its lock, whole-line appends), `scrub/` (secrets out before anything is
-  written), `eventlog/` (the event's shape and its day file), `sense/` (a failed call becomes an event),
-  `selftest/`. Design: `docs/prd/`, build order: `docs/features/`.
+  written), `eventlog/` (the event's shape, its day file, and the readers `Scan` and `Tail`), `sense/` (a failed call becomes an event),
+  `selftest/`, `settings/` (the nine settings and the one edit that writes them, `Edit`), `cli/` (the `tentaqles lobe`
+  verbs and their rules: the client, the login, person-only), `health/` (the lobe's doctor findings), `pathcmp/` (path
+  comparison shared by the hook and the verbs). Design: `docs/prd/`, build order: `docs/features/`.
 - `internal/doctor/`, `internal/claudesettings/`, `internal/statusline/`, `internal/browser/`, `internal/banner/`,
   `internal/gitcfg/`, `internal/detect/`, `internal/testutil/`.
 - `plugin/`: the Claude Code plugin: `hooks/hooks.json`, `scripts/tq_hook.sh` (runs `tentaqles claude-hook`, fails
@@ -94,6 +96,7 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
   a cutoff and a watchdog: `TestLobeHookAlwaysExitsZero`, `TestLobeCaptureSurvivesALateStep`,
   `TestLobeStall_SpinningHandler`, `TestLobeStall_WatchdogEndsAStuckMain`,
   `TestLobeHookCutoffsUnderRegisteredTimeout`, `TestLobeLogLockHeld`, and the plugin's `test_lobe_hook_*` tests.
+- A `tentaqles lobe` command inside an agent session reads only its own folder's client under that client's login, and `lobe set` answers only to a person: `TestLobeAgentCannotReadAnotherClient`, `TestLobeCommandRefusesAnotherLogin`, `TestLobePersonVerbsRefuseInAgent`, `TestLobeSet_ChangesOnlyTheLobeKey`.
 - A memory hook serves only the client that both the folder and the session's login name; otherwise it writes
   nothing anywhere: `TestLobeHookServesOnlyItsLogin`, `TestLobeHookLoginUnsetDoesNothing`,
   `TestLobeHookLoginPathForms`, `TestLobeSenseFailureSkips`, `TestLobeStoreRefusesLinkAndForeign`.

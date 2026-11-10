@@ -84,7 +84,12 @@ type Manifest struct {
 	// them.
 	Browsers       []Browser `yaml:"browsers,omitempty"`
 	OtherProviders []string  `yaml:"other_providers,omitempty"`
-	Path           string    `yaml:"-"`
+	// Lobe is the raw `lobe` key: the lobe's nine settings (internal/lobe/settings). Parse never checks
+	// it, so a typo under lobe cannot make the guard deny (F-06 "How to build it"). It is a value, not a
+	// pointer: yaml.v3 decodes a *yaml.Node field into the Node struct, so a scalar or a list fails the load
+	// and a mapping arrives empty. A zero Node (Kind 0) means the key is absent.
+	Lobe yaml.Node `yaml:"lobe,omitempty"`
+	Path string    `yaml:"-"`
 }
 
 var secretRe = regexp.MustCompile(`(?i)\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9\-]+|Bearer\s+\S+|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,})`)

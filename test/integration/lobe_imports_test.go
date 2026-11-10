@@ -104,6 +104,13 @@ func TestLobeGuardNeverImportsLobe(t *testing.T) {
 		}
 	}
 
+	// internal/doctor is checked the same way: the guard's doctor findings must not reach the lobe either.
+	for _, line := range goList(t, "./internal/doctor") {
+		if strings.Contains(line, lobeMarker) {
+			t.Errorf("./internal/doctor reaches lobe package %s", line)
+		}
+	}
+
 	for _, name := range guardFiles {
 		file := filepath.Join(repoRoot(), "internal", "cmd", name)
 		for _, imp := range importsOf(t, file) {

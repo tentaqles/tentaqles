@@ -2,10 +2,8 @@ package hook
 
 import (
 	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 
+	"github.com/tentaqles/tentaqles/internal/lobe/pathcmp"
 	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
@@ -20,26 +18,5 @@ func loginMatches(host, client string) bool {
 	if login == "" {
 		return false
 	}
-	return samePath(login, paths.IdentityDir(client, "claude"))
-}
-
-// samePath compares two folders whole: case-insensitively on Windows, exactly elsewhere.
-func samePath(a, b string) bool {
-	x, y := absPath(a), absPath(b)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(x, y)
-	}
-	return x == y
-}
-
-// absPath is the absolute, cleaned form of p, which drops a trailing separator. On Windows a slash
-// is a separator too. Nothing is resolved through links.
-func absPath(p string) string {
-	if runtime.GOOS == "windows" {
-		p = filepath.FromSlash(p)
-	}
-	if a, err := filepath.Abs(p); err == nil {
-		return a
-	}
-	return filepath.Clean(p)
+	return pathcmp.SamePath(login, paths.IdentityDir(client, "claude"))
 }

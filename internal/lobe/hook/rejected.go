@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
+	"github.com/tentaqles/tentaqles/internal/lobe/pathcmp"
 	"github.com/tentaqles/tentaqles/internal/lobe/scrub"
 	"github.com/tentaqles/tentaqles/internal/lobe/sense"
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
@@ -68,9 +69,9 @@ func transcriptAllowed(login, p string) (os.FileInfo, bool) {
 	if login == "" || p == "" {
 		return nil, false
 	}
-	root := absPath(login)
+	root := pathcmp.AbsPath(login)
 	projects := filepath.Join(root, "projects")
-	t := absPath(p)
+	t := pathcmp.AbsPath(p)
 	if !within(projects, t) {
 		return nil, false
 	}
@@ -253,6 +254,58 @@ func withHead(f *os.File, c chunkRead) (chunkRead, error) {
 	return c, nil
 }
 
+// skipTail is the most a capture-off stop reads from the end of a transcript to find its last line end.
+const skipTail = 1 << 20
+
+// skipToEnd runs on a stop while capture is off. It records nothing and parses nothing: when the client's
+// store already exists, it sets the session's cursor to the end of the transcript's last whole line, so
+// calls rejected while capture was off are never read later. It reads at most the last 1 MiB of the file
+// (to find that line end) and the head the cursor fingerprints. With no store, an unallowed path, or any
+// error, it does nothing; it never creates a store.
+func (r *run) skipToEnd() {
+	login := os.Getenv("CLAUDE_CONFIG_DIR")
+	want, ok := transcriptAllowed(login, r.pl.transcript)
+	if !ok {
+		return
+	}
+	if _, err := store.Open(r.ws.Name, store.ReadOnly); err != nil {
+		return
+	}
+	f, err := os.Open(pathcmp.AbsPath(r.pl.transcript))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !os.SameFile(want, fi) {
+		return
+	}
+	size := fi.Size()
+	n := min(size, skipTail)
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(io.NewSectionReader(f, size-n, n), buf); err != nil {
+		return
+	}
+	last := bytes.LastIndexByte(buf, '\n')
+	if last < 0 {
+		return
+	}
+	end := size - n + int64(last+1)
+	head, err := fileHead(f, end)
+	if err != nil {
+		return
+	}
+	st, err := store.Open(r.ws.Name, store.ReadWrite)
+	if err != nil {
+		return
+	}
+	line, err := scrub.Line(cursorLine{V: cursorVersion, Offset: end, Head: head})
+	if err != nil {
+		return
+	}
+	_ = st.Replace(r.ctx, store.CursorFile(r.pl.session), line)
+}
+
 // readPrev reads up to maxLookBack bytes of f before offset start.
 func readPrev(f *os.File, start int64) ([]byte, error) {
 	n := min(int64(maxLookBack), start)
@@ -317,7 +370,7 @@ func (r *run) readRejected() (ro *store.Store, ok bool) {
 			cur, hasCursor = parseCursor(b)
 		}
 	}
-	read, err := readChunk(absPath(r.pl.transcript), want, cur, hasCursor)
+	read, err := readChunk(pathcmp.AbsPath(r.pl.transcript), want, cur, hasCursor)
 	if err != nil {
 		return nil, false
 	}

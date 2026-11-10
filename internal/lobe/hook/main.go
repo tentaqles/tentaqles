@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/sense"
+	"github.com/tentaqles/tentaqles/internal/lobe/settings"
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -155,6 +156,16 @@ func (r *run) work(stdin io.Reader, steps []step) {
 	if !loginMatches(r.host, r.ws.Name) {
 		return
 	}
+	// capture (F-06, S-01 step 2): while it is off, no event reads or writes anything, so this comes
+	// before the transcript read, the failure skip and store.Open.
+	if !captureOn(r.ws) {
+		if r.event == evStop {
+			// Nothing from the off period is recovered later: the session's cursor moves to the end of
+			// the transcript, so the first stop after capture is on again starts there.
+			r.skipToEnd()
+		}
+		return
+	}
 	// A call the design skips leaves nothing, not even the client's store folder: the skip decision is
 	// made before the store is opened (recordFailure makes the same check, too).
 	if r.event == evPostToolUseFailure {
@@ -187,6 +198,16 @@ func (r *run) work(stdin io.Reader, steps []step) {
 			return
 		}
 	}
+}
+
+// captureOn reads the client's capture setting from the manifest the resolver loaded. A workspace with no
+// loaded manifest gives false: the run stops with nothing written. A wrong value reads as off.
+func captureOn(ws *resolve.Workspace) bool {
+	if ws == nil || ws.Manifest == nil {
+		return false
+	}
+	s, ok := settings.From(ws).Get(settings.Capture)
+	return ok && sense.CaptureOn(s.Value)
 }
 
 // setCurrent names the step that is running.

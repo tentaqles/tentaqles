@@ -11,7 +11,7 @@ func newLobeCmd() *cobra.Command {
 		Use:   "lobe",
 		Short: "The per-client memory: test setup, and later its commands",
 	}
-	c.AddCommand(newLobeSandboxCmd(), newLobeSelftestCmd())
+	c.AddCommand(newLobeSandboxCmd(), newLobeSelftestCmd(), newLobeSettingsCmd(), newLobeSetCmd(), newLobeStatusCmd(), newLobeEventsCmd())
 	return c
 }
 

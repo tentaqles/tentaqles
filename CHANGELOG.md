@@ -5,6 +5,17 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **See the memory and switch it off: `tentaqles lobe status`, `lobe events`, `lobe settings` and `lobe set`.** `lobe status`
+  prints the client, the store's state, the nine settings, the event counts and whether the plugin wires the memory's hooks.
+  `lobe events` prints the newest 20 stored lines. `lobe settings` prints the nine lobe settings and where each comes from.
+  `lobe set capture off` stops recording from the next tool call, and `lobe set capture on` starts it again; `lobe set`
+  answers only to a person, after a typed yes. With capture off no event is written. A `stop` that runs while capture is
+  off moves the session's cursor to the end of the transcript (reading at most its last 1 MiB, parsing nothing) when the
+  client's store exists, so a call rejected while capture was off is not read later. Not covered: a call rejected in a
+  turn whose `stop` runs after capture is back on, and a client with no store yet (not rendered since this version).
+  `lobe set` writes only the lobe lines of a manifest tentaqles wrote; a hand-formatted manifest is re-indented to 4 spaces. `tentaqles doctor` reports the memory's eight findings with the client's
+  name (a broken store, a missing or wrong hook, a wrong setting, failing hook calls). A render now creates each client's
+  memory store, so `tentaqles settings render` and `tentaqles reach` leave it in place.
 - **A call Claude Code rejected before it ran is recorded too.** An edit whose text is not in the file fails Claude
   Code's own check and fires no tool hook. The plugin's new `Stop` hook runs `tentaqles lobe-hook claude stop` when
   the agent ends its turn; it reads the new part of the session's transcript, only inside the session's own login

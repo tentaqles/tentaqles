@@ -71,6 +71,7 @@ other_providers:
 | `scope` | list of provider ids | Providers the client uses besides its identities: team, data, agent and task tools, and anything with no config home of its own. Each must be a catalog id, once. | reach, `add`, `remove` |
 | `browsers` | list of `{name, profile}` | The client's browser profiles. `name` is `chrome` or `edge`, each at most once; `profile` is the profile's folder name (`Default`, `Profile 2`), not its display name. The first one is used by default. | reach, `add browser`, `remove browser` |
 | `other_providers` | list of strings | Names of tools tentaqles has no catalog entry for. Recorded only: tentaqles can neither isolate nor guard them. | reach, `add other`, `remove other` |
+| `lobe` | map of nine settings | The client's memory settings: `capture` (the only one that acts today) and eight more. See [The `lobe` key](#the-lobe-key). | `lobe set`, by hand |
 
 The three `blocked_commands` lists are one list for the hook. An entry matches at the start of a command or right
 after a separator (`&&`, `;`, `|`, `&`, `$(`, a backtick, a bracket).
@@ -151,6 +152,47 @@ scope:
 | `vi` | Vietnamese | Tiếng Việt |
 
 The tag is matched without regard to case. Any other value fails to load.
+
+### The `lobe` key
+
+`lobe` holds the settings of the client's memory. The manifest's loader never checks it, so a wrong value cannot stop the
+identity guard: a wrong value only makes its setting take the safe value below. `lobe set` writes these keys, and you can
+also edit them by hand. Each setting is read on its own, with the defaults for any key that is not there:
+
+```yaml
+lobe:
+    capture: "off"
+    retention_days: 30
+```
+
+| Key | Values | Default | Safe value (a wrong value becomes it) | What acts on it |
+|---|---|---|---|---|
+| `capture` | `on`, `off` | `on` | `off` | Acts now: `off` stops the memory recording. |
+| `recall` | `on`, `off` | `on` | `off` | Read and shown; acts when the memory first speaks to Claude. |
+| `lessons` | `on`, `off` | `on` | `off` | Read and shown; acts with the lessons. |
+| `graph` | `on`, `off` | `on` | `off` | Read and shown; acts with the code graph. |
+| `enforce` | `off`, `advice`, `block` | `advice` | `off` | Read and shown; acts with the rule enforcer. `block` acts as advice until blocking ships. |
+| `share` | `private`, `shared` | `private` | `private` | Read and shown; acts with sharing. |
+| `model` | `on`, `off` | `on` | `off` | Read and shown; acts with the model. |
+| `documents` | `on`, `off` | `off` | `off` | Read and shown; acts with documents. It needs `model` and `graph` on. |
+| `retention_days` | a whole number from 1 to 365 | `14` | `14` | Read and shown; acts with the sweep of old events. |
+
+Only `capture` acts today. Each other key is read and shown by `tentaqles lobe settings`, and does what its column says once
+that feature ships. Until then, setting one changes nothing you can observe.
+
+With `capture` off no event is written. A `stop` that runs while capture is off moves the session's cursor to the end of
+the transcript (reading at most its last 1 MiB, parsing nothing) when the client's store exists, so a call rejected while
+capture was off is not read later. Two cases are not covered: a call rejected in a turn whose `stop` runs after capture is
+already back on, and a client with no store yet (not rendered since this version).
+
+Values are read whatever their case, and with spaces around them. `on` and `off` are read bare or quoted, and `true`,
+`false`, `yes` and `no` are read as `on` and `off` too. `lobe set` writes `on` and `off` in double quotes, because YAML 1.1
+reads a bare `on` or `off` as a boolean.
+
+A wrong value (a word outside the list, a number out of range) is read as the safe value, and `tentaqles lobe settings`
+marks it `(invalid)`. `tentaqles doctor` reports one `lobe-setting-invalid` finding for the client. A `lobe` value that is not a
+mapping, such as `lobe: 7`, makes all nine keys invalid. An empty `lobe:` means the defaults. No environment variable
+overrides these settings.
 
 ## The marker
 

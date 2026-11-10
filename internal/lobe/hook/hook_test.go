@@ -209,6 +209,11 @@ func TestLobeSenseFailureSkips(t *testing.T) {
 			return payloadJSON("s1", f.app("acme"), "Bash", "toolu_01", "npm run buld",
 				"The user doesn't want to proceed with this tool use.")
 		}},
+		{"capture off", func(t *testing.T, f fixture) string {
+			setLogin(t, f, "acme")
+			appendManifestLobe(t, f, "acme", "capture: off")
+			return failureJSON(f)
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

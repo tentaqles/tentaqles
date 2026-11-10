@@ -377,3 +377,13 @@ func TestPreToolUse_CloudAlsoAliasAndPrimaryAlias(t *testing.T) {
 		}
 	}
 }
+
+// A lobe value that is not a mapping never makes the guard deny: the manifest still loads (the lobe is
+// never validated), and a read-only git status is allowed (F-06 "How to build it").
+func TestLobeBadSettingNeverBreaksTheGuard(t *testing.T) {
+	ws := setupTrustedWorkspaceWithManifest(t, "acme", "lobe: [1, 2]\n")
+	code, _, errOut := runHook(t, []string{"claude-hook", "pre-tool-use"}, hookPayloadFor(t, ws, "git status"))
+	if code != 0 {
+		t.Fatalf("git status with lobe: [1, 2]: code=%d stderr=%q, want 0", code, errOut)
+	}
+}

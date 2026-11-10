@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/tentaqles/tentaqles/internal/claudesettings"
 	"github.com/tentaqles/tentaqles/internal/codexconfig"
 	"github.com/tentaqles/tentaqles/internal/envplan"
+	"github.com/tentaqles/tentaqles/internal/lobe/store"
 	"github.com/tentaqles/tentaqles/internal/paths"
 	"github.com/tentaqles/tentaqles/internal/registry"
 	"github.com/tentaqles/tentaqles/internal/resolve"
@@ -105,6 +107,9 @@ Only entries tq wrote earlier are ever removed; anything added by hand stays.
 					return fmt.Errorf("%s: %w", ws.Name, err)
 				}
 				renderScope(c, ws, dryRun)
+				if !dryRun {
+					openLobeStore(c, ws)
+				}
 			}
 			if n == 0 {
 				return fmt.Errorf("no matching client")
@@ -145,10 +150,24 @@ func renderIdentityFiles(c *cobra.Command, ws *resolve.Workspace) {
 			fmt.Fprintf(c.ErrOrStderr(), "warning: %s: Claude settings not rendered: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
 		}
 	}
+	openLobeStore(c, ws)
 	if err := renderCodex(c, ws, false); err != nil {
 		fmt.Fprintf(c.ErrOrStderr(), "warning: %s: codex config not rendered: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
 	}
 	renderScope(c, ws, false)
+}
+
+// openLobeStore opens the client's lobe store read-write, once per render (F-01 step 3): it creates the
+// store when it is absent. When the client's identity folder does not exist, there is nothing to open and
+// the step is skipped without a warning. A refusal is a warning line and never an error; the render goes
+// on, and tentaqles doctor reports the store.
+func openLobeStore(c *cobra.Command, ws *resolve.Workspace) {
+	if _, err := os.Stat(paths.IdentityDir(ws.Name, "")); errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if _, err := store.Open(ws.Name, store.ReadWrite); err != nil {
+		fmt.Fprintf(c.ErrOrStderr(), "warning: %s: lobe store not opened: %v (run tentaqles settings render %s)\n", ws.Name, err, ws.Name)
+	}
 }
 
 // codexScope is the catalog provider whose scope puts a client's Codex config under tentaqles' care.

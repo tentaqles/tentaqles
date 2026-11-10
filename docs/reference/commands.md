@@ -38,6 +38,11 @@ client's manifest lives at `~/.tentaqles/identities/<client>/manifest.yaml` (`$T
 | [`tentaqles providers check`](#tentaqles-providers-check) | Check which provider CLIs are installed |
 | [`tentaqles providers add`](#tentaqles-providers-add) | Add or override a provider with a file of your own |
 | [`tentaqles version`](#tentaqles-version) | Print the version and commit |
+| **The client's memory** | |
+| [`tentaqles lobe status`](#tentaqles-lobe-status) | Show the client's memory: store, settings, event counts and hook wiring |
+| [`tentaqles lobe events`](#tentaqles-lobe-events) | Print the newest 20 stored event lines |
+| [`tentaqles lobe settings`](#tentaqles-lobe-settings) | Print the nine lobe settings and where each value comes from |
+| [`tentaqles lobe set`](#tentaqles-lobe-set) | Change one lobe setting, for a person only (`capture on` or `off` switches recording) |
 | **Test setup** | |
 | [`tentaqles lobe sandbox`](#tentaqles-lobe-sandbox) | Build a throwaway home with two test clients, acme and globex |
 | **Used by the Claude Code plugin** | |
@@ -744,6 +749,20 @@ Each finding has a level (`ok`, `info`, `warn`, `error`), a message and, when th
 when any finding is an error, including when there are no clients yet. See [Troubleshooting](../troubleshooting.md)
 for each finding.
 
+For each client, doctor also reports the memory's findings (see [`tentaqles lobe status`](#tentaqles-lobe-status)). Each
+names the client:
+
+| Code | Level | Reported when | Fix |
+|---|---|---|---|
+| `lobe-store-linked` | error | `identities`, `identities/<client>` or `lobe` is a link or a junction. | Replace the link with a real folder. |
+| `lobe-store-foreign` | error | `store.json` names another client. | Move that `store.json` aside. The next render or `tentaqles lobe` command creates a new one. |
+| `lobe-store-missing` | warn | The store is absent after a render. | Run `tentaqles settings render <client>`, or any `tentaqles lobe` command, which creates it. |
+| `lobe-store-unreadable` | warn | `store.json` does not parse. | Move that `store.json` aside. The next render or `tentaqles lobe` command creates a new one. |
+| `lobe-store-version` | warn | `store.json` has a version newer than this tentaqles. | Upgrade tentaqles. |
+| `lobe-hooks-missing` | warn | The tentaqles plugin is installed without the memory's hook entries. | Update or reinstall the tentaqles plugin. |
+| `lobe-setting-invalid` | warn | A value under `lobe` in the manifest is outside its list. One finding per client, however many keys are wrong. | Run `tentaqles lobe settings` to see the `(invalid)` keys, then `tentaqles lobe set <key> <value>` or `default`. |
+| `lobe-hook-failing` | warn | `stats/hook-errors.jsonl` in the client's memory folder holds 5 or more lines from the last 24 hours. | Read the lines in that file to find the failing step. |
+
 ### Flags
 
 | Flag | Default | Description |
@@ -1018,6 +1037,266 @@ The command's writer children run the same program with hidden flags. A person n
 
 ---
 
+## tentaqles lobe status
+
+Show what the client's memory holds: its store, its settings, its event counts and whether its Claude Code plugin wires the
+memory's hooks.
+
+### Synopsis
+
+```
+tentaqles lobe status [--client <name>] [--json]
+```
+
+### Description
+
+`lobe status` works on the client of the current folder, or on `--client`. It prints, in order:
+
+- `client:` the client's name;
+- `store:` `ok` when the store opens. A store that is refused stops the command with one line that names `store.json` or
+  the linked folder;
+- `settings:` the nine settings, one per line, as `lobe settings` prints them;
+- `events:` the stored event lines in total, then by kind (`fail`, `ok`, `hidden_fail`), the number of day files and the
+  broken lines skipped;
+- `hooks: claude` followed by `ok` (the plugin's `hooks/hooks.json` names the memory's script), `missing` (a plugin is
+  installed without it) or `none` (no plugin is installed for the client);
+- one more line when `CLAUDE_CONFIG_DIR` is unset or is not the client's own Claude login folder. It says the memory's hooks
+  do nothing in this terminal, and names the value to start Claude Code with.
+
+```
+client: acme
+store: ok
+settings:
+  capture=on (default)
+  recall=on (default)
+  lessons=on (default)
+  graph=on (default)
+  enforce=advice (default)
+  share=private (default)
+  model=off (manifest)
+  documents=off (default)
+  retention_days=14 (default)
+events: total 3 (fail 3, ok 0, hidden_fail 0), 1 day file(s), skipped 0
+hooks: claude ok
+```
+
+`--json` prints one compact object on one line:
+
+```
+{"client":"acme","store":{"state":"ok","v":1},"settings":{"capture":"on",...,"retention_days":14},"events":{"total":3,"fail":3,"ok":0,"hidden_fail":0,"days":1,"skipped":0},"hooks":{"claude":"ok"}}
+```
+
+The keys `client`, `store`, `settings`, `events` and `hooks` are kept. Later features add keys to `events` and `hooks`.
+
+A verb opens the client's store read-write, so a store that is absent is created by the first `lobe` command that runs. That
+is why `lobe status` can make `lobe-store-missing` go away.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--client <name>` | the current folder's client | The client to read: its name, or its folder. |
+| `--json` | off | Print one compact JSON line. |
+
+### Agent sessions
+
+Inside a Claude Code session (`CLAUDECODE` set), the command works only on that session's own client. `--client` is accepted
+only when it names the client of the current folder. Any other client, or any client from a neutral folder, exits 1 and
+prints nothing of its store. Inside a session, the command also refuses with exit 1 and prints nothing from the store when
+`CLAUDE_CONFIG_DIR` or `CODEX_HOME` is set to anything but this client's own login folder. With both unset, it works.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The status was printed. |
+| 1 | No client, a refused store, a refused `--client`, or a login that is not the client's own. Nothing from the store is printed. |
+
+---
+
+## tentaqles lobe events
+
+Print the client's newest stored event lines, as they are on disk.
+
+### Synopsis
+
+```
+tentaqles lobe events [--client <name>]
+```
+
+### Description
+
+`lobe events` prints the newest stored lines of the client's event log, one JSON object per line, oldest of the selection
+first. At most 20 lines are printed. It reads the newest day file first and continues into older day files until it has 20
+lines. Each line is printed as it is stored, with secrets already replaced by a marker. A line that is not a whole JSON
+object is skipped, so one broken line does not stop the command.
+
+When the log is empty, or the client has no store, it prints nothing and exits 0.
+
+Like `lobe status`, it works on the client of the current folder, or on `--client`, and it follows the same rules.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--client <name>` | the current folder's client | The client to read: its name, or its folder. |
+
+### Agent sessions
+
+The same rules as `lobe status`. Inside a Claude Code session it reads only that session's own client, under that client's
+login, and refuses any other with exit 1.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The lines were printed, or the log is empty. |
+| 1 | No client, a refused store, a refused `--client`, or a login that is not the client's own. |
+
+---
+
+## tentaqles lobe settings
+
+Print the client's nine lobe settings, and where each value comes from.
+
+### Synopsis
+
+```
+tentaqles lobe settings [--client <name>] [--json]
+```
+
+### Description
+
+`lobe settings` prints one line per setting, in this order: `capture`, `recall`, `lessons`, `graph`, `enforce`, `share`,
+`model`, `documents`, `retention_days`. Each line is `key=value (source)`. The source is one of:
+
+- `default`: the manifest does not set the key;
+- `manifest`: the manifest sets it to a value from the key's list;
+- `invalid`: the manifest holds a value outside the list. The printed value is the key's safe value, which is what the
+  memory uses.
+
+A key that is on but cannot act because a key it needs is off says so: `documents=on (manifest, needs model)`.
+
+Only `capture` acts today. The other eight are read and shown, and each acts when its feature ships. See
+[the manifest's `lobe` key](manifest.md#the-lobe-key).
+
+`--json` prints one compact object on one line, with the nine keys and their effective values. `retention_days` is a number,
+the others are strings.
+
+```
+tentaqles lobe settings
+capture=on (default)
+...
+retention_days=14 (default)
+
+tentaqles lobe settings --json
+{"capture":"on","recall":"on","lessons":"on","graph":"on","enforce":"advice","share":"private","model":"off","documents":"off","retention_days":14}
+```
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--client <name>` | the current folder's client | The client to read: its name, or its folder. |
+| `--json` | off | Print one compact JSON object on one line. |
+
+### Agent sessions
+
+The same rules as `lobe status`. The command only reads, so a Claude Code session may run it on its own client.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The settings were printed. |
+| 1 | No client, a refused `--client`, or a login that is not the client's own. |
+
+---
+
+## tentaqles lobe set
+
+Change one of the client's lobe settings. For a person only.
+
+### Synopsis
+
+```
+tentaqles lobe set <key> <value> [--client <name>] [--yes]
+```
+
+### Description
+
+`lobe set` changes one setting in the client's manifest, under the `lobe` key, and only its lines. It lists the change and asks
+for a typed yes; `--yes` (or `-y`) skips the question. Anything but `yes` changes nothing.
+
+| Key | Values | Default |
+|---|---|---|
+| `capture` | `on`, `off` | `on` |
+| `recall`, `lessons`, `graph`, `model` | `on`, `off` | `on` |
+| `enforce` | `off`, `advice`, `block` | `advice` |
+| `share` | `private`, `shared` | `private` |
+| `documents` | `on`, `off` | `off` |
+| `retention_days` | a whole number from 1 to 365 | `14` |
+
+The value `default` removes the key, so the setting takes its default again. When the `lobe` mapping is then empty, it is
+removed too. `on` and `off` are written in double quotes in the manifest (`capture: "off"`), because YAML 1.1 reads a bare
+`on` or `off` as a boolean. Reading takes either form.
+
+Only the lobe lines change. On a manifest that tentaqles wrote, every line outside `lobe` keeps its bytes. A hand-formatted
+manifest is re-indented to tentaqles' format (4 spaces), as `tentaqles add` does, so its other lines may change indentation.
+A comment above a key that is removed goes with it. A new `lobe` mapping is added as the last top-level key. The new
+manifest is checked before it is written, and written with mode 0600. The manifest is read again after the typed yes: if it
+changed meanwhile, nothing is written, the command exits 1 and says so, and you run it again. When the value is already the
+one set, it prints `Nothing changed.` and writes nothing.
+
+The command prints the change before it writes, for example:
+
+```
+tentaqles lobe set: about to change the client acme (lobe.capture: on -> off) and rewrite its manifest ...
+```
+
+After a change it may print one reminder line for a pair of values that surprises:
+
+- `recall is off, but enforce is block: an approved block rule still denies.`
+- `documents is on, but no document is read while model or graph is off.`
+- `enforce is block, which acts as advice until blocking ships.`
+
+`lobe set` changes the setting. It does not act on it: the key takes effect when its feature ships. For `capture`, the
+switch takes effect from the next tool call.
+
+An unknown key, a value outside the key's list, a `lobe` value that is not a mapping (fix it by hand), or a manifest that
+does not parse each exits 1 with nothing written.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--client <name>` | the current folder's client | The client to change: its name, or its folder. |
+| `--yes`, `-y` | off | Do not ask for the typed yes. |
+
+### Examples
+
+```
+cd ~/clients/acme
+tentaqles lobe set capture off
+tentaqles lobe set capture default
+tentaqles lobe set enforce advice --client acme --yes
+```
+
+### Agent sessions
+
+`lobe set` refuses inside any Claude Code session (`CLAUDECODE` set), with exit 1, before it reads anything, and changes
+nothing there. It is for a person's own terminal, outside Claude Code. There, it works on the current folder's client, or on
+any client named with `--client`.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The setting was changed, or nothing changed. |
+| 1 | A refusal (inside a Claude Code session, an unknown key or value, a manifest that does not parse), or the change was not confirmed. Nothing was written. |
+
+---
+
 ## tentaqles lobe-hook claude
 
 The entry point of the memory's hooks. The Claude Code plugin starts it; you don't.
@@ -1053,6 +1332,12 @@ path lies inside `<CLAUDE_CONFIG_DIR>/projects/`. It records each `tool_result` 
 starts with `<tool_use_error>`, once per call id, and skips an id already in the log. Its position is kept in
 `cursors/<session>.json` in the client's store. At most 8 MiB of the transcript is read per run. A run with nothing to
 record creates no store.
+
+With `capture` off (`tentaqles lobe set capture off`) no event is written, and the hook prints nothing. Lines already in the
+log stay, and `tentaqles lobe events` still reads them. A `stop` that runs while capture is off moves the session's cursor
+to the end of the transcript (reading at most its last 1 MiB, parsing nothing) when the client's store exists, so a call
+rejected while capture was off is not read later. Two cases are not covered: a call rejected in a turn whose `stop` runs
+after capture is already back on, and a client with no store yet (not rendered since this version).
 
 Setting `TQ_LOBE_NO_HOOKS=1` switches the hooks off. A person never needs to run this command.
 

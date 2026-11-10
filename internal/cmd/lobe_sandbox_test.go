@@ -5,8 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -102,6 +100,12 @@ func TestLobeSandbox_BuildsTheStandardPair(t *testing.T) {
 		}
 		if _, err := manifest.Load(paths.ManifestPath(name)); err != nil {
 			t.Errorf("%s manifest does not load: %v", name, err)
+		}
+	}
+	// Two stores: the render of each client opens its lobe store (F-01 step 3).
+	for _, name := range []string{"acme", "globex"} {
+		if _, err := os.Stat(filepath.Join(paths.LobeDir(name), "store.json")); err != nil {
+			t.Errorf("%s has no lobe store after the sandbox render: %v", name, err)
 		}
 	}
 	cfg, err := registry.Load()
@@ -252,14 +256,69 @@ func TestLobeSandbox_WorksInsideAnAgent(t *testing.T) {
 	}
 }
 
+// TestLobeCommandTable: every command under lobe and lobe-hook is a row of the table, and under
+// CLAUDECODE=1 exactly the person rows refuse. Each later lobe feature adds its rows here.
 func TestLobeCommandTable(t *testing.T) {
-	var names []string
-	for _, c := range newLobeCmd().Commands() {
-		names = append(names, c.Name())
+	// The rows built so far (F-07 step 1, "lobe <verb>" or "lobe-hook <verb>").
+	rows := []string{
+		"lobe sandbox", "lobe selftest", "lobe status", "lobe events", "lobe settings", "lobe set",
+		"lobe-hook claude",
 	}
-	sort.Strings(names)
-	// Each later lobe feature adds its own row here.
-	if want := []string{"sandbox", "selftest"}; !slices.Equal(names, want) {
-		t.Fatalf("lobe subcommands = %v, want %v", names, want)
+	// The rows marked "yes" in F-07 step 1: they answer only to a person.
+	person := map[string]bool{"lobe set": true}
+
+	root := NewRoot()
+	registered := map[string]bool{}
+	for _, g := range root.Commands() {
+		if g.Name() != "lobe" && g.Name() != "lobe-hook" {
+			continue
+		}
+		for _, c := range g.Commands() {
+			registered[g.Name()+" "+c.Name()] = true
+		}
+	}
+	want := map[string]bool{}
+	for _, r := range rows {
+		want[r] = true
+		if !registered[r] {
+			t.Errorf("tentaqles %s is in the table but not registered", r)
+		}
+	}
+	for p := range registered {
+		if !want[p] {
+			t.Errorf("tentaqles %s is registered but has no row in the table", p)
+		}
+	}
+
+	// Inside an agent session only the person rows refuse. Each row runs with inputs that change nothing:
+	// the sandbox is given a folder its home is not inside, so it refuses, and the readers have no client.
+	t.Setenv("CLAUDECODE", "1")
+	for _, r := range rows {
+		if !registered[r] {
+			continue
+		}
+		args := strings.Fields(r)
+		switch r {
+		case "lobe set":
+			args = append(args, "capture", "off", "--yes")
+		case "lobe sandbox":
+			args = append(args, filepath.Join(t.TempDir(), "sandbox"))
+		case "lobe-hook claude":
+			args = append(args, "session-start")
+		}
+		var out bytes.Buffer
+		root := NewRoot()
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetIn(strings.NewReader(""))
+		root.SetArgs(args)
+		err := root.Execute()
+		refused := err != nil && strings.Contains(err.Error(), "for a person")
+		if person[r] && !refused {
+			t.Errorf("tentaqles %s did not refuse inside an agent session (err=%v)", r, err)
+		}
+		if !person[r] && refused {
+			t.Errorf("tentaqles %s refused as a person-only command, but its row says no: %v", r, err)
+		}
 	}
 }

@@ -168,3 +168,23 @@ func TestEdit_RefusesBadAnswers(t *testing.T) {
 		t.Fatal("a secret-shaped profile was accepted")
 	}
 }
+
+// A lobe key is not reach's to change: reach.Edit keeps its mapping byte for byte, here while the form
+// changes the email and so re-encodes the manifest.
+func TestEdit_KeepsTheLobeKey(t *testing.T) {
+	const lobeBlock = "lobe:\n    capture: \"off\"\n    model: off\n"
+	raw := []byte(handEdited + lobeBlock)
+	before := AnswersFrom(parse(t, raw))
+	after := AnswersFrom(parse(t, raw))
+	after.Email = "new@acme.test"
+	out, changes, _, _, err := Edit(raw, before, after)
+	if err != nil || len(changes) == 0 {
+		t.Fatalf("err=%v changes=%v", err, changes)
+	}
+	if !strings.HasSuffix(string(out), lobeBlock) {
+		t.Fatalf("lobe mapping changed:\n%s", out)
+	}
+	if m := parse(t, out); m.Lobe.Kind == 0 {
+		t.Fatal("the lobe node was lost")
+	}
+}

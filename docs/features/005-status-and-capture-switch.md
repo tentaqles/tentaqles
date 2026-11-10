@@ -106,7 +106,9 @@ tentaqles doctor
    `false`, `yes` and `no` are read as well. No environment variable overrides a setting.
 3. **`capture`**: values `on`, `off`; default `on`; wrong value `off`. While it is off no event is written
    and the hook still exits 0 with no output; what is in the log stays and can be read. Switched back on,
-   recording starts with the next call and nothing from the off period is recovered (F-06 step 1). The hook
+   recording starts with the next call. A call rejected while it was off is not recovered: a `stop` during
+   that time moves the session's cursor to the end of the transcript (see the brief check), so such a call
+   is not read later, except in the two cases the brief check lists (F-06 step 1). The hook
    reads the settings after the client rule and before `store.Open`, the order of F-02 step 5; an unreadable
    manifest ends the hook with no output. The check itself sits in Sense (S-01 step 2).
 4. **`tentaqles lobe settings`** prints one line per key in the order `capture`, `recall`, `lessons`,
@@ -161,6 +163,21 @@ tentaqles doctor
 11. **The render step.** `renderIdentityFiles` calls `store.Open(ws, ReadWrite)` once, after the Claude
     settings. A refusal is a warning line, never an error: the render goes on. The sandbox runs the same
     step, so both sandbox clients have a store before any hook runs.
+
+### Brief check (task 1), 2026-11-10
+
+- `Manifest.Lobe` does not exist yet; this feature adds it. The sandbox writes `lobe:\n  model: off\n` last
+  and renders each client through `renderIdentityFiles`, so step 11 gives both sandbox clients a store.
+- The hook's steps are `S-01` (`post-tool-use-failure`, 003/004) and `S-01R` (`stop`, feature 063, added after
+  this brief). `capture: off` stops both from writing any event: the settings read sits in `work()` after the
+  client rule and before any store is opened. The `stop` step is the exception to "nothing else": with capture
+  off it moves the session's cursor to the end of the transcript (`skipToEnd`, reading at most the last 1 MiB,
+  parsing nothing) when the client's store exists, so a call rejected while capture was off is not read later.
+  Not covered: a call rejected in a turn whose `stop` runs after capture is back on, and a client with no store
+  yet (not rendered since this version).
+- `insideAgent` is `internal/cmd/run.go` L283, `refuseOtherWorkspace` L288, `confirm` `reach.go` L144,
+  `applyEdit` L295, `writeFileAtomic` L348, `renderIdentityFiles` `settings.go` L137, `doctor.Run` L54,
+  `doctor.Exit` L200. The other anchors stand.
 
 ## Where to read
 
@@ -388,7 +405,7 @@ Run them in `clients/acme`, before the tester's check 10 or in a fresh sandbox.
   (`TestLobeAgentCannotReadAnotherClient`, `TestLobeCommandRefusesAnotherLogin`,
   `TestLobePersonVerbsRefuseInAgent`, `TestLobeSet_ChangesOnlyTheLobeKey`).
 - [ ] `docs/reference/commands.md`, `docs/reference/manifest.md` and `CHANGELOG.md` are updated.
-- [ ] The owner has switched capture off and on in a client of their own and seen it in the log (Person
+- [x] The owner has switched capture off and on in a client of their own and seen it in the log (Person
   check 7).
 
 ## Risks and unknowns
@@ -413,3 +430,37 @@ Run them in `clients/acme`, before the tester's check 10 or in a fresh sandbox.
 - **A `yaml.Node` field in the manifest type** is new there. Any code that writes a manifest by marshaling
   the type must carry the node through unchanged; `workspace.Add` and `reach.Edit` are the two writers to
   check in task 1.
+
+## Result of the build, the review and the tester run
+
+Built on 2026-11-10 by eight Haiku builders (settings, readers, command rules, the capture switch, `lobe
+settings`/`lobe set`, `lobe events`/`lobe status`, health and the render step, docs), reviewed as one change by
+a Sonnet reviewer, fixed in one round by a Haiku builder; the main session wrote the capture-off cursor move.
+
+- **Brief changes.** `Manifest.Lobe` is a `yaml.Node` value, not a pointer: yaml.v3 does not hand a pointer field
+  the raw node, and `lobe: 7` failed to parse. `retention_days` is a JSON number in both `--json` forms.
+- **Capture off and the transcript (063).** The builder of the capture switch found that a call rejected while
+  capture was off would be read by the first `stop` after it was on again. A `stop` while capture is off now
+  moves the session's cursor to the end of the transcript when the store exists
+  (`TestLobeCaptureOffRejectedNeverRecovered`). Two cases stay open and are documented: a turn whose `stop`
+  runs after capture is already back on, and a client with no store yet.
+- **The review** confirmed the core rules (another client and another login refused in a session, `lobe set`
+  person-only, doctor never creates a store, a bad `lobe` value never breaks the guard, import rules) and
+  found, all fixed with tests: `--client globex` resolved to a subfolder named `globex` of the current client;
+  `lobe set` could overwrite an edit made while it waited for yes; the `lobe-setting-invalid` fix text was
+  wrong for a `lobe` that is not a mapping; an unbounded read of the hook error file; a spurious warning when
+  `reach` renders before the identity folder exists; no test kept `internal/doctor` free of lobe code. The
+  docs no longer claim every other manifest line stays: on a manifest tentaqles wrote only the `lobe` lines
+  change, a hand-formatted one is re-indented, as `tentaqles add` does.
+- Tests: `go vet`, `go build` and `go test ./... -count=1` green on Windows; the plugin suite 34 passed.
+- Tester brief: 10 of 10 on Windows 11 in Git Bash against a program built from the working tree.
+
+Person checks, 2026-11-10, by the owner: 1 to 6 in the `tqx` playground, all as expected (the first `set`
+re-indented the sandbox's two-space `lobe` block to four spaces, the only lines that changed; a `no` at the
+prompt wrote nothing; the reminder lines appeared). Check 7 in yduqs: `lobe status` and `lobe events` showed
+the five failures of the owner's earlier sessions, scrubbed; with `capture off` a failed `ls` in a Claude Code
+session added nothing (still 5); `capture default` brought it back to `on (default)`. `hooks: claude missing`
+there is right: the installed plugin is the released one, without the memory's entries; the session loaded the
+checkout's plugin through `--plugin-dir`.
+
+Left open: CI on Linux and macOS.
