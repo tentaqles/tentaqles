@@ -22,6 +22,8 @@ const lobeHookName = "lobe_hook.sh"
 // eventCounts are the event lines of a store: all of them, by kind, the day files and the broken lines.
 type eventCounts struct {
 	Total, Fail, OK, HiddenFail, Days, Skipped int
+	// Fingerprints is the number of distinct fp values of the lines that carry one.
+	Fingerprints int
 }
 
 // statusDoc is the `lobe status --json` object. Later features add keys; none is renamed. Settings is the
@@ -46,6 +48,8 @@ type eventsDoc struct {
 	HiddenFail int `json:"hidden_fail"`
 	Days       int `json:"days"`
 	Skipped    int `json:"skipped"`
+	// Fingerprints is the number of distinct fp values in the day files.
+	Fingerprints int `json:"fingerprints"`
 }
 
 // Status prints what the lobe of the client holds: the client, the store's state, the nine settings, the
@@ -79,7 +83,7 @@ func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound
 			Settings: json.RawMessage(settingsJSON(set)),
 			Events: eventsDoc{
 				Total: counts.Total, Fail: counts.Fail, OK: counts.OK, HiddenFail: counts.HiddenFail,
-				Days: counts.Days, Skipped: counts.Skipped,
+				Days: counts.Days, Skipped: counts.Skipped, Fingerprints: counts.Fingerprints,
 			},
 			Hooks: map[string]string{"claude": hooks},
 		}
@@ -93,8 +97,8 @@ func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound
 	for _, line := range set.Lines() {
 		fmt.Fprintf(&b, "  %s\n", line)
 	}
-	fmt.Fprintf(&b, "events: total %d (fail %d, ok %d, hidden_fail %d), %d day file(s), skipped %d\n",
-		counts.Total, counts.Fail, counts.OK, counts.HiddenFail, counts.Days, counts.Skipped)
+	fmt.Fprintf(&b, "events: total %d (fail %d, ok %d, hidden_fail %d), %d day file(s), skipped %d, %d fingerprint(s)\n",
+		counts.Total, counts.Fail, counts.OK, counts.HiddenFail, counts.Days, counts.Skipped, counts.Fingerprints)
 	fmt.Fprintf(&b, "hooks: claude %s\n", hooks)
 	if line := loginLine(d, ws.Name); line != "" {
 		fmt.Fprintln(&b, line)
@@ -107,12 +111,17 @@ func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound
 // counted by eventlog.Scan; a line whose kind is none of the three is counted in the total only.
 func countEvents(st *store.Store) (eventCounts, error) {
 	var c eventCounts
+	fps := map[string]bool{}
 	files, skipped, err := eventlog.Scan(st, func(line []byte) bool {
 		c.Total++
 		var e struct {
 			Kind string `json:"kind"`
+			FP   string `json:"fp"`
 		}
 		_ = json.Unmarshal(line, &e)
+		if e.FP != "" {
+			fps[e.FP] = true
+		}
 		switch e.Kind {
 		case "fail":
 			c.Fail++
@@ -128,6 +137,7 @@ func countEvents(st *store.Store) (eventCounts, error) {
 	}
 	c.Days = files
 	c.Skipped = skipped
+	c.Fingerprints = len(fps)
 	return c, nil
 }
 

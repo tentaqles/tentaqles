@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
+	"github.com/tentaqles/tentaqles/internal/lobe/fingerprint"
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
 )
 
@@ -421,6 +422,12 @@ func TestLobeSenseOutcome(t *testing.T) {
 	if line["id"] != out.ID {
 		t.Errorf("line id = %v, want %q", line["id"], out.ID)
 	}
+	// The fingerprint of a failure is the one fingerprint.Of gives for its tool and stored error, in the
+	// outcome and in the line alike.
+	wantFP, _ := fingerprint.Of(ev.Tool, ev.Error.String())
+	if out.FP != wantFP || line["fp"] != wantFP {
+		t.Errorf("FP: outcome %q, line %v, want %q", out.FP, line["fp"], wantFP)
+	}
 
 	// A tool that is not a shell tool: its outcome carries the call text CallText gives it, and its tool name.
 	mcpInput := json.RawMessage(`{"n":4411}`)
@@ -431,6 +438,9 @@ func TestLobeSenseOutcome(t *testing.T) {
 	}
 	if want := CallText("mcp__acme__ping", mcpInput); mcpOut.Call != want || mcpOut.Tool != "mcp__acme__ping" {
 		t.Errorf("MCP outcome Call/Tool = %q/%q, want %q/mcp__acme__ping", mcpOut.Call, mcpOut.Tool, want)
+	}
+	if want, _ := fingerprint.Of("mcp__acme__ping", "widget 4411 is not frobnicated"); mcpOut.FP != want {
+		t.Errorf("MCP outcome FP = %q, want %q", mcpOut.FP, want)
 	}
 
 	// A fresh store whose events path is a regular file cannot take the line.
@@ -445,8 +455,90 @@ func TestLobeSenseOutcome(t *testing.T) {
 	if out.Kind != eventlog.KindFail {
 		t.Errorf("Kind = %q, want fail", out.Kind)
 	}
+	if out.FP != wantFP {
+		t.Errorf("dropped FP = %q, want %q", out.FP, wantFP)
+	}
 	if err == nil {
 		t.Error("Record returned no error for a failed write")
+	}
+}
+
+// TestLobeSenseFingerprintInLine: one failure per tool class (shell, edit, read, web, mcp:<server>, other)
+// writes a line whose fp is the one fingerprint.Of gives for that line's own tool and error. A shell failure
+// whose error was only "Exit code 3" has exit 3, no error and the fp of "<empty>". An ok line has no fp.
+func TestLobeSenseFingerprintInLine(t *testing.T) {
+	s := setup(t)
+	now := fixedNow()
+	calls := []Call{
+		{Session: "s1", Tool: "Bash", CallID: "c-shell", Input: json.RawMessage(`{"command":"npm run buld"}`), Error: "Exit code 1\nnpm error Missing script: buld"},
+		{Session: "s1", Tool: "Edit", CallID: "c-edit", Input: json.RawMessage(`{"file_path":"a.txt"}`), Error: "String to replace not found in file"},
+		{Session: "s1", Tool: "Read", CallID: "c-read", Input: json.RawMessage(`{"file_path":"missing.txt"}`), Error: "File does not exist: /work/missing.txt"},
+		{Session: "s1", Tool: "WebFetch", CallID: "c-web", Input: json.RawMessage(`{"url":"https://example.test/x"}`), Error: "HTTP 404 Not Found"},
+		{Session: "s1", Tool: "mcp__acme__ping", CallID: "c-mcp", Input: json.RawMessage(`{"n":4411}`), Error: "widget 4411 is not frobnicated"},
+		{Session: "s1", Tool: "TodoWrite", CallID: "c-other", Input: json.RawMessage(`{}`), Error: "Unknown todo state: 7"},
+		{Session: "s1", Tool: "Bash", CallID: "c-exit3", Input: json.RawMessage(`{"command":"tool --check"}`), Error: "Exit code 3"},
+	}
+	for _, c := range calls {
+		if _, err := Record(context.Background(), s, FromClaudeFailure(c, Place{Cwd: "."}, now), c); err != nil {
+			t.Fatalf("Record %s: %v", c.CallID, err)
+		}
+	}
+	ok := Call{Session: "s1", Tool: "Bash", CallID: "c-grep", Input: json.RawMessage(`{"command":"grep -n zzz notes.txt"}`), Error: "Exit code 1"}
+	if _, err := Record(context.Background(), s, FromClaudeFailure(ok, Place{Cwd: "."}, now), ok); err != nil {
+		t.Fatalf("Record grep: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(s.Dir(), "events", "events-20261109.jsonl"))
+	if err != nil {
+		t.Fatalf("read day file: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != len(calls)+1 {
+		t.Fatalf("%d lines, want %d", len(lines), len(calls)+1)
+	}
+	parsed := make([]map[string]any, len(lines))
+	for i, raw := range lines {
+		if err := json.Unmarshal([]byte(raw), &parsed[i]); err != nil {
+			t.Fatalf("line %d does not parse: %v", i+1, err)
+		}
+	}
+
+	for i, c := range calls {
+		line := parsed[i]
+		if line["kind"] != "fail" {
+			t.Errorf("line %d kind = %v, want fail", i+1, line["kind"])
+		}
+		tool, _ := line["tool"].(string)
+		errText, _ := line["error"].(string)
+		want, _ := fingerprint.Of(tool, errText)
+		if tool != c.Tool || line["fp"] != want {
+			t.Errorf("line %d (%s): tool %q fp %v, want tool %q fp %q", i+1, c.Tool, tool, line["fp"], c.Tool, want)
+		}
+	}
+
+	// The shell failure with only "Exit code 3": exit 3, no error, the fp of an empty text.
+	exitLine := parsed[len(calls)-1]
+	wantEmpty, tpl := fingerprint.Of("Bash", "")
+	if tpl != "<empty>" {
+		t.Errorf("template of an empty text = %q, want <empty>", tpl)
+	}
+	if exitLine["exit"] != float64(3) {
+		t.Errorf("exit = %v, want 3", exitLine["exit"])
+	}
+	if _, has := exitLine["error"]; has {
+		t.Errorf("error = %v, want none", exitLine["error"])
+	}
+	if exitLine["fp"] != wantEmpty {
+		t.Errorf("fp = %v, want %q", exitLine["fp"], wantEmpty)
+	}
+
+	// The ok line (grep found nothing) has no fp.
+	okLine := parsed[len(parsed)-1]
+	if okLine["kind"] != "ok" {
+		t.Errorf("last line kind = %v, want ok", okLine["kind"])
+	}
+	if _, has := okLine["fp"]; has {
+		t.Errorf("ok line has fp %v", okLine["fp"])
 	}
 }
 

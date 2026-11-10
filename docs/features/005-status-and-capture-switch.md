@@ -468,4 +468,5 @@ its 20 ms limit; the scrubber did not change in 005; more test packages now run 
 the fastest of five batches, with the same limit, and `TestLobeScrubColdStart` times the first scrub of a fresh
 process (`79b2f962`). Its first run failed on Windows in `TestLobeReplaceUnderReader`: a raw read met the
 replaced file missing for an instant (33,080 of 735,946 reads) on a busy runner; the rerun was green on all
-three systems. The store's reader now retries that case (next commit).
+three systems. The store's reader now retries that case (`583fd273`), and that commit was green
+in CI on all three systems.

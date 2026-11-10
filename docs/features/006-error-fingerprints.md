@@ -295,7 +295,7 @@ There are no person checks. PASS needs 14 of 14. "Could not run" is a FAIL.
   "Must not trade off" in `CLAUDE.md` unedited
 - [ ] `docs/reference/commands.md` has the verb's section (`TestDocsReferenceEveryCommand` green) and
   `CHANGELOG.md` has its line
-- [ ] the owner has seen two differing errors print one fingerprint, and two log lines share an `fp`
+- [x] the owner has seen two differing errors print one fingerprint, and two log lines share an `fp`
 
 ## Risks and unknowns
 
@@ -316,3 +316,34 @@ There are no person checks. PASS needs 14 of 14. "Could not run" is a FAIL.
   values still in the log. F-07 does not say which of the two its "counts of fingerprints" means.
 - The core page's fingerprint shape lists `sessions` without a type, and S-08 does not say how a fold
   remembers which sessions it has counted between runs. That is for 018 to settle with the owner.
+
+## Result of the build, the review and the tester run
+
+Built on 2026-11-10 by four Haiku builders (class and signature, the mask scanner, `Of` and its vectors, the
+verb with the status count and docs), reviewed as one change by a Sonnet reviewer; the main session made the
+scrubber exemption, the wiring into `sense.Record` and the review's two fixes.
+
+- **Brief check (task 1).** The code fit. `Outcome.FP` and the event's `fp` key existed already, empty. Feature
+  063 (added after this brief) records through `sense.Record` too, so a rejected call gets its `fp` as well.
+- **The scrubber refused every line with an `fp`.** `fp_b4f3e92d90787db6` has the shape of a vendor key, so
+  `scrub.Line` returned `ErrUnsafe` and the line was dropped. The builder stopped instead of editing the
+  scrubber. The exemption admits only the fingerprint's own shape, `fp_` and exactly 16 lowercase hex digits;
+  any other `fp_` value of a key's shape is still redacted (`TestLobeScrubOwnFingerprint`). A real key of
+  exactly that shape would pass; none is known.
+- **The review found** a mask 4 bug: the keyword's token class took a capital word (`Error: HTTP 404`), was
+  rejected, and the number after it was lost, so `HTTP 404` and `HTTP 429` merged in that form. The token is now
+  exact (`TestLobeFingerprintKeywordBeforeCapitalWord`). It also found rule (a) reading JSON from a `{` inside a
+  traceback frame. S-08 says rule (a) applies when "the text from its first `{` parses as a JSON object"; the
+  code now requires the whole rest to be that one object, which also lets rule (b) find the traceback's last
+  line (`TestLobeFingerprintJSONMustBeTheWholeRest`). The five vectors of S-08 did not change.
+- **Known narrow case, left:** `echo x | tentaqles lobe fingerprint --tool Bash` run by an agent is not the
+  lobe's own tool (every statement must be), as for every lobe verb (004).
+- Tests: `go vet`, `go build` and `go test ./... -count=1` green on Windows; the plugin suite 34 passed.
+- Tester brief: 14 of 14 on Windows 11 in Git Bash against a program built from the working tree.
+
+The owner's check, 2026-11-10, in the `tqx` playground: the two `Get-ChildItem` errors printed one
+fingerprint, `fp_b4f3e92d90787db6`, and one template; two failed calls of `mcp__acme__ping` with
+`widget 4411` and `widget 97` left two lines with `"fp":"fp_48622a622f4928cc"`, and `tentaqles lobe status` showed
+2 events and 1 fingerprint.
+
+Left open: CI on Linux and macOS.

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,7 +88,7 @@ func TestLobeStatusCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"events":{"total":4,"fail":2,"ok":1,"hidden_fail":1,"days":1,"skipped":1}`,
+		`"events":{"total":4,"fail":2,"ok":1,"hidden_fail":1,"days":1,"skipped":1,"fingerprints":0}`,
 	} {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("%s is missing %s", buf.String(), want)
@@ -158,5 +159,39 @@ func TestLobeStatusRefusesOtherLoginInsideAgent(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Fatalf("refused status printed %q", buf.String())
+	}
+}
+
+// TestLobeStatusCountsFingerprints: the count is the distinct fp values of the lines that carry one. Five
+// failure lines of two fingerprints, one ok line and one broken line give 2; an empty log gives 0.
+func TestLobeStatusCountsFingerprints(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	writeDay(t, "20261109",
+		`{"v":1,"kind":"fail","fp":"fp_aaaaaaaaaaaaaaaa"}`,
+		`{"v":1,"kind":"fail","fp":"fp_bbbbbbbbbbbbbbbb"}`,
+		`{"v":1,"kind":"fail","fp":"fp_aaaaaaaaaaaaaaaa"}`,
+		`{"v":1,"kind":"fail","fp":"fp_bbbbbbbbbbbbbbbb"}`,
+		`{"v":1,"kind":"fail","fp":"fp_aaaaaaaaaaaaaaaa"}`,
+		`{"v":1,"kind":"ok"}`,
+		`{"v":`)
+	var buf bytes.Buffer
+	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"fingerprints":2}`) {
+		t.Fatalf("want fingerprints 2 in events: %s", buf.String())
+	}
+
+	// An empty log: no day file at all, then an empty day file.
+	if err := os.RemoveAll(filepath.Join(paths.LobeDir("acme"), "events")); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"fingerprints":0}`) {
+		t.Fatalf("an empty log must count 0 fingerprints: %s", buf.String())
 	}
 }

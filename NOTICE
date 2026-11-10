@@ -10,6 +10,7 @@ Trail-code
   https://github.com/trailhq/Trail-Code at e02b754c1d4e1de82b841522e2d8cae811702870
   License: MIT
   Copyright (c) 2026 Context Graph Engine contributors
+  Ported file: internal/lobe/fingerprint/signature.go (the line pick of src/trace/failure.ts)
 
 agentmemory
   https://github.com/rohitg00/agentmemory at 77f45358a8300299158e3a416e9010176408ea87

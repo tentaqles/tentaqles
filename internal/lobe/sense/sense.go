@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
+	"github.com/tentaqles/tentaqles/internal/lobe/fingerprint"
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
 )
 
@@ -27,7 +28,14 @@ const (
 // Record writes the event to the client's log and returns the outcome. When the write fails the
 // outcome's State is StateDropped and the error is returned too, for the caller to classify.
 func Record(ctx context.Context, s *store.Store, e eventlog.Event, c Call) (Outcome, error) {
+	// S-08: a failure gets its fingerprint from the event's own tool and scrubbed error, between the
+	// scrubbing (S-05, done when the event was built) and the append (S-07), so a reader can work the same
+	// fp out again from the stored line. An ok line has none.
+	if e.Kind == eventlog.KindFail {
+		e.FP, _ = fingerprint.Of(e.Tool, e.Error.String())
+	}
 	out := Outcome{
+		FP:      e.FP,
 		Session: e.Session,
 		ID:      e.ID,
 		Tool:    e.Tool,

@@ -1056,8 +1056,8 @@ tentaqles lobe status [--client <name>] [--json]
 - `store:` `ok` when the store opens. A store that is refused stops the command with one line that names `store.json` or
   the linked folder;
 - `settings:` the nine settings, one per line, as `lobe settings` prints them;
-- `events:` the stored event lines in total, then by kind (`fail`, `ok`, `hidden_fail`), the number of day files and the
-  broken lines skipped;
+- `events:` the stored event lines in total, then by kind (`fail`, `ok`, `hidden_fail`), the number of day files, the
+  broken lines skipped, and the number of distinct error fingerprints (`fp`, see `lobe fingerprint`) among the stored lines;
 - `hooks: claude` followed by `ok` (the plugin's `hooks/hooks.json` names the memory's script), `missing` (a plugin is
   installed without it) or `none` (no plugin is installed for the client);
 - one more line when `CLAUDE_CONFIG_DIR` is unset or is not the client's own Claude login folder. It says the memory's hooks
@@ -1076,17 +1076,19 @@ settings:
   model=off (manifest)
   documents=off (default)
   retention_days=14 (default)
-events: total 3 (fail 3, ok 0, hidden_fail 0), 1 day file(s), skipped 0
+events: total 3 (fail 3, ok 0, hidden_fail 0), 1 day file(s), skipped 0, 0 fingerprint(s)
 hooks: claude ok
 ```
 
 `--json` prints one compact object on one line:
 
 ```
-{"client":"acme","store":{"state":"ok","v":1},"settings":{"capture":"on",...,"retention_days":14},"events":{"total":3,"fail":3,"ok":0,"hidden_fail":0,"days":1,"skipped":0},"hooks":{"claude":"ok"}}
+{"client":"acme","store":{"state":"ok","v":1},"settings":{"capture":"on",...,"retention_days":14},"events":{"total":3,"fail":3,"ok":0,"hidden_fail":0,"days":1,"skipped":0,"fingerprints":0},"hooks":{"claude":"ok"}}
 ```
 
 The keys `client`, `store`, `settings`, `events` and `hooks` are kept. Later features add keys to `events` and `hooks`.
+`events.fingerprints` (text: `fingerprint(s)`) is the number of distinct `fp` values in the day files still kept, so it falls as
+they expire.
 
 A verb opens the client's store read-write, so a store that is absent is created by the first `lobe` command that runs. That
 is why `lobe status` can make `lobe-store-missing` go away.
@@ -1152,6 +1154,58 @@ login, and refuses any other with exit 1.
 |---|---|
 | 0 | The lines were printed, or the log is empty. |
 | 1 | No client, a refused store, a refused `--client`, or a login that is not the client's own. |
+
+---
+
+## tentaqles lobe fingerprint
+
+Print the error fingerprint and the template of an error text read from stdin.
+
+### Synopsis
+
+```
+tentaqles lobe fingerprint --tool <name> < error.txt
+```
+
+### Description
+
+`lobe fingerprint` reads an error text from stdin, scrubs it the same way the memory's hook does (a secret is replaced before the fingerprint is taken, so the template
+shows `<secret>`), and prints exactly two lines:
+
+1. `fp`: the fingerprint, `fp_` and 16 hex digits;
+2. the template: the error with paths, line numbers, ids, numbers and quoted values replaced by `<path>`, `<n>`, `<id>`,
+   `<q>` and so on.
+
+Two errors that differ only in those parts print the same `fp`. The same text from another kind of tool (a shell tool
+against an MCP tool, say) prints another one, because the tool class is part of the fingerprint. The `fp` of each failure
+line in the event log is this value, so `fp` in the log can be checked by hand:
+
+```
+$ printf '%s' '/usr/bin/bash: line 1: Get-ChildItem: command not found' | tentaqles lobe fingerprint --tool Bash
+fp_b4f3e92d90787db6
+<path>: line <n>: Get-ChildItem: command not found
+```
+
+The verb reads at most 1 MiB of stdin. It reads no store, resolves no client and needs no login, so it works in any folder
+and inside a Claude Code session, and it writes nothing.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tool <name>` | none (required) | The tool that failed, for example `Bash`, `Edit` or `mcp__server__tool`. |
+
+### Agent sessions
+
+The verb runs inside a Claude Code session as it does in a person's terminal. It is one of the memory's own commands, so a
+shell call that runs it is not recorded as a failure.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The two lines were printed. |
+| 1 | `--tool` is missing, or stdin cannot be read. One line on stderr says which. Nothing is printed on stdout. |
 
 ---
 

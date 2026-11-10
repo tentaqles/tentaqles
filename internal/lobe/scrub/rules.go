@@ -536,6 +536,9 @@ func vendorFind(s string) []span {
 		if sep != "" && openIDs[prefix] {
 			continue
 		}
+		if ownFingerprint(prefix, sep, body) {
+			continue
+		}
 		mixed := countWhere(body, isDigit) >= 2 && countWhere(body, isLetter) >= 2
 		ok := (sep != "" && mixed) ||
 			(sep == "" && hasOutsideHex(prefix) && hexOnly(body))
@@ -544,6 +547,22 @@ func vendorFind(s string) []span {
 		}
 	}
 	return out
+}
+
+// ownFingerprint reports whether a vendor-shaped match is the memory's own error fingerprint: `fp_` and
+// exactly 16 lowercase hex digits (internal/lobe/fingerprint). Only that one shape is let through; any
+// other `fp_` value, such as a longer or mixed-case one, is still read as a possible key.
+func ownFingerprint(prefix, sep, body string) bool {
+	if prefix != "fp" || sep != "_" || len(body) != 16 {
+		return false
+	}
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // randomFind finds long random runs (32 or more key characters, mixed case and

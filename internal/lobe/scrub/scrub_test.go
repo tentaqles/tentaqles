@@ -694,3 +694,22 @@ func TestLobeScrubCleanParity(t *testing.T) {
 		}
 	}
 }
+
+// TestLobeScrubOwnFingerprint: the memory's own fingerprint (`fp_` and 16 lowercase hex digits) passes the
+// scrubber unchanged, so a log line can carry it; any other `fp_` value of a key's shape is still redacted.
+func TestLobeScrubOwnFingerprint(t *testing.T) {
+	for _, s := range []string{"fp_b4f3e92d90787db6", `{"fp":"fp_48622a622f4928cc"}`} {
+		if got := Text(s).String(); got != s {
+			t.Errorf("own fingerprint changed:\n in:  %q\n out: %q", s, got)
+		}
+	}
+	for _, s := range []string{
+		"fp_" + "A1b2C3d4E5f6G7h8",       // mixed case
+		"fp_" + "b4f3e92d90787db6a1b2c3", // longer than 16
+		"fp_" + "z9y8x7w6v5u4t3s2",       // not hex
+	} {
+		if got := Text(s).String(); got == s {
+			t.Errorf("a key-shaped fp_ value passed unchanged: %q", s)
+		}
+	}
+}

@@ -5,6 +5,11 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **Every failure line carries a fingerprint: `fp`, `tentaqles lobe fingerprint`, and the count in `lobe status`.** Each failed
+  call's line in the memory's event log gets `fp`, a short id of "the same error": errors that differ only in paths, numbers,
+  ids or quoted values share one, and the same text from another kind of tool does not. `tentaqles lobe fingerprint --tool <name>`
+  prints the fingerprint and the template of an error text read from stdin, with no store or client, in any folder and inside a
+  session. `tentaqles lobe status` counts the distinct fingerprints still in the log (`fingerprints` in `--json`, inside `events`).
 - **See the memory and switch it off: `tentaqles lobe status`, `lobe events`, `lobe settings` and `lobe set`.** `lobe status`
   prints the client, the store's state, the nine settings, the event counts and whether the plugin wires the memory's hooks.
   `lobe events` prints the newest 20 stored lines. `lobe settings` prints the nine lobe settings and where each comes from.
