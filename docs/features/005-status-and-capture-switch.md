@@ -463,4 +463,9 @@ session added nothing (still 5); `capture default` brought it back to `on (defau
 there is right: the installed plugin is the released one, without the memory's entries; the session loaded the
 checkout's plugin through `--plugin-dir`.
 
-Left open: CI on Linux and macOS.
+CI: the first run of `f1dff3f8` failed on Windows and macOS in `TestLobeScrubTiming` (20 and 25 ms against
+its 20 ms limit; the scrubber did not change in 005; more test packages now run beside it). The test now keeps
+the fastest of five batches, with the same limit, and `TestLobeScrubColdStart` times the first scrub of a fresh
+process (`79b2f962`). Its first run failed on Windows in `TestLobeReplaceUnderReader`: a raw read met the
+replaced file missing for an instant (33,080 of 735,946 reads) on a busy runner; the rerun was green on all
+three systems. The store's reader now retries that case (next commit).

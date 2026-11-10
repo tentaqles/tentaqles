@@ -391,6 +391,9 @@ func TestLobeBusyReplaceWritesNothing(t *testing.T) {
 	}
 }
 
+// TestLobeReplaceUnderReader checks the store's reader, Store.Read, which is what the memory reads with,
+// while Replace renames a new version over the file many times. Store.Read retries a missing file, so a
+// rename in progress does not show as a missing file to the memory.
 func TestLobeReplaceUnderReader(t *testing.T) {
 	setupHome(t)
 	st := openAcme(t)
@@ -406,7 +409,7 @@ func TestLobeReplaceUnderReader(t *testing.T) {
 		defer close(readerDone)
 		for !stop.Load() {
 			wasSeen := seen.Load()
-			b, err := os.ReadFile(full)
+			b, err := st.Read(rel)
 			reads.Add(1)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
@@ -424,7 +427,6 @@ func TestLobeReplaceUnderReader(t *testing.T) {
 			}
 		}
 	}()
-
 	const n = 1000
 	failed := 0
 	for i := 0; i < n; i++ {
@@ -519,6 +521,25 @@ func TestLobeStoreReadDuringReplace(t *testing.T) {
 	}
 	if failed.Load()*100 > reads.Load() {
 		t.Errorf("%d of %d reads failed, more than 1 percent", failed.Load(), reads.Load())
+	}
+}
+
+// TestLobeReadMissingFileStillMissing checks that Store.Read retries a missing file but still reports it
+// as missing, after the retry delay (about 15 milliseconds).
+func TestLobeReadMissingFileStillMissing(t *testing.T) {
+	setupHome(t)
+	st := openAcme(t)
+	start := time.Now()
+	_, err := st.Read("never-written.json")
+	elapsed := time.Since(start)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Read of a missing file = %v, want fs.ErrNotExist", err)
+	}
+	if elapsed < 10*time.Millisecond {
+		t.Errorf("Read of a missing file took %v, want the retries (at least 10ms)", elapsed)
+	}
+	if elapsed > time.Second {
+		t.Errorf("Read of a missing file took %v, limit 1s", elapsed)
 	}
 }
 

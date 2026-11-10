@@ -603,8 +603,10 @@ func TestLobeRejectedSplitAtFileStart(t *testing.T) {
 	}
 }
 
-// TestLobeRejectedCapTwoRuns: 250 rejected calls in one transcript give 200 lines on the first run and
-// the other 50 on the second, once each.
+// TestLobeRejectedCapTwoRuns: 250 rejected calls in one transcript give at most 200 lines on the first run,
+// and all 250, once each, after the next runs. On a quiet machine that is 200 and then 50. On a loaded one
+// the 1 s cutoff can end a run before its 200 are written; the cursor is then not moved, and the next run
+// writes the rest without a duplicate. So the test allows up to six runs.
 func TestLobeRejectedCapTwoRuns(t *testing.T) {
 	f := newHome(t)
 	setLogin(t, f, "acme")
@@ -615,14 +617,24 @@ func TestLobeRejectedCapTwoRuns(t *testing.T) {
 		b.WriteString(rejectedEdit(t, fmt.Sprintf("toolu_c%03d", i), "ZZZ"))
 	}
 	appendText(t, T, b.String())
-	runHook(t, "stop", stopJSON(t, app, T))
-	if n := len(lines(t, "acme")); n != 200 {
-		t.Fatalf("first run: %d lines, want 200", n)
+	for run := 1; run <= 6 && len(lines(t, "acme")) < 250; run++ {
+		before := len(lines(t, "acme"))
+		runHook(t, "stop", stopJSON(t, app, T))
+		if added := len(lines(t, "acme")) - before; added > 200 {
+			t.Fatalf("run %d added %d lines, more than the cap of 200", run, added)
+		}
 	}
-	runHook(t, "stop", stopJSON(t, app, T))
 	ls := decodeLogged(t, lines(t, "acme"))
 	if len(ls) != 250 {
-		t.Fatalf("second run: %d lines, want 250", len(ls))
+		t.Fatalf("after six runs: %d lines, want 250", len(ls))
+	}
+	// The cursor reached the end: one more run reads nothing and writes nothing.
+	if got, want := cursorOffset(t), fileSize(t, T); got != want {
+		t.Fatalf("cursor at %d after the last call, want the transcript's end %d", got, want)
+	}
+	runHook(t, "stop", stopJSON(t, app, T))
+	if n := len(lines(t, "acme")); n != 250 {
+		t.Fatalf("a run after the end added lines: %d, want 250", n)
 	}
 	seen := map[string]bool{}
 	for _, e := range ls {

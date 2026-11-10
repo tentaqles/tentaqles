@@ -156,10 +156,13 @@ func (s *Store) Dir() string { return s.dir }
 // Client is the name of the client the store belongs to.
 func (s *Store) Client() string { return s.client }
 
-// Read returns the bytes of the store-relative file rel. An error other than "does not exist" is retried:
-// up to 3 more attempts, 5 milliseconds apart. On Windows a reader can meet a sharing violation or access
-// denied for a few milliseconds while another process renames a new version over the file. The last error
-// is returned when every attempt fails.
+// Read returns the bytes of the store-relative file rel. Any error is retried, including "does not exist":
+// up to 3 more attempts, 5 milliseconds apart. On Windows a reader can meet a sharing violation, an access
+// denied or a missing file for a few milliseconds while another process renames a new version over the file
+// (Replace writes a temporary file and renames it over the old one, and the old name can be briefly absent).
+// The last error is returned when every attempt fails, so a file that is really missing still reads as
+// missing (errors.Is(err, fs.ErrNotExist)), after about 15 milliseconds more than a single read takes.
+// Callers that read many files that may be missing pay that delay for each one.
 func (s *Store) Read(rel string) ([]byte, error) {
 	full, err := s.resolve(rel)
 	if err != nil {
@@ -168,7 +171,7 @@ func (s *Store) Read(rel string) ([]byte, error) {
 	const retries = 3
 	for attempt := 0; ; attempt++ {
 		b, err := os.ReadFile(full)
-		if err == nil || errors.Is(err, fs.ErrNotExist) || attempt == retries {
+		if err == nil || attempt == retries {
 			return b, err
 		}
 		time.Sleep(5 * time.Millisecond)
