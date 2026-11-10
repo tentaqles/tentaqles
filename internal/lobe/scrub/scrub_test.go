@@ -2,10 +2,13 @@ package scrub
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -253,23 +256,81 @@ func ordinaryWords(n int) string {
 	return strings.Repeat("ordinary words in a long line ", n/30+1)[:n]
 }
 
-func TestLobeScrubTiming(t *testing.T) {
+// timingInput is a full-size tool input and error, as the hook scrubs them.
+func timingInput(t testing.TB) (json.RawMessage, string) {
 	raw, err := json.Marshal(map[string]string{"note": ordinaryWords(4256)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	errText := ordinaryWords(8000)
-	const runs = 20
+	return raw, ordinaryWords(8000)
+}
+
+// TestLobeScrubTiming: a full-size input and error scrub in at most 20 ms on average (target 5 ms). It
+// times five batches of 20 runs and keeps the fastest, so other test packages running on the same machine
+// cannot push one slow batch over the limit; a scrubber that is really slow is slow in every batch.
+func TestLobeScrubTiming(t *testing.T) {
+	raw, errText := timingInput(t)
+	const runs, batches = 20, 5
+	best := time.Duration(1<<63 - 1)
+	for b := 0; b < batches; b++ {
+		start := time.Now()
+		for i := 0; i < runs; i++ {
+			_ = Input(raw)
+			_ = Text(errText)
+		}
+		best = min(best, time.Since(start)/runs)
+	}
+	t.Logf("Input plus Text, average over %d runs, fastest of %d batches: %v", runs, batches, best)
+	if best > 20*time.Millisecond {
+		t.Fatalf("too slow: %v on average (target 5 ms)", best)
+	}
+}
+
+// coldScrubVar names the helper run of TestLobeScrubColdStart.
+const coldScrubVar = "LOBE_SCRUB_COLD"
+
+// TestLobeScrubColdStart: the first scrub of a process, which builds every pattern, takes at most 20 ms.
+// A hook is a new process on every call, so it pays this cost each time. The test runs itself again as a
+// fresh process (TestLobeScrubColdHelper), three times, and keeps the fastest.
+func TestLobeScrubColdStart(t *testing.T) {
+	if os.Getenv(coldScrubVar) != "" {
+		t.Skip("helper run")
+	}
+	best := time.Duration(1<<63 - 1)
+	for i := 0; i < 3; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestLobeScrubColdHelper$", "-test.count=1")
+		cmd.Env = append(os.Environ(), coldScrubVar+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("helper run failed: %v\n%s", err, out)
+		}
+		_, after, found := strings.Cut(string(out), "cold-ns=")
+		if !found {
+			t.Fatalf("helper printed no time:\n%s", out)
+		}
+		ns, err := strconv.ParseInt(strings.Fields(after)[0], 10, 64)
+		if err != nil {
+			t.Fatalf("helper time %q: %v", after, err)
+		}
+		best = min(best, time.Duration(ns))
+	}
+	t.Logf("first Input plus Text of a process, fastest of 3: %v", best)
+	if best > 20*time.Millisecond {
+		t.Fatalf("first scrub too slow: %v (limit 20 ms)", best)
+	}
+}
+
+// TestLobeScrubColdHelper is not a test: TestLobeScrubColdStart runs it in a fresh process, where it
+// times the first scrub and prints the time. Without the variable it returns at once.
+func TestLobeScrubColdHelper(t *testing.T) {
+	if os.Getenv(coldScrubVar) == "" {
+		return
+	}
+	raw, errText := timingInput(t)
 	start := time.Now()
-	for i := 0; i < runs; i++ {
-		_ = Input(raw)
-		_ = Text(errText)
-	}
-	avg := time.Since(start) / runs
-	t.Logf("Input plus Text, average over %d runs: %v", runs, avg)
-	if avg > 20*time.Millisecond {
-		t.Fatalf("too slow: %v on average (target 5 ms)", avg)
-	}
+	_ = Input(raw)
+	_ = Text(errText)
+	fmt.Printf("cold-ns=%d\n", time.Since(start).Nanoseconds())
 }
 
 func TestLobeScrubWindowEdge(t *testing.T) {
