@@ -346,4 +346,8 @@ fingerprint, `fp_b4f3e92d90787db6`, and one template; two failed calls of `mcp__
 `widget 4411` and `widget 97` left two lines with `"fp":"fp_48622a622f4928cc"`, and `tentaqles lobe status` showed
 2 events and 1 fingerprint.
 
-Left open: CI on Linux and macOS.
+CI: the first run of `60a16588` died on Windows in `internal/lobe/hook`: the watchdog of a stall test called
+the real `os.Exit`, because those tests gave it a 100 ms slack, tighter than the product's 250 ms, and a run on
+the slow runner needed more. With the owner's yes (2026-11-10), `TestLobeHookAlwaysExitsZero` and
+`TestLobeCaptureSurvivesALateStep` keep their 300 ms cutoffs and their "within the cutoff plus 250 ms" check
+and use the product's 250 ms slack.

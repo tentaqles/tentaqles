@@ -488,7 +488,9 @@ func TestLobeHookAlwaysExitsZero(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			shortenCutoffs(t, 300*time.Millisecond, 300*time.Millisecond, 100*time.Millisecond)
+			// The cutoffs are short; the watchdog's slack is the product's 250 ms (owner, 2026-11-10: a
+			// slack tighter than the product's ended a slow Windows CI run through the real os.Exit).
+			shortenCutoffs(t, 300*time.Millisecond, 300*time.Millisecond, 250*time.Millisecond)
 			f := newHome(t)
 			stdin, host, event := c.arm(t, f)
 			var buf bytes.Buffer
@@ -512,7 +514,8 @@ func TestLobeHookAlwaysExitsZero(t *testing.T) {
 }
 
 func TestLobeCaptureSurvivesALateStep(t *testing.T) {
-	shortenCutoffs(t, 300*time.Millisecond, 300*time.Millisecond, 100*time.Millisecond)
+	// The product's 250 ms slack; see TestLobeHookAlwaysExitsZero.
+	shortenCutoffs(t, 300*time.Millisecond, 300*time.Millisecond, 250*time.Millisecond)
 	f := newHome(t)
 	setLogin(t, f, "acme")
 	setSteps(t, func(string) []step {
