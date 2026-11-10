@@ -347,5 +347,7 @@ later event (for example `Stop`) and record each `tool_result` with `is_error` t
 covered. No feature in the index does that for live sessions yet (035 reads old transcripts). Where it goes is
 the owner's call.
 
+CI green on Linux, macOS and Windows for commit `caa90d03` on 2026-11-10.
+
 Not yet seen live: a declined call (the owner's sessions run in `bypassPermissions`), any MCP failure, a failed
 `WebFetch`.

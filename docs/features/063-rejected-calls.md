@@ -216,4 +216,5 @@ tool hook, added one line to yduqs's log at the end of the turn: `tool` `Edit`, 
 repository's key, the edit's input, and the error `String to replace not found in file.` with the string. The
 cursor file for the session was written. The test file was removed afterwards.
 
-Left open: CI on Linux and macOS.
+CI green on Linux, macOS and Windows (with govulncheck, the marketplace pin and the plugin suite) for commit
+`38029b68` on 2026-11-10. Nothing is left open.
