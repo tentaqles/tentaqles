@@ -106,7 +106,8 @@ path. A search of the client's `lobe` folder for either marker finds nothing.
    no byte of it is written. Feature 009 adds its check between steps 5 and 6.
 7. **The exception** (S-03 step 5, decision A-18). Before projecting, read the tail of today's file with
    `eventlog.Tail` (64 KiB, proposed), with no lock. If it holds an earlier `fail` line of the same `session`
-   and `tool`, the input is kept in full. If the tail cannot be read, the input is also kept in full. An empty
+   and `tool`, the input is kept in full. If the tail cannot be read, the input is projected (owner, 2026-11-10: keeping it in full would store every
+   success in full, a Write's whole content included, whenever the log's end is unreadable). An empty
    `session` never matches (this file's reading; S-03 does not say). A reference line in the tail counts: it
    carries `session`, `tool` and `kind`.
 8. **The projection** (S-03 step 4), otherwise. One table drives it:
@@ -129,6 +130,18 @@ path. A search of the client's `lobe` folder for either marker finds nothing.
     written as `ok`. From this feature on that line goes through steps 7 to 10 like any other success: its
     `input` is the projection (for a shell tool the `command` alone) unless the exception of step 7 applies.
     Its `exit` stays as 004 wrote it.
+
+### Brief check (task 1), 2026-11-10
+
+- The pinned plugin test lists `PostToolUseFailure` and `Stop` (feature 063 added `Stop` after this brief);
+  this feature makes it `PostToolUseFailure`, `PostToolUse` and `Stop`.
+- The hook's steps are `S-01` (`post-tool-use-failure`) and `S-01R` (`stop`); `post-tool-use` has none yet.
+  The `capture` gate in `work()` already covers every event.
+- The grep rule sits in `sense.FromClaudeFailure` (`grepFoundNothing`) and writes the full scrubbed input;
+  the own-tool check is `sense.IsOwnTool(tool, input)`, called through `sense.Skip`.
+- `tentaqles lobe status` and `lobe-hooks-missing` look only for a command naming `lobe_hook.sh`, so a new
+  entry changes neither. `sense.Record` now also fingerprints (006) and runs the duplicate check (007); an `ok`
+  line gets no `fp` and passes through the check unchanged.
 
 ## Where to read
 
@@ -293,9 +306,11 @@ and `fail` call must print only `exit=0`.
    `env -u CLAUDE_CONFIG_DIR`. Each prints only `exit=0`. Expect still 8 lines, and
    `ls "$ID/globex/lobe/events" 2>/dev/null | wc -l` prints `0`.
 10. The plugin. `grep -c 'lobe_hook.sh\\" post-tool-use"' "$J"` prints `1`; `grep -c tq_hook.sh "$J"` prints
-    `2`; `grep -c '"timeout": 15' "$J"` prints `2`. Then make sure a program named `tq` is on `PATH`: if
-    `command -v tq` prints nothing, copy the built `tentaqles` into `$W/bin` under the name `tq` (`tq.exe` on
-    Windows) and put `$W/bin` first on `PATH`. Pipe the JSON of check 1, with `ACME` replaced and `toolu_13`,
+    `2`; `grep -c '"timeout": 15' "$J"` prints `2`. Then put the built program first on `PATH` under the name
+    the wrapper looks for: copy the built `tentaqles` into `"$(cd "$W" && pwd)/bin"` under the name `tq`
+    (`tq.exe` on Windows) and put that folder first on `PATH`. Always do this, even when `command -v tq` finds a
+    `tq`: an installed release has no success step. Use the POSIX form of the folder: in Git Bash a `C:/...`
+    entry in `PATH` splits at its colon. Pipe the JSON of check 1, with `ACME` replaced and `toolu_13`,
     to `bash "$K" post-tool-use; echo "exit=$?"`. It prints only `exit=0`, and `LOG` has 9 lines.
 
 **Person checks** (the owner, at a terminal of their own):
@@ -322,8 +337,9 @@ PASS needs 10 of 10 from the tester. The person check is the owner's view of the
 ## Risks and unknowns
 
 - The field names per tool come from use, not from a schema (S-03, "How to build it"). Task 2 confirms them
-  before the table is trusted. Whether a background start reaches this hook with the text in check 4 was not
-  captured live either.
+  before the table is trusted. Confirmed by the owner's capture of 2026-11-10 (phase 0 page). That capture
+  also showed a background start arrives as an object with `backgroundTaskId`, not as the text in check 4;
+  the check now reads that field first. A run moved to the background after its timeout was not captured.
 - This hook now runs on every tool call. If starting Bash for the wrapper on Windows breaks the capture
   budget, F-03 names the fallback: the direct command `tentaqles lobe-hook claude <event> || exit 0`, which
   loses the install-folder lookup. [012](012-hook-latency-and-stall.md) measures it; nothing is changed here.
@@ -342,3 +358,23 @@ PASS needs 10 of 10 from the tester. The person check is the owner's view of the
 - One reading is this file's own: an empty `session` never matches the exception (step 7). The owner may
   overturn it at task 1.
 - The plugin change reaches people only through a release and the marketplace pin.
+
+## Result of the build, the review and the tester run
+
+Built on 2026-11-10 by Haiku builders, reviewed as one change by a Sonnet reviewer.
+
+- **Brief changes.** The owner chose that a tail that cannot be read keeps only the projection (step 7), so a
+  Write's whole content is never stored because the log's end was unreadable; that one call loses only its
+  pairing. The success path is `sense.FromClaudePostTool` (background check, drop, exception, projection,
+  scrub), wired as the hook's `recordSuccess` on a new plugin `PostToolUse` entry.
+- **The capture** (owner, 2026-11-10, recorded on the [phase 0 page](../prd/spikes/phase0-q2-claude-code-hooks.md))
+  confirmed every field name the projection keeps. It also showed that a `run_in_background` command's start
+  arrives as an object with `backgroundTaskId`, not as the text the brief named; `BackgroundStart` now reads a
+  non-empty `backgroundTaskId` first and keeps the texts as a second check, with tests on the captured shape.
+- **The review** found no blocking defect. Fixed from it: a doc claim about grep and the full input.
+- Tests: `go vet`, `go build` and `go test ./... -count=1` green on Windows; the plugin suite 40 passed.
+- Tester brief: 10 of 10 on Windows 11 in Git Bash against a program built from the working tree.
+
+The owner's check, 2026-11-10, in a real yduqs session with this checkout's plugin: `git --version` left one
+`ok` line whose input is `{"command":"git --version"}`, with no error, no exit and no output; a command sent
+to the background left no line; the event count went from 5 to 6.

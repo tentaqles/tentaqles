@@ -456,7 +456,9 @@ func recordRejected(ctx context.Context, r *run) error {
 	if len(r.rejected) > 0 {
 		place := sense.Locate(r.ws.Root, r.cwd)
 		for _, c := range r.rejected {
-			ev := sense.FromClaudeFailure(c, place, r.now)
+			// A rejected call is a failure, never a grep that found nothing, so the tail (read only for
+			// that rule) is not needed.
+			ev := sense.FromClaudeFailure(c, place, r.now, nil, false)
 			if _, err := sense.Record(ctx, r.st, ev, c); err != nil {
 				return err
 			}

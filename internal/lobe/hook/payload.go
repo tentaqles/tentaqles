@@ -20,7 +20,10 @@ type payload struct {
 	toolUseID  string
 	errText    string
 	toolInput  json.RawMessage
-	interrupt  bool
+	// toolResponse is the payload's tool_response as it arrived, read raw: a PostToolUse success
+	// reads it (S-03) and drops it; a failure never reads it.
+	toolResponse json.RawMessage
+	interrupt    bool
 }
 
 // readPayload reads one JSON object from in. It returns false, with nothing read into the result, when
@@ -42,14 +45,15 @@ func readPayload(in io.Reader) (payload, bool) {
 		return payload{}, false
 	}
 	return payload{
-		session:    textKey(m, "session_id"),
-		cwd:        textKey(m, "cwd"),
-		transcript: textKey(m, "transcript_path"),
-		tool:       textKey(m, "tool_name"),
-		toolUseID:  textKey(m, "tool_use_id"),
-		errText:    textKey(m, "error"),
-		toolInput:  rawKey(m, "tool_input"),
-		interrupt:  boolKey(m, "is_interrupt"),
+		session:      textKey(m, "session_id"),
+		cwd:          textKey(m, "cwd"),
+		transcript:   textKey(m, "transcript_path"),
+		tool:         textKey(m, "tool_name"),
+		toolUseID:    textKey(m, "tool_use_id"),
+		errText:      textKey(m, "error"),
+		toolInput:    rawKey(m, "tool_input"),
+		toolResponse: rawKey(m, "tool_response"),
+		interrupt:    boolKey(m, "is_interrupt"),
 	}, true
 }
 

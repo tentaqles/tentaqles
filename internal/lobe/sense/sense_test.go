@@ -59,7 +59,7 @@ func firstCall() Call {
 func firstPlace() Place { return Place{Repo: "r_a172cedc", Cwd: "."} }
 
 func TestLobeSenseFromClaudeFailure(t *testing.T) {
-	e := FromClaudeFailure(firstCall(), firstPlace(), fixedNow())
+	e := FromClaudeFailure(firstCall(), firstPlace(), fixedNow(), nil, false)
 	if e.ID != "evt_9bde2e09" {
 		t.Errorf("ID = %q, want evt_9bde2e09", e.ID)
 	}
@@ -107,7 +107,7 @@ func TestLobeSenseExitCode(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := Call{Session: "s", Tool: tc.tool, CallID: "x", Input: json.RawMessage(`{"command":"ls"}`), Error: tc.err}
-			e := FromClaudeFailure(c, Place{Cwd: "."}, fixedNow())
+			e := FromClaudeFailure(c, Place{Cwd: "."}, fixedNow(), nil, false)
 			if (e.Exit == nil) != (tc.wantExit == nil) {
 				t.Fatalf("Exit = %v, want %v", e.Exit, tc.wantExit)
 			}
@@ -134,7 +134,7 @@ func TestLobeSenseSecretsNeverInTheEvent(t *testing.T) {
 		Input:   input,
 		Error:   "password=hunter2 rejected for postgres://app:s3cretPW@db.example.test:5432/main",
 	}
-	e := FromClaudeFailure(c, Place{Cwd: "."}, fixedNow())
+	e := FromClaudeFailure(c, Place{Cwd: "."}, fixedNow(), nil, false)
 	texts := []string{e.Input.String(), e.Error.String(), CallText(c.Tool, c.Input)}
 	secrets := []string{"abcdefghijklmnopqrstuvwxyz012345", "Zx81kQpL0029aaBB", "hunter2", "s3cretPW"}
 	for _, text := range texts {
@@ -150,20 +150,20 @@ func TestLobeSenseInputForms(t *testing.T) {
 	want := `{"command":"deploy","note":"hi"}`
 	obj := Call{Session: "s1", Tool: "Bash", CallID: "a", Input: json.RawMessage(`{"note":"hi","command":"deploy"}`)}
 	str := Call{Session: "s1", Tool: "Bash", CallID: "a", Input: json.RawMessage(`"{\"command\":\"deploy\",\"note\":\"hi\"}"`)}
-	if got := FromClaudeFailure(obj, Place{Cwd: "."}, fixedNow()).Input.String(); got != want {
+	if got := FromClaudeFailure(obj, Place{Cwd: "."}, fixedNow(), nil, false).Input.String(); got != want {
 		t.Errorf("object input = %q, want %q", got, want)
 	}
-	if got := FromClaudeFailure(str, Place{Cwd: "."}, fixedNow()).Input.String(); got != want {
+	if got := FromClaudeFailure(str, Place{Cwd: "."}, fixedNow(), nil, false).Input.String(); got != want {
 		t.Errorf("string input = %q, want %q", got, want)
 	}
 
 	empty := Call{Session: "s1", Tool: "Bash", CallID: "a"}
-	if got := FromClaudeFailure(empty, Place{Cwd: "."}, fixedNow()).Input.String(); got != "{}" {
+	if got := FromClaudeFailure(empty, Place{Cwd: "."}, fixedNow(), nil, false).Input.String(); got != "{}" {
 		t.Errorf("empty input = %q, want {}", got)
 	}
 
 	text := Call{Session: "s1", Tool: "Bash", CallID: "a", Input: json.RawMessage(`"just text"`)}
-	if got := FromClaudeFailure(text, Place{Cwd: "."}, fixedNow()).Input.String(); got != `"just text"` {
+	if got := FromClaudeFailure(text, Place{Cwd: "."}, fixedNow(), nil, false).Input.String(); got != `"just text"` {
 		t.Errorf("text input = %q, want a JSON string", got)
 	}
 }
@@ -172,18 +172,18 @@ func TestLobeSenseMissingFields(t *testing.T) {
 	now := fixedNow()
 
 	noTool := Call{Session: "s1", CallID: "a", Input: json.RawMessage(`{}`)}
-	if e := FromClaudeFailure(noTool, Place{Cwd: "."}, now); e.Tool != "unknown" {
+	if e := FromClaudeFailure(noTool, Place{Cwd: "."}, now, nil, false); e.Tool != "unknown" {
 		t.Errorf("Tool = %q, want unknown", e.Tool)
 	}
 
 	noSession := Call{Tool: "Bash", CallID: "a", Input: json.RawMessage(`{}`)}
-	if e := FromClaudeFailure(noSession, Place{Cwd: "."}, now); e.Session != "" {
+	if e := FromClaudeFailure(noSession, Place{Cwd: "."}, now, nil, false); e.Session != "" {
 		t.Errorf("Session = %q, want empty", e.Session)
 	}
 
 	bare := Call{Session: "s1", Tool: "Bash", Input: json.RawMessage(`{"command":"ls"}`)}
-	e1 := FromClaudeFailure(bare, Place{Cwd: "."}, now)
-	e2 := FromClaudeFailure(bare, Place{Cwd: "."}, now.Add(time.Nanosecond))
+	e1 := FromClaudeFailure(bare, Place{Cwd: "."}, now, nil, false)
+	e2 := FromClaudeFailure(bare, Place{Cwd: "."}, now.Add(time.Nanosecond), nil, false)
 	if e1.ID == e2.ID {
 		t.Fatalf("two events 1ns apart share id %q", e1.ID)
 	}
@@ -394,7 +394,7 @@ func TestLobeSenseCallText(t *testing.T) {
 func TestLobeSenseOutcome(t *testing.T) {
 	s := setup(t)
 	call := firstCall()
-	ev := FromClaudeFailure(call, firstPlace(), fixedNow())
+	ev := FromClaudeFailure(call, firstPlace(), fixedNow(), nil, false)
 
 	out, err := Record(context.Background(), s, ev, call)
 	if err != nil {
@@ -432,7 +432,7 @@ func TestLobeSenseOutcome(t *testing.T) {
 	// A tool that is not a shell tool: its outcome carries the call text CallText gives it, and its tool name.
 	mcpInput := json.RawMessage(`{"n":4411}`)
 	mcpCall := Call{Session: "s1", Tool: "mcp__acme__ping", CallID: "toolu_mcp", Input: mcpInput, Error: "widget 4411 is not frobnicated"}
-	mcpOut, err := Record(context.Background(), s, FromClaudeFailure(mcpCall, Place{Cwd: "."}, fixedNow()), mcpCall)
+	mcpOut, err := Record(context.Background(), s, FromClaudeFailure(mcpCall, Place{Cwd: "."}, fixedNow(), nil, false), mcpCall)
 	if err != nil {
 		t.Fatalf("Record of an MCP failure: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestLobeSenseOutcome(t *testing.T) {
 	// to the first event's id.
 	repeatCall := call
 	repeatCall.CallID = "toolu_09"
-	repeatEv := FromClaudeFailure(repeatCall, firstPlace(), fixedNow().Add(10*time.Second))
+	repeatEv := FromClaudeFailure(repeatCall, firstPlace(), fixedNow().Add(10*time.Second), nil, false)
 	refOut, err := Record(context.Background(), s, repeatEv, repeatCall)
 	if err != nil {
 		t.Fatalf("Record of a repeat: %v", err)
@@ -513,12 +513,12 @@ func TestLobeSenseFingerprintInLine(t *testing.T) {
 		{Session: "s1", Tool: "Bash", CallID: "c-exit3", Input: json.RawMessage(`{"command":"tool --check"}`), Error: "Exit code 3"},
 	}
 	for _, c := range calls {
-		if _, err := Record(context.Background(), s, FromClaudeFailure(c, Place{Cwd: "."}, now), c); err != nil {
+		if _, err := Record(context.Background(), s, FromClaudeFailure(c, Place{Cwd: "."}, now, nil, false), c); err != nil {
 			t.Fatalf("Record %s: %v", c.CallID, err)
 		}
 	}
 	ok := Call{Session: "s1", Tool: "Bash", CallID: "c-grep", Input: json.RawMessage(`{"command":"grep -n zzz notes.txt"}`), Error: "Exit code 1"}
-	if _, err := Record(context.Background(), s, FromClaudeFailure(ok, Place{Cwd: "."}, now), ok); err != nil {
+	if _, err := Record(context.Background(), s, FromClaudeFailure(ok, Place{Cwd: "."}, now, nil, false), ok); err != nil {
 		t.Fatalf("Record grep: %v", err)
 	}
 
@@ -584,7 +584,7 @@ func TestLobeSenseStartsNoProcess(t *testing.T) {
 	if got := Locate(dir, dir); got.Cwd != "." {
 		t.Errorf("Locate with empty PATH = %+v", got)
 	}
-	out, err := Record(context.Background(), s, FromClaudeFailure(call, firstPlace(), fixedNow()), call)
+	out, err := Record(context.Background(), s, FromClaudeFailure(call, firstPlace(), fixedNow(), nil, false), call)
 	if err != nil || out.State != StateFull {
 		t.Fatalf("Record with empty PATH: state %q, err %v", out.State, err)
 	}
@@ -642,7 +642,7 @@ func TestLobeSenseEveryToolEvent(t *testing.T) {
 		Session: "s", Tool: "Edit", CallID: "e1",
 		Input: json.RawMessage(`{"file_path":"a.txt"}`),
 		Error: "Exit code 1\nString to replace not found",
-	}, Place{Cwd: "."}, now)
+	}, Place{Cwd: "."}, now, nil, false)
 	if edit.Exit != nil {
 		t.Errorf("Edit Exit = %d, want nil: the exit rule is for shell tools only", *edit.Exit)
 	}
@@ -654,12 +654,12 @@ func TestLobeSenseEveryToolEvent(t *testing.T) {
 		Session: "s", Tool: "mcp__acme__ping", CallID: "m1",
 		Input: json.RawMessage(`{"password":"hunter2","note":"hi"}`),
 		Error: "widget is not frobnicated",
-	}, Place{Cwd: "."}, now)
+	}, Place{Cwd: "."}, now, nil, false)
 	if got := mcp.Input.String(); got != `{"note":"hi","password":"[redacted:key]"}` {
 		t.Errorf("MCP Input = %q", got)
 	}
 
-	unnamed := FromClaudeFailure(Call{Session: "s", CallID: "u1", Input: json.RawMessage(`{}`), Error: "x"}, Place{Cwd: "."}, now)
+	unnamed := FromClaudeFailure(Call{Session: "s", CallID: "u1", Input: json.RawMessage(`{}`), Error: "x"}, Place{Cwd: "."}, now, nil, false)
 	if unnamed.Tool != "unknown" {
 		t.Errorf("empty tool name: Tool = %q, want unknown", unnamed.Tool)
 	}
@@ -670,7 +670,7 @@ func TestLobeSenseEveryToolEvent(t *testing.T) {
 		Input: json.RawMessage(`{"url":"https://example.test/x?api_key=` + secret + `","prompt":"read"}`),
 		Error: "fetch failed",
 	}
-	e := FromClaudeFailure(web, Place{Cwd: "."}, now)
+	e := FromClaudeFailure(web, Place{Cwd: "."}, now, nil, false)
 	if strings.Contains(e.Input.String(), secret) {
 		t.Errorf("WebFetch Input %q holds the secret", e.Input.String())
 	}
@@ -753,11 +753,14 @@ func TestLobeSenseGrepNoMatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			input := json.RawMessage(`{"command":` + strconv.Quote(c.command) + `}`)
+			// The call carries a description next to the command, so the projection has something to drop.
+			cmd := `"command":` + strconv.Quote(c.command)
+			input := json.RawMessage(`{` + cmd + `,"description":"search notes"}`)
 			if c.tool == "Edit" {
 				input = json.RawMessage(c.command)
 			}
-			e := FromClaudeFailure(Call{Session: "s", Tool: c.tool, CallID: "g1", Input: input, Error: c.errText}, Place{Cwd: "."}, fixedNow())
+			call := Call{Session: "s", Tool: c.tool, CallID: "g1", Input: input, Error: c.errText}
+			e := FromClaudeFailure(call, Place{Cwd: "."}, fixedNow(), nil, true)
 			if e.Kind != c.kind {
 				t.Errorf("Kind = %q, want %q", e.Kind, c.kind)
 			}
@@ -769,6 +772,30 @@ func TestLobeSenseGrepNoMatch(t *testing.T) {
 				t.Errorf("Exit = %v, want %v", e.Exit, c.exitWant)
 			case e.Exit != nil && *e.Exit != *c.exitWant:
 				t.Errorf("Exit = %d, want %d", *e.Exit, *c.exitWant)
+			}
+			// S-03 step 5 (step 11 of the success feature): an ok line from a grep takes the projected input;
+			// a failure keeps the full input; an ok line keeps the full input when the tail holds an earlier
+			// failure of the same session and tool, or when the tail cannot be read.
+			projected := `{` + cmd + `}`
+			full := `{` + cmd + `,"description":"search notes"}`
+			wantInput := projected
+			if c.kind == "fail" {
+				wantInput = full
+			}
+			if c.tool == "Edit" {
+				wantInput = c.command
+			}
+			if got := e.Input.String(); got != wantInput {
+				t.Errorf("Input = %s, want %s", got, wantInput)
+			}
+			if c.kind == "ok" && c.tool != "Edit" {
+				failTail := []eventlog.TailEvent{{Session: "s", Tool: c.tool, Kind: eventlog.KindFail}}
+				if got := FromClaudeFailure(call, Place{Cwd: "."}, fixedNow(), failTail, true).Input.String(); got != full {
+					t.Errorf("with an earlier failure in the tail: Input = %s, want %s", got, full)
+				}
+				if got := FromClaudeFailure(call, Place{Cwd: "."}, fixedNow(), nil, false).Input.String(); got != wantInput {
+					t.Errorf("with the tail unreadable: Input = %s, want the projection %s", got, wantInput)
+				}
 			}
 		})
 	}

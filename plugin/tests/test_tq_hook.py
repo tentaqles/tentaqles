@@ -199,14 +199,14 @@ def test_hooks_json_pretooluse_matcher_covers_the_shell_tools_only():
 # The owner approved this change on 2026-11-09 (decision D-11 of the Vertical Lobe requirements): the
 # memory's hook entries ship in this plugin next to the guard's. The guard's two entries stay exactly as
 # they are; every other entry is a memory hook, which runs scripts/lobe_hook.sh and fails open.
-# 2026-11-09: Stop added for feature 063.
+# 2026-11-09: Stop added for feature 063. 2026-11-10: PostToolUse added for feature 008.
 LOBE_CMD = re.compile(r'^bash "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/lobe_hook\.sh" [a-z-]+$')
 
 
 def test_the_plugin_holds_only_the_guard_hook():
     assert not (ROOT / "skills").exists()
     hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
-    assert sorted(hooks) == ["PostToolUseFailure", "PreToolUse", "SessionStart", "Stop"]
+    assert sorted(hooks) == ["PostToolUse", "PostToolUseFailure", "PreToolUse", "SessionStart", "Stop"]
 
     session = hooks["SessionStart"]
     assert len(session) == 1 and "matcher" not in session[0]
@@ -223,7 +223,7 @@ def test_the_plugin_holds_only_the_guard_hook():
     assert h["command"] == 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/tq_hook.sh" pre-tool-use'
 
     others = {k: v for k, v in hooks.items() if k not in ("SessionStart", "PreToolUse")}
-    assert set(others) == {"PostToolUseFailure", "Stop"}
+    assert set(others) == {"PostToolUse", "PostToolUseFailure", "Stop"}
     for event, groups in others.items():
         word = re.sub(r"(?<!^)(?=[A-Z])", "-", event).lower()
         for g in groups:
@@ -251,10 +251,11 @@ def run_lobe(event, env, payload='{"tool_name":"Bash"}', timeout=30, cwd=None):
 
 
 @needs_bash
+@pytest.mark.parametrize("event", ["post-tool-use-failure", "post-tool-use"])
 @pytest.mark.parametrize("status", [1, 2, 3, 134, 137])
-def test_lobe_hook_always_exits_zero(tmp_path, status):
+def test_lobe_hook_always_exits_zero(tmp_path, status, event):
     fake_tq(tmp_path, "cat >/dev/null; echo boom >&2; echo out; exit %d" % status)
-    p = run_lobe("post-tool-use-failure", env_with(tmp_path))
+    p = run_lobe(event, env_with(tmp_path))
     assert p.returncode == 0, (status, p.returncode)
     assert p.stdout == "out\n", p.stdout
     assert p.stderr == "", p.stderr
@@ -287,10 +288,11 @@ def test_lobe_hook_no_hooks_switch(tmp_path):
 
 
 @needs_bash
-def test_lobe_hook_passes_stdin_and_stdout(tmp_path):
+@pytest.mark.parametrize("event", ["post-tool-use-failure", "post-tool-use"])
+def test_lobe_hook_passes_stdin_and_stdout(tmp_path, event):
     payload = '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
     fake_tq(tmp_path, 'cat > captured.json; echo \'{"hookSpecificOutput":{"x":1}}\'')
-    p = run_lobe("post-tool-use-failure", env_with(tmp_path), payload=payload, cwd=str(tmp_path))
+    p = run_lobe(event, env_with(tmp_path), payload=payload, cwd=str(tmp_path))
     assert p.returncode == 0
     assert (tmp_path / "captured.json").read_bytes() == payload.encode("utf-8")
     assert p.stdout == '{"hookSpecificOutput":{"x":1}}\n', p.stdout

@@ -46,6 +46,35 @@ Not seen: a declined call (`bypassPermissions` asks nothing), an interrupted cal
 `WebFetch`, and an `Edit` that fails while running rather than at its input check (for example a file that
 cannot be written).
 
+## Confirmed by the success capture, 2026-11-10
+
+A third capture session (same machine and mode, `spike/hook-capture/`), one successful call per tool. Field
+names and types only. Every successful call fired `PostToolUse` once, with `cwd`, `duration_ms`, `effort`,
+`hook_event_name`, `permission_mode`, `prompt_id`, `scratchpad_dir`, `session_id`, `tool_input`, `tool_name`,
+`tool_response`, `tool_use_id` and `transcript_path`; an MCP call adds `mcp_server` (object). No
+`PostToolUseFailure` fired.
+
+| Tool | `tool_input` fields | `tool_response` |
+|---|---|---|
+| `Bash` | `command`, `description`, `run_in_background` | object: `stdout`, `stderr`, `interrupted`, `isImage`, `noOutputExpected`, `backgroundTaskId` |
+| `PowerShell` | `command`, `description` | object: `stdout`, `stderr`, `interrupted`, `isImage` |
+| `Edit` | `file_path`, `old_string`, `new_string`, `replace_all` | object: `filePath`, `oldString`, `newString`, `originalFile`, `replaceAll`, `structuredPatch`, `userModified` |
+| `Write` | `file_path`, `content` | object: `type`, `filePath`, `content`, `structuredPatch`, `originalFile` (null for a new file), `userModified` |
+| `Read` | `file_path` | object: `type`, `file` (object) |
+| `Grep` | `pattern`, `path`, `output_mode` | object: `mode`, `content`, `filenames`, `numFiles`, `numLines`, `totalLines` |
+| `Glob` | `pattern`, `path` | object: `filenames`, `numFiles`, `totalMatches`, `truncated`, `countIsComplete`, `durationMs` |
+| `WebFetch` | `url`, `prompt` | object: `url`, `code`, `codeText`, `bytes`, `result`, `durationMs` |
+| `ToolSearch` | `query`, `max_results` | object: `query`, `matches`, `total_deferred_tools` |
+| `mcp__*` | `query` | string |
+
+| Fact | Seen |
+|---|---|
+| **A command started with `run_in_background` reports its start as an object with `backgroundTaskId`** | the one `Bash` call was the background `sleep`; its result holds `backgroundTaskId` (string) and none of the texts `Command running in background with ID:`. Feature 008 tells a start apart by a non-empty `backgroundTaskId`, and keeps the texts as a second check |
+| The field names the 008 projection keeps | `command` (shell), `file_path` (edit, write, read), `pattern` and `path` (grep, glob), `url` (web fetch) all arrive under those names |
+
+Not seen: `NotebookEdit`, `MultiEdit`, `WebSearch`, a `PowerShell` call in the background, and a run moved to
+the background after its timeout.
+
 ## Still from the hooks page only (web, not machine-checked)
 
 Each feature that needs a row confirms it before it is closed.
@@ -53,7 +82,6 @@ Each feature that needs a row confirms it before it is closed.
 | Situation | What the page says | Needed by |
 |---|---|---|
 | A failed `WebFetch` or MCP call, or an `Edit` that fails while running | `PostToolUseFailure` with the same fields; `error` is the tool's own text, with no `Exit code` line. An `Edit` that fails its input check fires nothing (confirmed above) | 004, 063 |
-| A successful call | `PostToolUse` with `tool_input`, `tool_response` and `tool_use_id` (confirmed for `Write`) | 008 |
 | A hidden failure (`npm test \| tail`, an MCP error flag) | `PostToolUse`; the error is inside `tool_response` | 009 |
 | A call interrupted while running | the page says cancelling a running tool does not fire `PostToolUseFailure`; the tool result carries the interruption text | 004 |
 | A call declined at the permission prompt | `PermissionDenied` (and `PermissionRequest` before it); no `PostToolUseFailure` | 004 |

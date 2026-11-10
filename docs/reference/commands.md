@@ -1389,7 +1389,20 @@ every secret replaced by a marker. Four rules leave the line out or change it:
 - a call the person or a hook refused, so the tool never ran, is not recorded;
 - the memory's own commands (`tentaqles lobe ...`, `tq lobe ...`, and MCP tools named `lobe_...`) are not
   recorded, so the memory does not learn from its own output;
-- a `grep` (or `rg`, `ag`, `ack`, `git grep`) that found nothing is recorded as a success, not a failure.
+- a `grep` (or `rg`, `ag`, `ack`, `git grep`) that found nothing is recorded as a success, not a failure, with the
+  input of a success (below).
+
+On `post-tool-use`, which Claude Code sends when a call succeeds, the memory records the call with the same skips for
+the memory's own commands and with `capture off`. Each success writes one `ok` line with no error: the tool's name, the
+time, and the part of its input that identifies the call. The output of the call is never written anywhere. The input
+keeps `command` for a shell tool, `file_path` or `notebook_path` for an edit, a write or a read, `pattern` and `path`
+for a search, and `url` or `query` for a web fetch. Any other tool, MCP tools included, keeps each top-level key, with
+text values cut to 200 characters and nested values left as `{}` or `[]`. The full scrubbed input is kept for a success
+after a failure of the same tool in the same session (so the two can be compared); when the end of today's log
+cannot be read, the success is projected. A `grep` that found nothing is a success and follows the same rule. A tool call whose payload is
+larger than 1 MiB is not recorded at all. A shell command whose result only says it went to the background (a result with a `backgroundTaskId`, the text
+`Command running in background with ID:`, or a run moved to the background after its timeout) writes nothing,
+because it started and did not yet work.
 
 On `stop`, which Claude Code sends when the agent ends its turn, the memory records a call Claude Code rejected before
 it ran, such as an edit whose text is not in the file. It reads the payload's `transcript_path`, and only when that

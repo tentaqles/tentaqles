@@ -79,14 +79,17 @@ func NormalInput(raw json.RawMessage) json.RawMessage {
 // mcp__<server>__<tool> and the rest) the error is stored whole, after scrubbing, and Exit stays nil.
 // The input is the scrubbed tool input as a JSON object, whatever the tool; an empty tool name is
 // recorded as "unknown".
-func FromClaudeFailure(c Call, pl Place, now time.Time) eventlog.Event {
-	tool := c.Tool
-	if tool == "" {
-		tool = unknownTool
-	}
+//
+// A grep that found nothing is written as ok (GrepFoundNothing). Its input is then the success form
+// (okInput): the projection, unless the full-input exception applies (KeepsFullInput). tail is the tail
+// of today's event file, read by the caller; tailOK is false when it could not be read, and the input
+// is then kept in full. A failure's own input is always the full one.
+func FromClaudeFailure(c Call, pl Place, now time.Time, tail []eventlog.TailEvent, tailOK bool) eventlog.Event {
+	tool := toolName(c.Tool)
 	exit, rest := splitExit(c.Error, ShellTool(tool))
 	kind := eventlog.KindFail
-	if grepFoundNothing(tool, c.Input, c.Error) {
+	var input scrub.Clean
+	if GrepFoundNothing(tool, c.Input, c.Error) {
 		// A grep that found nothing is an answer, not a failure: the line is written as ok, with no
 		// error, and the exit code 1 when the error stated it.
 		kind, rest, exit = eventlog.KindOK, "", nil
@@ -94,8 +97,10 @@ func FromClaudeFailure(c Call, pl Place, now time.Time) eventlog.Event {
 			one := 1
 			exit = &one
 		}
+		input = okInput(tool, c.Input, c.Session, tail, tailOK)
+	} else {
+		input = scrub.Input(NormalInput(c.Input))
 	}
-	input := scrub.Input(NormalInput(c.Input))
 	var id string
 	if c.CallID != "" {
 		id = eventlog.ID("claude", c.Session, c.CallID)
@@ -118,16 +123,96 @@ func FromClaudeFailure(c Call, pl Place, now time.Time) eventlog.Event {
 	}
 }
 
+// FromClaudePostTool builds the ok event of a successful call in Claude Code (S-03). The steps run in
+// this order; the caller has already applied the skip rules of a success (the own tools, see the hook's
+// recordSuccess):
+//
+//  1. Background start: when the result only says the command went to the background
+//     (BackgroundStart), no event is built and the second result is false.
+//  2. The result is dropped: nothing below reads response, and no byte of it reaches an event.
+//  3. The input: the scrubbed full input when the full-input exception applies (KeepsFullInput),
+//     otherwise the scrubbed projection (Project). Both go through scrub.Input, so a success and a
+//     failure of one object input have the same bytes.
+//
+// tail is the tail of today's event file, read by the caller before the call; tailOK is false when it
+// could not be read. The event has kind ok, host claude, no error, no fingerprint and no exit: a
+// PostToolUse payload states no exit code. id, at, repo and cwd are as for a failure.
+func FromClaudePostTool(c Call, response json.RawMessage, pl Place, now time.Time, tail []eventlog.TailEvent, tailOK bool) (eventlog.Event, bool) {
+	if BackgroundStart(c.Tool, response) {
+		return eventlog.Event{}, false
+	}
+	response = nil
+	tool := toolName(c.Tool)
+	input := okInput(tool, c.Input, c.Session, tail, tailOK)
+	var id string
+	if c.CallID != "" {
+		id = eventlog.ID("claude", c.Session, c.CallID)
+	} else {
+		id = eventlog.IDWithoutCall("claude", c.Session, tool, eventlog.KindOK, input.String(), now.UnixNano())
+	}
+	return eventlog.Event{
+		V:       1,
+		ID:      id,
+		At:      now.UTC().Format(time.RFC3339),
+		Session: c.Session,
+		Host:    "claude",
+		Tool:    tool,
+		Kind:    eventlog.KindOK,
+		Repo:    pl.Repo,
+		Cwd:     pl.Cwd,
+		Input:   input,
+	}, true
+}
+
+// toolName is the tool's name, or unknownTool when the payload gave none.
+func toolName(tool string) string {
+	if tool == "" {
+		return unknownTool
+	}
+	return tool
+}
+
+// okInput is the input of an ok event: the scrubbed full input when KeepsFullInput says so, else the
+// scrubbed projection. Project reads the input as a JSON object itself; scrub.Input then writes both
+// forms in one encoding.
+func okInput(tool string, input json.RawMessage, session string, tail []eventlog.TailEvent, tailOK bool) scrub.Clean {
+	if KeepsFullInput(session, tool, tail, tailOK) {
+		return scrub.Input(NormalInput(input))
+	}
+	return scrub.Input(Project(tool, input))
+}
+
+// KeepsFullInput is the exception of S-03 step 5 (decision A-18): a success keeps its full scrubbed input
+// when the tail of today's event file holds an earlier failure (kind fail) of the same session and tool.
+// A reference line counts, since it carries those fields. A tail that could not be read keeps only the
+// projection (owner, 2026-11-10: otherwise every success, a Write's whole content included, would be
+// stored in full whenever the log's end is unreadable; that one call then loses only its pairing). An
+// empty session never matches.
+func KeepsFullInput(session, tool string, tail []eventlog.TailEvent, tailOK bool) bool {
+	if !tailOK {
+		return false
+	}
+	if session == "" {
+		return false
+	}
+	for _, e := range tail {
+		if e.Kind == eventlog.KindFail && e.Session == session && e.Tool == tool {
+			return true
+		}
+	}
+	return false
+}
+
 // grepPrograms are the programs whose exit code 1 means "nothing matched".
 var grepPrograms = []string{"grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"}
 
-// grepFoundNothing reports whether a failed call is a grep that found nothing: a shell call whose
+// GrepFoundNothing reports whether a failed call is a grep that found nothing: a shell call whose
 // error, trimmed, is empty or exactly "Exit code 1", and whose first statement that is not a cd
 // runs a grep program, or git with grep as its next word. The shell redirections are removed first
 // (shellwords.StripRedirects). The rule looks at the first statement that is not a cd, so
 // `grep x f; npm test` with `Exit code 1` is written as ok although the second statement may be what
 // failed; this is the design's stated rule and a known narrow misclassification.
-func grepFoundNothing(tool string, input json.RawMessage, errText string) bool {
+func GrepFoundNothing(tool string, input json.RawMessage, errText string) bool {
 	if !ShellTool(tool) {
 		return false
 	}

@@ -2,8 +2,10 @@ package hook
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
+	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
 	"github.com/tentaqles/tentaqles/internal/lobe/sense"
 )
 
@@ -13,8 +15,11 @@ type step struct {
 	run func(ctx context.Context, r *run) error
 }
 
-// evPostToolUseFailure is the one event with real steps in this version.
-const evPostToolUseFailure = "post-tool-use-failure"
+// The events with real steps in this version.
+const (
+	evPostToolUseFailure = "post-tool-use-failure"
+	evPostToolUse        = "post-tool-use"
+)
 
 // knownEvent reports whether event is one of the seven events of the hook contract.
 func knownEvent(event string) bool {
@@ -43,6 +48,8 @@ func stepsFor(event string) []step {
 	switch event {
 	case evPostToolUseFailure:
 		out = append(out, step{id: "S-01", run: recordFailure})
+	case evPostToolUse:
+		out = append(out, step{id: "S-03", run: recordSuccess})
 	case evStop:
 		out = append(out, step{id: "S-01R", run: recordRejected})
 	}
@@ -78,8 +85,67 @@ func recordFailure(ctx context.Context, r *run) error {
 	if _, skip := sense.Skip(call); skip {
 		return nil
 	}
+	// The tail is read only for a grep that found nothing: the one failure written as ok, whose input
+	// follows the success rule (S-03 step 5). Any other failure keeps its full input and needs no tail.
+	var tail []eventlog.TailEvent
+	tailOK := false
+	if sense.GrepFoundNothing(call.Tool, call.Input, call.Error) {
+		tail, tailOK = r.todayTail()
+	}
 	place := sense.Locate(r.ws.Root, r.cwd)
-	ev := sense.FromClaudeFailure(call, place, r.now)
+	ev := sense.FromClaudeFailure(call, place, r.now, tail, tailOK)
 	_, err := sense.Record(ctx, r.st, ev, call)
 	return err
+}
+
+// recordSuccess (S-03) records a successful call of any tool. The skip rules of a success are the
+// memory's own tools only: an interrupt and a refusal are failures, and the call here has no error. The
+// work already left a background start and the skipped calls before the store was opened, so this step
+// meets only what it records. Its order is fixed by sense.FromClaudePostTool: the background check, the
+// drop of the response, the projection or the full input, then the scrub (in Record).
+func recordSuccess(ctx context.Context, r *run) error {
+	call := successCall(r)
+	if _, skip := sense.Skip(call); skip {
+		return nil
+	}
+	tail, tailOK := r.todayTail()
+	place := sense.Locate(r.ws.Root, r.cwd)
+	ev, ok := sense.FromClaudePostTool(call, r.pl.toolResponse, place, r.now, tail, tailOK)
+	// The response is dropped here: no later step of this run reads it.
+	r.pl.toolResponse = nil
+	if !ok {
+		return nil
+	}
+	_, err := sense.Record(ctx, r.st, ev, call)
+	return err
+}
+
+// successCall is the sense.Call of a success: the payload's tool, input and folder, with no error and
+// no interrupt flag, which are failure fields.
+func successCall(r *run) sense.Call {
+	return sense.Call{
+		Session: r.pl.session,
+		Cwd:     r.cwd,
+		Tool:    r.pl.tool,
+		CallID:  r.pl.toolUseID,
+		Input:   r.pl.toolInput,
+	}
+}
+
+// todayTail reads the tail of today's event file (UTC, at the run's time) without the store lock, for
+// the full-input exception (S-03 step 5). ok is false when the file could not be read or the store is not
+// open; the caller then keeps the full input. A missing file is an empty tail, which is ok.
+func (r *run) todayTail() (tail []eventlog.TailEvent, ok bool) {
+	if r.st == nil {
+		return nil, false
+	}
+	file, err := eventlog.FileFor(r.now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, false
+	}
+	tail, err = eventlog.TailEvents(filepath.Join(r.st.Dir(), filepath.FromSlash(file)), eventlog.EventTailBytes)
+	if err != nil {
+		return nil, false
+	}
+	return tail, true
 }

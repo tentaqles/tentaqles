@@ -273,4 +273,4 @@ twenty call ids left 20 lines, 19 of them reference lines with `"dup":"evt_d3c26
 `error`; `tentaqles lobe events` printed the full line first and the 19 references after it, each with only
 `v`, `id`, `at`, `session`, `host`, `tool`, `kind`, `fp` and `dup`.
 
-Left open: CI on Linux and macOS.
+CI green on Linux, macOS and Windows for `a18d3918` on 2026-11-10. Nothing is left open.

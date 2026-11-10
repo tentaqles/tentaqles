@@ -255,6 +255,21 @@ func TestLobeSenseOwnTools(t *testing.T) {
 		t.Fatalf("the memory's own tools created a lobe folder for acme")
 	}
 
+	// The same own tools as successes (S-03) write nothing either.
+	ownOK := []string{
+		successJSON("s1", app, "Bash", "toolu_o5", `{"command":"tentaqles lobe graph find x"}`, `{"stdout":"x","stderr":"","interrupted":false}`),
+		successJSON("s1", app, "Bash", "toolu_o6", `{"command":"cd app && tq lobe status"}`, `{"stdout":"ok","stderr":"","interrupted":false}`),
+		successJSON("s1", app, "mcp__graph__lobe_find", "toolu_o7", `{"q":"zzz"}`, `"found"`),
+	}
+	for _, stdin := range ownOK {
+		if out := runHook(t, evPostToolUse, stdin); out != "" {
+			t.Errorf("an own tool as a success: stdout %q, want nothing", out)
+		}
+	}
+	if n := len(lines(t, "acme")); n != 0 {
+		t.Fatalf("the memory's own tools as successes wrote %d lines, want 0", n)
+	}
+
 	notOwn := []string{
 		payloadJSON("s1", app, "Bash", "toolu_1", "tentaqles doctor", errText),
 		payloadJSON("s1", app, "Bash", "toolu_2", "npm test && tentaqles lobe status", errText),
@@ -404,6 +419,15 @@ func TestLobeNoHooksSwitch(t *testing.T) {
 		if out := runHook(t, ev, failureJSON(f)); out != "" {
 			t.Errorf("%s: stdout %q, want nothing", ev, out)
 		}
+	}
+	// post-tool-use with a success payload (S-03) is switched off the same way.
+	okPayload := successJSON("s1", f.app("acme"), "Write", "toolu_01",
+		`{"file_path":"notes.txt","content":"CONTENT-MARKER-1"}`, `{"filePath":"notes.txt","note":"OUTPUT-MARKER-2"}`)
+	if out := runHook(t, evPostToolUse, okPayload); out != "" {
+		t.Errorf("post-tool-use success: stdout %q, want nothing", out)
+	}
+	if n := len(lines(t, "acme")); n != 0 {
+		t.Errorf("post-tool-use success wrote %d lines with TQ_LOBE_NO_HOOKS=1, want 0", n)
 	}
 	if exists(paths.LobeDir("acme")) {
 		t.Errorf("a lobe folder was written with TQ_LOBE_NO_HOOKS=1")

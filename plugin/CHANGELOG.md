@@ -4,6 +4,8 @@ Notable changes to the Tentaqles plugin. Versions follow [semver](https://semver
 
 ## [Unreleased]
 
+- A new `PostToolUse` entry runs `scripts/lobe_hook.sh post-tool-use` on every tool call (timeout 5 s, fails open),
+  so the memory records each successful call as a small `ok` line with no output in it.
 - A new hook entry on `Stop` runs `scripts/lobe_hook.sh stop`, which starts `tentaqles lobe-hook claude stop` to record
   a call Claude Code rejected before it ran (timeout 5 s). It fails open, like the other memory hook.
 - A new hook entry on `PostToolUseFailure` runs `scripts/lobe_hook.sh post-tool-use-failure`, which starts

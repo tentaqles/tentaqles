@@ -173,6 +173,16 @@ func (r *run) work(stdin io.Reader, steps []step) {
 			return
 		}
 	}
+	// A success (S-03) is skipped for the memory's own tools, and a background start writes nothing: both
+	// are decided here, before the store is opened, so the skipped call leaves no store folder either.
+	if r.event == evPostToolUse {
+		if _, skip := sense.Skip(successCall(r)); skip {
+			return
+		}
+		if sense.BackgroundStart(r.pl.tool, r.pl.toolResponse) {
+			return
+		}
+	}
 	// The stop event reads the transcript first, through a read-only store. With no store and nothing
 	// to record, the run stops here, so no store folder is created.
 	if r.event == evStop {

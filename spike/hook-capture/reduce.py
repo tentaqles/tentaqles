@@ -159,6 +159,22 @@ def extra_lines(payloads):
             f"`Exit code N` in {exit_count}; empty in {empty}; "
             f"length in characters: smallest {min(lengths)}, largest {max(lengths)}"
         )
+    # Feature 008: how a command that went to the background is told apart. Counts only, never text.
+    responses = [p["tool_response"] for p in payloads if "tool_response" in p]
+    if responses:
+        def response_text(r):
+            if isinstance(r, str):
+                return r
+            if isinstance(r, dict):
+                return " ".join(str(v) for v in r.values() if isinstance(v, str))
+            return ""
+        bg = sum(1 for r in responses if "in background" in response_text(r).lower())
+        lines.append(f"- tool_response says it went to the background: {bg} of {len(responses)}")
+        task = sum(
+            1 for r in responses
+            if isinstance(r, dict) and isinstance(r.get("backgroundTaskId"), str) and r["backgroundTaskId"].strip()
+        )
+        lines.append(f"- tool_response has a non-empty backgroundTaskId: {task} of {len(responses)}")
     for key in sorted(TEXT_KEYS + BOOL_KEYS):
         values = Counter(safe_value(key, p[key]) for p in payloads if key in p)
         if values:

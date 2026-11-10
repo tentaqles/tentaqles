@@ -5,6 +5,12 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **A successful call is recorded too, minimally.** After a tool call succeeds, the memory's event log gets one `ok` line
+  with the tool, the time and the part of the input that identifies the call (a shell command, a file path, a search
+  pattern, a URL, or the top-level values of an MCP tool cut to 200 characters). The output is never stored. A command
+  that only went to the background writes nothing; a success after a failure of the same tool in the same session keeps
+  its full input.
+
 - **A repeated failed call is stored once.** The same payload sent twice leaves one line in the memory's event log. The same failure again within five minutes in the same session leaves a short reference line (no input, no error text) pointing at the first. `tentaqles lobe events` shows a reference line with its first line.
 - **Every failure line carries a fingerprint: `fp`, `tentaqles lobe fingerprint`, and the count in `lobe status`.** Each failed
   call's line in the memory's event log gets `fp`, a short id of "the same error": errors that differ only in paths, numbers,
