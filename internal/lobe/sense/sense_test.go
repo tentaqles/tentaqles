@@ -443,6 +443,40 @@ func TestLobeSenseOutcome(t *testing.T) {
 		t.Errorf("MCP outcome FP = %q, want %q", mcpOut.FP, want)
 	}
 
+	// The same event again: its id is already in the log, so the state is replay and nothing is written.
+	replayOut, err := Record(context.Background(), s, ev, call)
+	if err != nil {
+		t.Fatalf("Record of a replay: %v", err)
+	}
+	if replayOut.State != StateReplay || replayOut.ID != ev.ID || replayOut.Kind != eventlog.KindFail || replayOut.FP != wantFP {
+		t.Errorf("replay outcome = %+v, want state %q with the event's id, kind fail and fp %q", replayOut, StateReplay, wantFP)
+	}
+
+	// The same failure under a new call id ten seconds later: a reference line, state ref, with dup set
+	// to the first event's id.
+	repeatCall := call
+	repeatCall.CallID = "toolu_09"
+	repeatEv := FromClaudeFailure(repeatCall, firstPlace(), fixedNow().Add(10*time.Second))
+	refOut, err := Record(context.Background(), s, repeatEv, repeatCall)
+	if err != nil {
+		t.Fatalf("Record of a repeat: %v", err)
+	}
+	if refOut.State != StateRef || refOut.ID != repeatEv.ID || refOut.Kind != eventlog.KindFail || refOut.FP != wantFP {
+		t.Errorf("repeat outcome = %+v, want state %q with the repeat's id, kind fail and fp %q", refOut, StateRef, wantFP)
+	}
+	refData, err := os.ReadFile(filepath.Join(s.Dir(), "events", "events-20261109.jsonl"))
+	if err != nil {
+		t.Fatalf("read day file: %v", err)
+	}
+	refLines := strings.Split(strings.TrimRight(string(refData), "\n"), "\n")
+	var refLine map[string]any
+	if err := json.Unmarshal([]byte(refLines[len(refLines)-1]), &refLine); err != nil {
+		t.Fatalf("reference line does not parse: %v", err)
+	}
+	if refLine["dup"] != ev.ID || refLine["id"] != repeatEv.ID {
+		t.Errorf("reference line dup/id = %v/%v, want %q/%q", refLine["dup"], refLine["id"], ev.ID, repeatEv.ID)
+	}
+
 	// A fresh store whose events path is a regular file cannot take the line.
 	fresh := openClient(t, "beta")
 	if err := os.WriteFile(filepath.Join(fresh.Dir(), "events"), []byte("not a folder\n"), 0600); err != nil {

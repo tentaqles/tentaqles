@@ -1129,9 +1129,20 @@ tentaqles lobe events [--client <name>]
 ### Description
 
 `lobe events` prints the newest stored lines of the client's event log, one JSON object per line, oldest of the selection
-first. At most 20 lines are printed. It reads the newest day file first and continues into older day files until it has 20
+first. At most 20 lines are selected. It reads the newest day file first and continues into older day files until it has 20
 lines. Each line is printed as it is stored, with secrets already replaced by a marker. A line that is not a whole JSON
 object is skipped, so one broken line does not stop the command.
+
+A reference line is a repeat of the same call within 5 minutes, stored in place of a full line. It has only `v`, `id`, `at`,
+`session`, `host`, `tool`, `kind`, `fp` (only when the first line has one) and `dup`, where `dup` is the id of the first line.
+It has no `input`, no `error`, no `exit`, no `repo` and no `cwd`. When the selection holds a reference line whose first line
+falls outside the newest 20, that first line is printed in front of the selection, once however many references point at it,
+in the order the first lines stand in the log. The first line is looked for only in the reference's own UTC day file and the
+day before, since it is at most 5 minutes older; when both hold a copy, the older copy is printed. A first line that has
+expired is not found, and nothing extra is printed.
+
+The first-line rule applies to the printed lines: of two lines with the same session and id, only the first is printed. So
+fewer than 20 lines can print when copies are dropped.
 
 When the log is empty, or the client has no store, it prints nothing and exits 0.
 

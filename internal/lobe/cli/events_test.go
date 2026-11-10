@@ -115,3 +115,111 @@ func TestEventsRefusesOtherLoginInsideAgent(t *testing.T) {
 		t.Fatalf("refused events printed %q", buf.String())
 	}
 }
+
+// sessionLine is a stored line with its session, id, n (read by numbers) and, for a reference, its dup.
+func sessionLine(n int, session, id, dup string) string {
+	if dup == "" {
+		return fmt.Sprintf(`{"v":1,"id":%q,"session":%q,"kind":"fail","n":%d}`, id, session, n)
+	}
+	return fmt.Sprintf(`{"v":1,"id":%q,"session":%q,"kind":"fail","n":%d,"dup":%q}`, id, session, n, dup)
+}
+
+func TestLobeEventsShowsReferenceWithFirst(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	cwd := f.client("acme")
+	events := func() string {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := Events(deps(false, nil, cwd), "", &buf); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	refs := func(from, to int, dup string) []string {
+		var ls []string
+		for n := from; n <= to; n++ {
+			ls = append(ls, sessionLine(n, "s3", fmt.Sprintf("evt_r%02d", n), dup))
+		}
+		return ls
+	}
+
+	// 1 full line (evt_a, s3) then 25 reference lines pointing at it: the full line comes first, then the
+	// newest 20 reference lines. The first line is outside the selection and is found in the same file.
+	writeDay(t, "20261110", append([]string{sessionLine(0, "s3", "evt_a", "")}, refs(1, 25, "evt_a")...)...)
+	if got := numbers(t, events()); fmt.Sprint(got) != "[0 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25]" {
+		t.Fatalf("printed %v, want the full line then refs 6..25", got)
+	}
+	// The printed first line is the stored bytes, and the first printed line is that line.
+	if !strings.HasPrefix(events(), sessionLine(0, "s3", "evt_a", "")+"\n") {
+		t.Fatal("the first line is not printed first, as stored")
+	}
+}
+
+func TestEventsReferenceFirstFromOlderDay(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	cwd := f.client("acme")
+	writeDay(t, "20261110", sessionLine(0, "s3", "evt_a", ""), sessionLine(1, "s9", "evt_x", ""))
+	writeDay(t, "20261111", sessionLine(2, "s3", "evt_r1", "evt_a"), sessionLine(3, "s3", "evt_r2", "evt_a"))
+
+	var buf bytes.Buffer
+	if err := Events(deps(false, nil, cwd), "", &buf); err != nil {
+		t.Fatal(err)
+	}
+	// The first line sits in the older day file; it is printed once, in front.
+	if got := numbers(t, buf.String()); fmt.Sprint(got) != "[0 1 2 3]" {
+		t.Fatalf("printed %v, want [0 1 2 3]", got)
+	}
+}
+
+func TestEventsReferenceFirstAlreadyInSelection(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	cwd := f.client("acme")
+	// The first line is inside the selection: it is printed once, where it stands.
+	writeDay(t, "20261110", sessionLine(0, "s3", "evt_a", ""), sessionLine(1, "s3", "evt_r1", "evt_a"),
+		sessionLine(2, "s3", "evt_r2", "evt_a"), sessionLine(3, "s3", "evt_r3", "evt_a"))
+
+	var buf bytes.Buffer
+	if err := Events(deps(false, nil, cwd), "", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := numbers(t, buf.String()); fmt.Sprint(got) != "[0 1 2 3]" {
+		t.Fatalf("printed %v, want [0 1 2 3]", got)
+	}
+}
+
+func TestEventsReferenceWithFirstGonePrintsSelectionOnly(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	cwd := f.client("acme")
+	// The first line of these references is gone (expired): nothing extra is printed.
+	writeDay(t, "20261110", sessionLine(1, "s3", "evt_r1", "evt_gone"), sessionLine(2, "s3", "evt_r2", "evt_gone"),
+		sessionLine(3, "s3", "evt_r3", "evt_gone"))
+
+	var buf bytes.Buffer
+	if err := Events(deps(false, nil, cwd), "", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := numbers(t, buf.String()); fmt.Sprint(got) != "[1 2 3]" {
+		t.Fatalf("printed %v, want [1 2 3]", got)
+	}
+}
+
+func TestEventsSessionAndIDPairShowsOnce(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	cwd := f.client("acme")
+	// Two lines with the same session and id: the first counts, the second is not shown.
+	writeDay(t, "20261110", sessionLine(1, "s3", "evt_b", ""), sessionLine(2, "s3", "evt_b", ""),
+		sessionLine(3, "s4", "evt_b", ""))
+
+	var buf bytes.Buffer
+	if err := Events(deps(false, nil, cwd), "", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := numbers(t, buf.String()); fmt.Sprint(got) != "[1 3]" {
+		t.Fatalf("printed %v, want [1 3]", got)
+	}
+}

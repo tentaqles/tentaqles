@@ -227,7 +227,7 @@ A held lock is not checked here: a tester has no portable way to hold the store 
   `TestLobeLogAppendParallel`, `TestLobeLogLockHeld`, `TestLobeGuardNeverImportsLobe`, and every test under
   "Must not trade off" in `CLAUDE.md` unedited
 - [ ] `docs/reference/commands.md` and `CHANGELOG.md` are updated; `NOTICE` lists the ported file
-- [ ] the owner has seen twenty identical failures leave one full line and nineteen reference lines
+- [x] the owner has seen twenty identical failures leave one full line and nineteen reference lines
 
 ## Risks and unknowns
 
@@ -245,3 +245,32 @@ A held lock is not checked here: a tester has no portable way to hold the store 
   the second event is lost; nothing else breaks, because no pointer uses `id` without `session` (S-06, Risks).
 - A loop of 20 identical failures later weighs 20 in the fingerprint counts. Whether it should weigh 1 is for
   M-01 to report (S-06, Risks).
+
+## Result of the build, the review and the tester run
+
+Built on 2026-11-10 by four Haiku builders (the check and the readers' rule, the `events` verb and docs, the
+wiring into `Record`, one fix round), reviewed as one change by a Sonnet reviewer.
+
+- **Brief changes.** `Event` already had `dup`. `Check` lives in `dedupe_check.go` (with the agentmemory port
+  header; `dedupe.go` keeps `ID`). The tail is decoded into a plain `TailEvent` with the strings as stored, and
+  `Check(tail []TailEvent, e Event)` compares the new event's scrubbed input with the stored string: the first
+  build decoded the tail back through the scrubber, which cost scrub time per line inside the store lock and cut
+  long inputs again so they never compared equal (the main session caught it). The check and the write run in
+  `eventlog.AppendChecked`, inside one lock hold; a busy lock writes the full line.
+- **The review** found no blocking defect and confirmed the lock hold, the reference line's keys (it still
+  passes `scrub.Line`), and that 063's rejected calls neither double nor get lost. Fixed from it, with tests:
+  `Scan` kept a seen set over every retained day (now the current and the previous day file, each line parsed
+  once); `lobe events` could read every older day file for an expired first line (now only the reference's day
+  and the one before) and took the newer copy of a pair (now the older, as `Scan`); a failed reference line
+  would have dropped the event (now the full line is written); the docs said the first-line rule held across
+  all of `lobe events` (it holds within the printed lines).
+- Tests: `go vet`, `go build` and `go test ./... -count=1` green on Windows; the plugin suite 34 passed.
+- Tester brief: 7 of 7 on Windows 11 in Git Bash against a program built from the working tree; the reference
+  line is 173 bytes.
+
+The owner's check, 2026-11-10, in the `tqx` playground: twenty identical failures of `mcp__acme__ping` under
+twenty call ids left 20 lines, 19 of them reference lines with `"dup":"evt_d3c26cb1"`, and 1 line with an
+`error`; `tentaqles lobe events` printed the full line first and the 19 references after it, each with only
+`v`, `id`, `at`, `session`, `host`, `tool`, `kind`, `fp` and `dup`.
+
+Left open: CI on Linux and macOS.

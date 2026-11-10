@@ -32,6 +32,17 @@ const (
 // files are ignored. The line passed to fn has no line break and no trailing carriage return; it is
 // only valid during the call. When fn returns false, Scan stops and reads no further file.
 //
+// First-line rule (S-06 step 6): of two lines with the same session and id, only the first, in the
+// walk's order, is passed to fn. A later line with that pair is skipped and is not counted as broken.
+// A line whose JSON has no string id is passed as it is.
+//
+// Memory note: the pairs of the day file being read and of the one before it are remembered, the copies
+// that were skipped included. A replay across UTC midnight is the one way a pair reaches two consecutive
+// day files, so that is all the rule needs. A copy is hidden when its pair was seen in the previous or the
+// current day file. A pair that the previous day file does not hold is not matched in the day after, so
+// its copy there is passed. The seen sets are bounded by the pairs of two day files. Each line is parsed
+// once.
+//
 // Scan returns the number of day files it read, the number of broken lines it skipped (see the rules
 // above) and the first error that is not "does not exist". A missing events folder is no error and
 // gives zero files.
@@ -57,7 +68,10 @@ func Scan(s *store.Store, fn func(line []byte) bool) (files, skipped int, err er
 	}
 	// YYYYMMDD sorts by date, so a name sort puts the oldest day first.
 	sort.Strings(names)
+	// The pairs of the previous and the current day file (see the memory note above).
+	var prevSeen, curSeen map[sessionID]bool
 	for _, name := range names {
+		prevSeen, curSeen = curSeen, make(map[sessionID]bool)
 		data, err := s.Read("events/" + name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -68,9 +82,18 @@ func Scan(s *store.Store, fn func(line []byte) bool) (files, skipped int, err er
 		files++
 		whole, last := splitWhole(data)
 		for _, line := range whole {
-			if !isObjectLine(line) {
+			key, keyed, ok := parseLine(line)
+			if !ok {
 				skipped++
 				continue
+			}
+			if keyed {
+				// A skipped copy is recorded too, so a chain of copies over two midnights stays one event.
+				hidden := prevSeen[key] || curSeen[key]
+				curSeen[key] = true
+				if hidden {
+					continue
+				}
 			}
 			if !fn(line) {
 				return files, skipped, nil
@@ -193,6 +216,117 @@ func splitWhole(data []byte) (whole [][]byte, last []byte) {
 		}
 	}
 	return whole, last
+}
+
+// sessionID is the pair that names an event: its session and its id (core page 5.4). An id alone is
+// not a name, since two sessions can use one call id.
+type sessionID struct {
+	session, id string
+}
+
+// parseLine parses a whole line once. ok is false when the line is not a JSON object: Scan counts
+// it as broken. keyed is true when the object has a string id and a session that is a string, or none,
+// or null; key is then the pair the first-line rule uses. A missing or null session is the empty session.
+func parseLine(line []byte) (key sessionID, keyed, ok bool) {
+	t := bytes.TrimSpace(line)
+	if len(t) == 0 || t[0] != '{' {
+		return sessionID{}, false, false
+	}
+	var m map[string]any
+	if json.Unmarshal(t, &m) != nil {
+		return sessionID{}, false, false
+	}
+	id, isStr := m["id"].(string)
+	if !isStr {
+		return sessionID{}, false, true
+	}
+	key.id = id
+	switch s := m["session"].(type) {
+	case nil:
+	case string:
+		key.session = s
+	default:
+		return sessionID{}, false, true
+	}
+	return key, true, true
+}
+
+// EventTailBytes is how much of today's event file the repeat check reads: the last 64 KiB (S-06).
+const EventTailBytes = 64 << 10
+
+// TailEvent is one whole line of an event file as it is stored, decoded for the repeat check. Input
+// is the stored JSON string value, the raw text on disk: it is compared as it is and never scrubbed
+// again, so a long input compares equal to its own stored form.
+type TailEvent struct {
+	V       int    `json:"v"`
+	ID      string `json:"id"`
+	At      string `json:"at"`
+	Session string `json:"session"`
+	Host    string `json:"host"`
+	Tool    string `json:"tool"`
+	Kind    string `json:"kind"`
+	Input   string `json:"input"`
+	FP      string `json:"fp"`
+	Dup     string `json:"dup"`
+}
+
+// TailEvents decodes the whole lines in the last maxBytes bytes of the event file at path, oldest
+// first. A partial first line (when the window starts inside a line) and a last line with no line
+// break are dropped. A line that does not decode as a TailEvent is skipped. A missing file is no error
+// and gives no events. maxBytes below 1 gives none.
+func TailEvents(path string, maxBytes int) ([]TailEvent, error) {
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := fi.Size()
+	off := size - int64(maxBytes)
+	if off < 0 {
+		off = 0
+	}
+	partial := off > 0
+	start := off
+	if partial {
+		// One byte before the window tells whether the window starts a line.
+		start--
+	}
+	buf := make([]byte, size-start)
+	n, err := f.ReadAt(buf, start)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	buf = buf[:n]
+	if partial {
+		i := bytes.IndexByte(buf, '\n')
+		if i < 0 {
+			return nil, nil
+		}
+		buf = buf[i+1:]
+	}
+	whole, _ := splitWhole(buf)
+	var events []TailEvent
+	for _, line := range whole {
+		if !isObjectLine(line) {
+			continue
+		}
+		var e TailEvent
+		if json.Unmarshal(line, &e) != nil {
+			continue
+		}
+		events = append(events, e)
+	}
+	return events, nil
 }
 
 // isDayFile reports whether name is events-YYYYMMDD.jsonl with eight digits.

@@ -5,6 +5,7 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **A repeated failed call is stored once.** The same payload sent twice leaves one line in the memory's event log. The same failure again within five minutes in the same session leaves a short reference line (no input, no error text) pointing at the first. `tentaqles lobe events` shows a reference line with its first line.
 - **Every failure line carries a fingerprint: `fp`, `tentaqles lobe fingerprint`, and the count in `lobe status`.** Each failed
   call's line in the memory's event log gets `fp`, a short id of "the same error": errors that differ only in paths, numbers,
   ids or quoted values share one, and the same text from another kind of tool does not. `tentaqles lobe fingerprint --tool <name>`

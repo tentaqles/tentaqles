@@ -16,12 +16,14 @@ type Outcome struct {
 	CallID  string
 	Call    string // CallText of the call
 	Kind    string // eventlog.KindFail here
-	FP      string // empty for now
-	State   string // StateFull or StateDropped
+	FP      string // the fingerprint of a fail event (S-08); empty for ok
+	State   string // StateFull, StateRef, StateReplay or StateDropped
 }
 
 const (
 	StateFull    = "full"    // a full line was written
+	StateRef     = "ref"     // a reference line was written: a repeat of a full line (S-06)
+	StateReplay  = "replay"  // the line was already in the log; nothing was written (S-06)
 	StateDropped = "dropped" // the line could not be written; Kind is still set
 )
 
@@ -44,9 +46,16 @@ func Record(ctx context.Context, s *store.Store, e eventlog.Event, c Call) (Outc
 		Kind:    e.Kind,
 		State:   StateFull,
 	}
-	if err := eventlog.Append(ctx, s, e); err != nil {
+	v, _, err := eventlog.AppendChecked(ctx, s, e)
+	if err != nil {
 		out.State = StateDropped
 		return out, err
+	}
+	switch v {
+	case eventlog.VerdictRepeat:
+		out.State = StateRef
+	case eventlog.VerdictReplay:
+		out.State = StateReplay
 	}
 	return out, nil
 }
