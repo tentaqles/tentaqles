@@ -40,8 +40,11 @@ func cutoffFor(event string) time.Duration {
 // stepsFor is the steps of an event: its real steps, then the test seam's steps.
 func stepsFor(event string) []step {
 	var out []step
-	if event == evPostToolUseFailure {
+	switch event {
+	case evPostToolUseFailure:
 		out = append(out, step{id: "S-01", run: recordFailure})
+	case evStop:
+		out = append(out, step{id: "S-01R", run: recordRejected})
 	}
 	if extraSteps != nil {
 		out = append(out, extraSteps(event)...)

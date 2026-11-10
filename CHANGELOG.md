@@ -5,6 +5,10 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **A call Claude Code rejected before it ran is recorded too.** An edit whose text is not in the file fails Claude
+  Code's own check and fires no tool hook. The plugin's new `Stop` hook runs `tentaqles lobe-hook claude stop` when
+  the agent ends its turn; it reads the new part of the session's transcript, only inside the session's own login
+  folder, and adds each rejected call to the client's log, once. Subagent transcripts are not read yet.
 - **The memory records a failed call of every tool**, not only shell commands: a failed edit, web fetch or MCP
   call adds its line to the client's event log, with the whole error and no exit code. A call the person
   interrupted or refused is not recorded, nor is a command of the memory itself (`tentaqles lobe ...`), and a

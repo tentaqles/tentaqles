@@ -57,6 +57,7 @@ The same work cut into 62 features that are built and judged one at a time. Noth
 - [002: Sandbox with two test clients](features/002-sandbox.md)
 - [003: A failed shell command in Claude Code is logged](features/003-shell-failure-claude-code.md)
 - [004: A failed call from any tool is logged](features/004-any-tool-failure.md)
+- [063: A call Claude Code rejected before it ran is logged](features/063-rejected-calls.md)
 - [005: See what was captured, and switch it off](features/005-status-and-capture-switch.md)
 - [006: The same error gets the same fingerprint](features/006-error-fingerprints.md)
 - [007: A repeated call is stored once](features/007-duplicate-filter.md)

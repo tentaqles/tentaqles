@@ -325,3 +325,27 @@ every statement must be the memory's own.
 
 Left open: CI on Linux and macOS; the owner's person checks (a failed edit, a refused call, an interrupted call,
 an MCP failure); the capture session, which decides whether MCP failures arrive on `PostToolUseFailure`.
+
+## Result of the owner's real session and the capture, 2026-11-09
+
+In a yduqs repository, with the checkout's plugin and the development build as `tq`:
+
+- `git push` rejected: one line, `PowerShell`, `fail`, `exit` 1, with the repository's key. Correct.
+- `sleep` interrupted with Esc: no line. Correct.
+- `ls` on a missing folder: one line with the repository's key. Correct.
+- `grep` with no match: Claude used its own Grep tool, which succeeded, so nothing was written. Correct, but the
+  shell grep rule was not exercised live; the fixtures cover it.
+- **A failed edit wrote nothing, and no code of this feature can change that.** The capture session settled it
+  (`docs/prd/spikes/phase0-q2-claude-code-hooks.md`): when `old_string` is not in the file, Claude Code rejects
+  the call at its input check, before any hook runs. No `PreToolUse`, no `PostToolUseFailure`, nothing. The
+  failure exists only in the session transcript, as a `tool_result` with `is_error` true. This feature still
+  records an edit that fails while running, and every other tool's failure that reaches the hook.
+
+This is a gap in the owner's requirement "capture every tool error": failures rejected at Claude Code's input
+check reach no hook. The way to close it is to read the transcript, whose path every hook payload carries, at a
+later event (for example `Stop`) and record each `tool_result` with `is_error` true that no hook event
+covered. No feature in the index does that for live sessions yet (035 reads old transcripts). Where it goes is
+the owner's call.
+
+Not yet seen live: a declined call (the owner's sessions run in `bypassPermissions`), any MCP failure, a failed
+`WebFetch`.

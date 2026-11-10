@@ -4,7 +4,7 @@ The Claude Code plugin in `plugin/` of this repo. It ships from the root marketp
 pinned to a release tag and its sha; see `docs/RELEASING.md`).
 
 It holds the hook (`hooks/hooks.json`, `scripts/tq_hook.sh`) and nothing else; `tests/` is a pytest suite for the
-script. It also holds the memory's hook entries (today one, on `PostToolUseFailure`), which run
+script. It also holds the memory's hook entries (today two, on `PostToolUseFailure` and `Stop`), which run
 `scripts/lobe_hook.sh` and fail open: they exit 0 and print nothing on any problem, and never answer a deny.
 
 - The hook is a bridge to `tentaqles claude-hook`. The rules live in the Go CLI (`internal/guard`).

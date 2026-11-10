@@ -1047,6 +1047,13 @@ every secret replaced by a marker. Four rules leave the line out or change it:
   recorded, so the memory does not learn from its own output;
 - a `grep` (or `rg`, `ag`, `ack`, `git grep`) that found nothing is recorded as a success, not a failure.
 
+On `stop`, which Claude Code sends when the agent ends its turn, the memory records a call Claude Code rejected before
+it ran, such as an edit whose text is not in the file. It reads the payload's `transcript_path`, and only when that
+path lies inside `<CLAUDE_CONFIG_DIR>/projects/`. It records each `tool_result` whose `is_error` is true and whose text
+starts with `<tool_use_error>`, once per call id, and skips an id already in the log. Its position is kept in
+`cursors/<session>.json` in the client's store. At most 8 MiB of the transcript is read per run. A run with nothing to
+record creates no store.
+
 Setting `TQ_LOBE_NO_HOOKS=1` switches the hooks off. A person never needs to run this command.
 
 ---

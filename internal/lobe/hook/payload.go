@@ -13,13 +13,14 @@ const maxPayload = 1 << 20
 // payload is what the hook takes from a host's payload. Each key is read leniently: a key that is
 // missing or has the wrong JSON type counts as empty.
 type payload struct {
-	session   string
-	cwd       string
-	tool      string
-	toolUseID string
-	errText   string
-	toolInput json.RawMessage
-	interrupt bool
+	session    string
+	cwd        string
+	transcript string
+	tool       string
+	toolUseID  string
+	errText    string
+	toolInput  json.RawMessage
+	interrupt  bool
 }
 
 // readPayload reads one JSON object from in. It returns false, with nothing read into the result, when
@@ -41,13 +42,14 @@ func readPayload(in io.Reader) (payload, bool) {
 		return payload{}, false
 	}
 	return payload{
-		session:   textKey(m, "session_id"),
-		cwd:       textKey(m, "cwd"),
-		tool:      textKey(m, "tool_name"),
-		toolUseID: textKey(m, "tool_use_id"),
-		errText:   textKey(m, "error"),
-		toolInput: rawKey(m, "tool_input"),
-		interrupt: boolKey(m, "is_interrupt"),
+		session:    textKey(m, "session_id"),
+		cwd:        textKey(m, "cwd"),
+		transcript: textKey(m, "transcript_path"),
+		tool:       textKey(m, "tool_name"),
+		toolUseID:  textKey(m, "tool_use_id"),
+		errText:    textKey(m, "error"),
+		toolInput:  rawKey(m, "tool_input"),
+		interrupt:  boolKey(m, "is_interrupt"),
 	}, true
 }
 

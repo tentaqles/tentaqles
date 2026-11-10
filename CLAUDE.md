@@ -97,6 +97,7 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
 - A memory hook serves only the client that both the folder and the session's login name; otherwise it writes
   nothing anywhere: `TestLobeHookServesOnlyItsLogin`, `TestLobeHookLoginUnsetDoesNothing`,
   `TestLobeHookLoginPathForms`, `TestLobeSenseFailureSkips`, `TestLobeStoreRefusesLinkAndForeign`.
+- A memory hook reads a session transcript only inside that session's own login folder: `TestLobeTranscriptOnlyUnderLogin`.
 - No secret reaches the memory's store: `TestLobeScrubParity`, `TestLobeScrubCleanParity`,
   `TestLobeSenseSecretsNeverInTheEvent`, `TestLobeHookErrorsHoldNoContent`, `TestLobeLogSecretInMetadataIsRefused`.
 - The guard never imports or runs memory code, and the memory imports only the four packages:

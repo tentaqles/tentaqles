@@ -4,6 +4,8 @@ Notable changes to the Tentaqles plugin. Versions follow [semver](https://semver
 
 ## [Unreleased]
 
+- A new hook entry on `Stop` runs `scripts/lobe_hook.sh stop`, which starts `tentaqles lobe-hook claude stop` to record
+  a call Claude Code rejected before it ran (timeout 5 s). It fails open, like the other memory hook.
 - A new hook entry on `PostToolUseFailure` runs `scripts/lobe_hook.sh post-tool-use-failure`, which starts
   `tentaqles lobe-hook claude post-tool-use-failure` to record the failed call in that client's memory. It fails
   open (exit 0, no output, whatever goes wrong) and does nothing when `TQ_LOBE_NO_HOOKS=1`. The guard's two

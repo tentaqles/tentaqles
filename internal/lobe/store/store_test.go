@@ -597,6 +597,22 @@ func TestLobeSessionFileName(t *testing.T) {
 	}
 }
 
+func TestLobeCursorFileName(t *testing.T) {
+	if got := CursorFile("abc-123_X"); got != "cursors/abc-123_X.json" {
+		t.Errorf("CursorFile(abc-123_X) = %q", got)
+	}
+	// The name is the one SessionFile gives the same id, in the other folder.
+	for _, id := range []string{"abc-123_X", "../escape", "a/b", "", strings.Repeat("a", 300)} {
+		s, c := SessionFile(id), CursorFile(id)
+		if strings.TrimPrefix(s, "sessions/") != strings.TrimPrefix(c, "cursors/") {
+			t.Errorf("CursorFile(%q) = %q does not share the name of SessionFile %q", id, c, s)
+		}
+		if err := checkRel(c); err != nil {
+			t.Errorf("CursorFile(%q) = %q is not a store path: %v", id, c, err)
+		}
+	}
+}
+
 func TestLobeRepoKey(t *testing.T) {
 	c := t.TempDir()
 	if got := RepoKey(c, c+"/app"); got != "r_a172cedc" {

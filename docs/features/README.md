@@ -70,6 +70,7 @@ both hosts. "Needs" names the direct prerequisites; number order takes care of t
 |---|---|---|---|---|
 | 003 | [A failed shell command in Claude Code is logged](003-shell-failure-claude-code.md) | A failed Bash call in a client's session adds one scrubbed line to that client's event log, and nothing anywhere else | F-01, F-02, F-03, S-01, S-05, S-06 (event id), S-07, F-07 (notices, `selftest`); D-11, D-13 | 002 |
 | 004 | [A failed call from any tool is logged](004-any-tool-failure.md) | A failed file edit, web fetch or MCP call lands in the same log | S-01 | 003 |
+| 063 | [A call Claude Code rejected before it ran is logged](063-rejected-calls.md) | An edit whose text is not in the file, rejected before any hook fires, lands in the log at the end of the turn, read from the session's transcript. Added after the index was cut; built after 004 | S-01 (its gap) | 004 |
 | 005 | [See what was captured, and switch it off](005-status-and-capture-switch.md) | `tentaqles lobe status` and `tentaqles lobe events` show the log; `tentaqles lobe set capture off` stops it; `tentaqles doctor` reports the lobe's health | F-06, F-07 | 004 |
 | 006 | [The same error gets the same fingerprint](006-error-fingerprints.md) | Two failures that differ only in a path or a number carry one fingerprint in the log | S-08 | 004 |
 | 007 | [A repeated call is stored once](007-duplicate-filter.md) | An agent that fails the same way twenty times adds one full line and short references | S-06 | 006 |

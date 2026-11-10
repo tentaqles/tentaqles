@@ -23,16 +23,37 @@ Two real failed shell commands in a Claude Code session, with the checkout's plu
 Not seen in these runs, because the owner's folder had no `.git` at or above it inside the client folder: the
 repository key. Its walk is covered by `TestLobeSenseLocate`.
 
+## Confirmed by the capture session, 2026-11-09
+
+Two capture sessions on the owner's machine (Claude Code v2.1.321, `bypassPermissions` mode), in a scratch
+folder inside one client, with `spike/hook-capture/`. Field names and types only, no values, except where a
+row says the owner's own scratch transcript was read.
+
+| Fact | Seen |
+|---|---|
+| **An `Edit` whose `old_string` is not in the file fires no hook at all** | Two Edit calls on an existing `notes.txt`; the transcript holds both `tool_use` blocks and a `tool_result` with `is_error: true` and `<tool_use_error>String to replace not found in file.`; the capture holds no `PreToolUse`, `PostToolUse` or `PostToolUseFailure` for `Edit`. Claude Code checks the input before any hook runs, so a hook never sees this failure; only the transcript does |
+| `PostToolUseFailure` for `Bash` | fields `cwd`, `duration_ms`, `effort` (object), `error`, `hook_event_name`, `is_interrupt` (boolean, present, `false`), `permission_mode`, `prompt_id`, `scratchpad_dir`, `session_id`, `tool_input` (`command`, `description`), `tool_name`, `tool_use_id`, `transcript_path`; `error` first line `Exit code N` in every payload |
+| `PreToolUse` | the same fields without `error`, `is_interrupt`, `duration_ms` |
+| `PostToolUse` for `Write` | adds `duration_ms` and `tool_response` (object: `type`, `filePath`, `content`, `structuredPatch`, `originalFile`, `userModified`) |
+| `SessionStart` | `source` `startup`, plus `model`, `cwd`, `session_id`, `transcript_path`, `scratchpad_dir` |
+| `SessionEnd` | `reason` `prompt_input_exit` after `/exit` |
+| `Stop` | `background_tasks`, `last_assistant_message`, `session_crons`, `stop_hook_active` (`false`), `effort`, `permission_mode`, `prompt_id` |
+| `UserPromptSubmit` | `prompt`, `permission_mode`, `prompt_id` |
+| `Notification` | `message`, `notification_type` (`idle_prompt`) |
+| `transcript_path` | on every event; the transcript line pairs `tool_use.id` with `tool_result.tool_use_id` and carries `is_error` |
+
+Not seen: a declined call (`bypassPermissions` asks nothing), an interrupted call, any MCP call, a failed
+`WebFetch`, and an `Edit` that fails while running rather than at its input check (for example a file that
+cannot be written).
+
 ## Still from the hooks page only (web, not machine-checked)
 
-These rows wait for the owner's capture session (`spike/hook-capture/README.md`), which records every hook
-event's field names and types without their values. Each feature that needs a row confirms it before it is
-closed.
+Each feature that needs a row confirms it before it is closed.
 
 | Situation | What the page says | Needed by |
 |---|---|---|
-| A failed `Edit`, `WebFetch` or MCP call | `PostToolUseFailure` with the same fields; `error` is the tool's own text, with no `Exit code` line | 004 |
-| A successful call | `PostToolUse` with `tool_input`, `tool_response` and `tool_use_id` | 008 |
+| A failed `WebFetch` or MCP call, or an `Edit` that fails while running | `PostToolUseFailure` with the same fields; `error` is the tool's own text, with no `Exit code` line. An `Edit` that fails its input check fires nothing (confirmed above) | 004, 063 |
+| A successful call | `PostToolUse` with `tool_input`, `tool_response` and `tool_use_id` (confirmed for `Write`) | 008 |
 | A hidden failure (`npm test \| tail`, an MCP error flag) | `PostToolUse`; the error is inside `tool_response` | 009 |
 | A call interrupted while running | the page says cancelling a running tool does not fire `PostToolUseFailure`; the tool result carries the interruption text | 004 |
 | A call declined at the permission prompt | `PermissionDenied` (and `PermissionRequest` before it); no `PostToolUseFailure` | 004 |
@@ -47,3 +68,9 @@ closed.
 
 The one row feature 003 stands on, a failed shell call on `PostToolUseFailure` with `Exit code N`, is confirmed
 by two real runs. The other rows are for later features, each of which confirms its own before it is closed.
+
+## What it means for feature 063
+
+063 rests on the confirmed transcript rows (the `tool_use`/`tool_result` pairing, `is_error`, the `<tool_use_error>`
+wrapper, `transcript_path` on every event); the transcript is not a documented interface, so a change in Claude Code
+silences 063 without breaking a session.

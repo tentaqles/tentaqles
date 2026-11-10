@@ -113,6 +113,11 @@ type run struct {
 	pl  payload
 	cwd string
 	ws  *resolve.Workspace
+	// The stop event's read: the calls to record, and the cursor to write once they are recorded.
+	rejected  []sense.Call
+	newOffset int64
+	newHead   string
+	hasOffset bool
 
 	mu       sync.Mutex
 	st       *store.Store
@@ -154,6 +159,17 @@ func (r *run) work(stdin io.Reader, steps []step) {
 	// made before the store is opened (recordFailure makes the same check, too).
 	if r.event == evPostToolUseFailure {
 		if _, skip := sense.Skip(callOf(r)); skip {
+			return
+		}
+	}
+	// The stop event reads the transcript first, through a read-only store. With no store and nothing
+	// to record, the run stops here, so no store folder is created.
+	if r.event == evStop {
+		ro, ok := r.readRejected()
+		if !ok {
+			return
+		}
+		if ro == nil && len(r.rejected) == 0 && len(steps) <= 1 {
 			return
 		}
 	}
