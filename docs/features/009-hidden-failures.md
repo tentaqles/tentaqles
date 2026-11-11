@@ -326,3 +326,5 @@ The owner's check, 2026-11-10, in a real yduqs session with this checkout's plug
 `printf 'FAIL src/cart.test.ts\n  total is wrong\nTests: 1 failed, 3 passed\n' | tail -5` left one line with
 `"kind":"hidden-fail"`, the full command and its `description` as input, an `error` from the `FAIL` line on and
 `"fp":"fp_90da432fb402b004"`; `tentaqles lobe status` counted `hidden_fail 1`.
+
+CI green on Linux, macOS and Windows for `535aec0e` on 2026-11-10. Nothing is left open.
