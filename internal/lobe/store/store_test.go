@@ -253,6 +253,52 @@ func TestLobeStoreAppend(t *testing.T) {
 	}
 }
 
+// TestLobeStoreAppendTornTail: Append never reads the file, so it adds no line break after a torn tail.
+// AppendRepaired, which the caller runs under the lock, adds one; on a whole tail it adds none.
+func TestLobeStoreAppendTornTail(t *testing.T) {
+	setupHome(t)
+	st := openAcme(t)
+	read := func(name string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(st.Dir(), "events", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	torn := func(name string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(st.Dir(), "events"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(st.Dir(), "events", name), []byte(`{"v":`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	torn("plain.jsonl")
+	if err := st.Append("events/plain.jsonl", cleanJSON(t, `{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := read("plain.jsonl"), "{\"v\":{\"a\":1}\n"; got != want {
+		t.Errorf("Append after a torn tail wrote %q, want %q (no leading line break)", got, want)
+	}
+
+	torn("repaired.jsonl")
+	if err := st.AppendRepaired("events/repaired.jsonl", cleanJSON(t, `{"a":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := read("repaired.jsonl"), "{\"v\":\n{\"a\":2}\n"; got != want {
+		t.Errorf("AppendRepaired after a torn tail wrote %q, want %q", got, want)
+	}
+	if err := st.AppendRepaired("events/repaired.jsonl", cleanJSON(t, `{"a":3}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := read("repaired.jsonl"), "{\"v\":\n{\"a\":2}\n{\"a\":3}\n"; got != want {
+		t.Errorf("AppendRepaired on a whole tail wrote %q, want %q", got, want)
+	}
+}
+
 func TestLobeStoreTwentyWriters(t *testing.T) {
 	setupHome(t)
 	openAcme(t)

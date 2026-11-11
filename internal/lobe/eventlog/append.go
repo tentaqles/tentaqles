@@ -64,9 +64,9 @@ func AppendChecked(ctx context.Context, s *store.Store, e Event) (Verdict, strin
 
 // appendEvent is the one append of an event. The line limit is checked first, since it needs no file.
 // Then, under the store lock (when it can be taken), it checks the repeat (when repeatCheck) and the fill
-// levels of the day file, and writes the line with one write (store.Append repairs a torn line in that
-// write). A drop is written under the same hold, through writeDrop; with no lock it is written as
-// AppendDrop writes it when the lock is busy.
+// levels of the day file, and writes the line with one write (store.AppendRepaired repairs a torn line in
+// that write). A drop is written under the same hold, through writeDrop; with no lock the line is written
+// with store.Append, as AppendDrop writes it when the lock is busy, and no torn-line check is made.
 func appendEvent(ctx context.Context, s *store.Store, e Event, repeatCheck bool) (Verdict, string, error) {
 	file, err := FileFor(e.At)
 	if err != nil {
@@ -106,23 +106,30 @@ func appendEvent(ctx context.Context, s *store.Store, e Event, repeatCheck bool)
 		return v, "", nil
 	}
 	if held && refused(s, file, e.Kind) {
-		dropBest(s, DropFull, at)
+		dropBest(s, DropFull, at, held)
 		return VerdictDropped, "", nil
 	}
 	if v == VerdictRepeat {
 		if ref, err := buildRefLine(Reference(e, first)); err == nil {
-			return write(s, file, ref, at, VerdictRepeat, first)
+			return write(s, file, ref, at, VerdictRepeat, first, held)
 		}
 		// A lost event costs more than a duplicate: the full line is written instead.
 	}
-	return write(s, file, line, at, VerdictNew, "")
+	return write(s, file, line, at, VerdictNew, "", held)
 }
 
 // write appends one line to file. A write error is a drop with the reason disk: the drop is written best
 // effort and VerdictDropped is returned with the write error. Otherwise the verdict given is returned.
-func write(s *store.Store, file string, line scrub.Clean, at time.Time, ok Verdict, firstID string) (Verdict, string, error) {
-	if err := s.Append(file, line); err != nil {
-		dropBest(s, DropDisk, at)
+// held says whether the caller holds the store lock: only then is the torn-line repair made.
+func write(s *store.Store, file string, line scrub.Clean, at time.Time, ok Verdict, firstID string, held bool) (Verdict, string, error) {
+	var err error
+	if held {
+		err = s.AppendRepaired(file, line)
+	} else {
+		err = s.Append(file, line)
+	}
+	if err != nil {
+		dropBest(s, DropDisk, at, held)
 		return VerdictDropped, "", err
 	}
 	return ok, firstID, nil

@@ -82,19 +82,22 @@ func AppendDrop(ctx context.Context, s *store.Store, why string, at time.Time) e
 	lctx, cancel := context.WithTimeout(ctx, LockWait)
 	unlock, err := s.Lock(lctx)
 	cancel()
+	held := true
 	switch {
 	case err == nil:
 		defer unlock()
 	case errors.Is(err, store.ErrBusy):
+		held = false
 	default:
 		return err
 	}
-	return writeDrop(s, line, at)
+	return writeDrop(s, line, at, held)
 }
 
-// writeDrop appends a built drop line to the drops file of at, when that file is under dropsMax. It takes
-// no lock: the caller holds one, or has none by choice. It is the write AppendDrop and AppendChecked share.
-func writeDrop(s *store.Store, line scrub.Clean, at time.Time) error {
+// writeDrop appends a built drop line to the drops file of at, when that file is under dropsMax. held says
+// whether the caller holds the store lock: only then is the torn-line repair made (store.AppendRepaired).
+// It is the write AppendDrop and AppendChecked share.
+func writeDrop(s *store.Store, line scrub.Clean, at time.Time, held bool) error {
 	file := DropsFileFor(at)
 	fi, err := os.Stat(filepath.Join(s.Dir(), filepath.FromSlash(file)))
 	switch {
@@ -106,15 +109,18 @@ func writeDrop(s *store.Store, line scrub.Clean, at time.Time) error {
 	default:
 		return err
 	}
+	if held {
+		return s.AppendRepaired(file, line)
+	}
 	return s.Append(file, line)
 }
 
 // dropBest writes the drop of why at at, best effort: a drop that cannot be written costs one count, so
-// its error is not returned. It takes no lock; see writeDrop.
-func dropBest(s *store.Store, why string, at time.Time) {
+// its error is not returned. held is passed to writeDrop.
+func dropBest(s *store.Store, why string, at time.Time, held bool) {
 	line, err := buildDrop(why, at)
 	if err != nil {
 		return
 	}
-	_ = writeDrop(s, line, at)
+	_ = writeDrop(s, line, at, held)
 }
