@@ -3,8 +3,10 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"math"
@@ -288,4 +290,116 @@ func keptLines(kept []stored) [][]byte {
 		out = append(out, s.line)
 	}
 	return out
+}
+
+// purgeLockWait is how long purge waits for the store lock before it gives up. A person's command may wait
+// longer than a hook, which waits LockWait and then appends without the lock.
+const purgeLockWait = 2 * time.Second
+
+// isDropsFile reports whether name is a drops file of the event log: drops-YYYYMMDD.jsonl (feature 011).
+func isDropsFile(name string) bool {
+	const pre, suf = "drops-", ".jsonl"
+	if len(name) != len(pre)+8+len(suf) || name[:len(pre)] != pre || name[len(name)-len(suf):] != suf {
+		return false
+	}
+	for _, c := range name[len(pre) : len(pre)+8] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// purgeNames returns the names of the files purge deletes in dir: every events-YYYYMMDD.jsonl and
+// drops-YYYYMMDD.jsonl, sorted. Directories and other names are not listed. A link with such a name is
+// listed, so that store.Remove refuses it. A missing folder gives none.
+func purgeNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !(isDayFile(n) || isDropsFile(n)) {
+			continue
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// Purge deletes every events-*.jsonl and drops-*.jsonl day file of the client's event log, and nothing
+// else: not keep.txt, not a file outside events/, not another client's store. It is for a person only:
+// inside a Claude Code session it refuses before it reads anything (RefusePerson). Then it applies the
+// rules every lobe verb follows: the client (Target), the login (CheckLogin), and the store (openStore).
+//
+// ask is called with one line that says how many files go and which client they are of. It returns an
+// error to keep the files; the cobra command asks for a typed yes, or prints the line and returns nil under
+// --yes. Nothing is deleted before ask returns nil. Deletion runs under the store lock, which Purge waits
+// up to purgeLockWait for; the listing is read again under that lock, and each file goes through
+// store.Remove, which refuses a link. With no matching file it prints a line, asks nothing and exits 0.
+func Purge(d Deps, clientFlag string, ask func(about string) error, out io.Writer) error {
+	if err := RefusePerson(d); err != nil {
+		return err
+	}
+	ws, err := Target(d, clientFlag)
+	if err != nil {
+		return err
+	}
+	if err := CheckLogin(d, ws); err != nil {
+		return err
+	}
+	st, err := openStore(ws.Name)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(st.Dir(), "events")
+	names, err := purgeNames(dir)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		fmt.Fprintf(out, "No event or drops files to delete for client %s.\n", ws.Name)
+		return nil
+	}
+	about := fmt.Sprintf("tentaqles lobe events purge: about to delete %d event and drops files of the client %s (%s)",
+		len(names), ws.Name, dir)
+	if err := ask(about); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), purgeLockWait)
+	defer cancel()
+	unlock, err := st.Lock(ctx)
+	if err != nil {
+		return fmt.Errorf("the event log of %s is busy, so nothing was deleted; run the command again: %w", ws.Name, err)
+	}
+	defer unlock()
+	names, err = purgeNames(dir)
+	if err != nil {
+		return err
+	}
+	// Every name is checked before the first delete, so a link among them stops the purge with nothing
+	// deleted, rather than leaving the files half gone.
+	for _, n := range names {
+		fi, err := os.Lstat(filepath.Join(dir, n))
+		if err != nil {
+			return fmt.Errorf("checking events/%s, so nothing was deleted: %w", n, err)
+		}
+		if !fi.Mode().IsRegular() {
+			return fmt.Errorf("events/%s is a link or not a regular file, so nothing was deleted; replace it with a file or remove it, then run the command again", n)
+		}
+	}
+	for _, n := range names {
+		if err := st.Remove(filepath.ToSlash(filepath.Join("events", n))); err != nil {
+			return fmt.Errorf("deleting events/%s: %w", n, err)
+		}
+	}
+	fmt.Fprintf(out, "Deleted %d event and drops files of client %s.\n", len(names), ws.Name)
+	return nil
 }

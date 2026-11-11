@@ -27,8 +27,10 @@ const (
 	StateDropped = "dropped" // the line could not be written; Kind is still set
 )
 
-// Record writes the event to the client's log and returns the outcome. When the write fails the
-// outcome's State is StateDropped and the error is returned too, for the caller to classify.
+// Record writes the event to the client's log and returns the outcome. When the event is dropped (a limit
+// of S-07 refused it, or the write failed) the outcome's State is StateDropped; a write failure also
+// returns its error for the caller to classify. A limit refusal is not an error: the drop is counted in
+// the drops file and nothing is returned.
 func Record(ctx context.Context, s *store.Store, e eventlog.Event, c Call) (Outcome, error) {
 	// S-08: a failure gets its fingerprint from the event's own tool and scrubbed error, between the
 	// scrubbing (S-05, done when the event was built) and the append (S-07), so a reader can work the same
@@ -52,6 +54,8 @@ func Record(ctx context.Context, s *store.Store, e eventlog.Event, c Call) (Outc
 		return out, err
 	}
 	switch v {
+	case eventlog.VerdictDropped:
+		out.State = StateDropped
 	case eventlog.VerdictRepeat:
 		out.State = StateRef
 	case eventlog.VerdictReplay:

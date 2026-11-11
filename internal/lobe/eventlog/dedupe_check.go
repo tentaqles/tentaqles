@@ -15,6 +15,10 @@ const (
 	// VerdictRepeat means a full line of the same call content came shortly before: a reference line
 	// is written instead.
 	VerdictRepeat Verdict = "repeat"
+	// VerdictDropped means the event was not written: a limit of S-07 refused it (full or big), or its
+	// write failed (disk). A drops line with the reason was written, best effort. It is returned by
+	// AppendChecked only; Check never returns it.
+	VerdictDropped Verdict = "dropped"
 )
 
 // repeatWindow is how far back a full line may be and still make a repeat.

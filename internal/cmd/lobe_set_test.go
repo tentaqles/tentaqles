@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/paths"
 )
 
 // lobeManifestBody is the acme manifest of the lobe tests: no lobe key, so every setting is a default.
@@ -87,6 +90,20 @@ func TestLobePersonVerbsRefuseInAgent(t *testing.T) {
 	}
 	if !bytes.Equal(readBytesT(t, mp), before) {
 		t.Fatal("the manifest changed under CLAUDECODE=1")
+	}
+
+	// lobe events purge is a person verb too: under CLAUDECODE=1 it refuses and deletes nothing.
+	ev := filepath.Join(paths.LobeDir("acme"), "events", "events-20200101.jsonl")
+	writeTB(t, ev, "x\n")
+	out, err = runLobe(t, "yes\n", "lobe", "events", "purge")
+	if err == nil {
+		t.Fatalf("lobe events purge ran inside an agent:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "for a person") {
+		t.Errorf("the purge refusal does not say it is for a person's terminal: %v", err)
+	}
+	if got := readBytesT(t, ev); string(got) != "x\n" {
+		t.Fatal("the event file changed or went under CLAUDECODE=1")
 	}
 }
 

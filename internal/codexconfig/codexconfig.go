@@ -5,7 +5,8 @@
 // Ownership:
 //   - A hook handler is tentaqles' when its type is "command" and its command is one of:
 //     "<program> codex-hook pre-tool-use" or "<program> codex-hook session-start" (the
-//     guard's), or "<program> lobe-hook codex post-tool-use; exit 0" (the memory's).
+//     guard's), or "<program> lobe-hook codex post-tool-use; exit 0" or
+//     "<program> lobe-hook codex session-end; exit 0" (the memory's).
 //     Render removes every such handler and appends one group per event after the
 //     user's groups: the guard's group, then the memory's. The group indexes Codex keys
 //     trust on stay stable.
@@ -46,7 +47,8 @@ const (
 	ownedFile          = "tentaqles-owned.json"
 	devInstrKey        = "developer_instructions"
 	hookTimeoutSec     = 15
-	lobeHookTimeoutSec = 5
+	lobeHookTimeoutSec = 5    // the memory's PostToolUse handler
+	lobeSessionEndSec  = 3    // the memory's SessionEnd handler
 	codexHookTimeout   = 600  // Codex's timeout for a command hook without one
 	codexContextLim    = 2500 // Codex's additionalContext token limit; the default is not hashed
 )
@@ -85,12 +87,13 @@ func (t Trust) String() string {
 	return fmt.Sprintf("Trust(%d)", int(t))
 }
 
-// hookEvent describes one of the two hooks tentaqles writes.
+// hookEvent describes one of the hooks tentaqles writes.
 type hookEvent struct {
 	table   string // the TOML table under [hooks], e.g. "PreToolUse"
 	label   string // Codex's snake_case event label, used in keys and hashes
-	sub     string // the codex-hook subcommand
+	sub     string // the subcommand
 	matcher string // "" writes no matcher
+	timeout int64  // the handler's timeout in seconds; only the memory's rows set it
 }
 
 var hookEvents = []hookEvent{
@@ -101,7 +104,8 @@ var hookEvents = []hookEvent{
 // lobeEvents are the events the memory (the Vertical Lobe) writes its handler to. It is plain
 // data: this package imports no lobe package, because the guard imports this one.
 var lobeEvents = []hookEvent{
-	{table: "PostToolUse", label: "post_tool_use", sub: "post-tool-use"},
+	{table: "PostToolUse", label: "post_tool_use", sub: "post-tool-use", timeout: lobeHookTimeoutSec},
+	{table: "SessionEnd", label: "session_end", sub: "session-end", timeout: lobeSessionEndSec},
 }
 
 // family is one of the two kinds of handler tentaqles writes: the guard's (hookEvents, run as
@@ -258,8 +262,9 @@ func HookTrust(codexHome string) (Trust, error) {
 	return familyTrust(codexHome, guardFamily)
 }
 
-// LobeHookTrust reports the state of the memory's hook (PostToolUse) in codexHome/config.toml,
-// with the same five states and rules as HookTrust. Missing when the handler is not in the file.
+// LobeHookTrust reports the state of the memory's hooks (PostToolUse and SessionEnd) in
+// codexHome/config.toml, with the same five states and rules as HookTrust. Missing when either
+// handler is not in the file.
 // Nothing stops a session on it: CheckGuard never reads it.
 func LobeHookTrust(codexHome string) (Trust, error) {
 	return familyTrust(codexHome, lobeFamily)
@@ -490,14 +495,15 @@ func guardGroup(ev hookEvent, command string) map[string]any {
 	return ours
 }
 
-// lobeGroup is the group Render appends for a lobe event: "<program> lobe-hook codex <sub>; exit 0".
-// The tail ends in "; exit 0", so the handler exits 0 under PowerShell and a POSIX shell alike.
+// lobeGroup is the group Render appends for a lobe event: "<program> lobe-hook codex <sub>; exit 0",
+// with the event's own timeout. The tail ends in "; exit 0", so the handler exits 0 under PowerShell
+// and a POSIX shell alike.
 func lobeGroup(ev hookEvent, command string) map[string]any {
 	return map[string]any{
 		"hooks": []map[string]any{{
 			"type":    "command",
 			"command": command + lobeFamily.tail(ev.sub),
-			"timeout": int64(lobeHookTimeoutSec),
+			"timeout": ev.timeout,
 		}},
 	}
 }

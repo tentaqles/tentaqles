@@ -165,7 +165,11 @@ func (r *run) work(stdin io.Reader, steps []step) {
 			// the transcript, so the first stop after capture is on again starts there.
 			r.skipToEnd()
 		}
-		return
+		// session-end still sweeps (F-06 step 1): switching capture off never keeps old events around. It
+		// needs a loaded manifest, as captureOn does, and it is the only event that goes on past this point.
+		if r.event != evSessionEnd || r.ws.Manifest == nil {
+			return
+		}
 	}
 	// A call the design skips leaves nothing, not even the client's store folder: the skip decision is
 	// made before the store is opened (recordFailure makes the same check, too).
@@ -198,7 +202,13 @@ func (r *run) work(stdin io.Reader, steps []step) {
 			return
 		}
 	}
-	st, err := store.Open(r.ws.Name, store.ReadWrite)
+	// session-end only sweeps, so it opens the store read-only: a client with no store gets no folder
+	// (store.ErrNoStore, and nothing to sweep). Store.Lock creates only the lock file, in a store that exists.
+	mode := store.ReadWrite
+	if r.event == evSessionEnd {
+		mode = store.ReadOnly
+	}
+	st, err := store.Open(r.ws.Name, mode)
 	if err != nil {
 		return
 	}

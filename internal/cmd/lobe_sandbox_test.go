@@ -262,10 +262,10 @@ func TestLobeCommandTable(t *testing.T) {
 	// The rows built so far (F-07 step 1, "lobe <verb>" or "lobe-hook <verb>").
 	rows := []string{
 		"lobe sandbox", "lobe selftest", "lobe status", "lobe events", "lobe settings", "lobe set",
-		"lobe fingerprint", "lobe-hook claude", "lobe-hook codex",
+		"lobe fingerprint", "lobe-hook claude", "lobe-hook codex", "lobe events purge",
 	}
 	// The rows marked "yes" in F-07 step 1: they answer only to a person.
-	person := map[string]bool{"lobe set": true}
+	person := map[string]bool{"lobe set": true, "lobe events purge": true}
 
 	root := NewRoot()
 	registered := map[string]bool{}
@@ -275,6 +275,12 @@ func TestLobeCommandTable(t *testing.T) {
 		}
 		for _, c := range g.Commands() {
 			registered[g.Name()+" "+c.Name()] = true
+			// A verb with its own verbs, such as lobe events purge, is registered as its own row.
+			for _, s := range c.Commands() {
+				if s.Name() != "help" && s.Name() != "completion" {
+					registered[g.Name()+" "+c.Name()+" "+s.Name()] = true
+				}
+			}
 		}
 	}
 	want := map[string]bool{}
@@ -301,6 +307,8 @@ func TestLobeCommandTable(t *testing.T) {
 		switch r {
 		case "lobe set":
 			args = append(args, "capture", "off", "--yes")
+		case "lobe events purge":
+			args = append(args, "--yes")
 		case "lobe sandbox":
 			args = append(args, filepath.Join(t.TempDir(), "sandbox"))
 		case "lobe-hook claude", "lobe-hook codex":

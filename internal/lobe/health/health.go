@@ -113,17 +113,20 @@ func storeFindings(c Client, now time.Time) []Finding {
 	if err != nil {
 		return []Finding{storeFinding(c.Name, err)}
 	}
-	n := recentHookErrors(st, now)
-	if n >= HookFailMin {
-		return []Finding{{
+	var out []Finding
+	if n := recentHookErrors(st, now); n >= HookFailMin {
+		out = append(out, Finding{
 			Level:  "warn",
 			Code:   CodeHookFailing,
 			Client: c.Name,
 			Msg:    fmt.Sprintf("%d lobe hook failures in the last 24 hours (stats/hook-errors.jsonl)", n),
 			Fix:    "run tentaqles lobe status to see the store and the hook wiring; a failing hook writes nothing and prints nothing",
-		}}
+		})
 	}
-	return nil
+	if f, ok := droppedFinding(c.Name, st, now); ok {
+		out = append(out, f)
+	}
+	return out
 }
 
 // storeFinding maps a refusal of store.Open (read-only) to its code. Any other error reads as unreadable.

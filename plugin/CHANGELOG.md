@@ -4,6 +4,8 @@ Notable changes to the Tentaqles plugin. Versions follow [semver](https://semver
 
 ## [Unreleased]
 
+- A new hook entry on `SessionEnd` runs `scripts/lobe_hook.sh session-end`, which starts `tentaqles lobe-hook claude session-end`
+  to delete the memory's expired event files for that client (timeout 5 s, fails open, prints nothing).
 - A new `PostToolUse` entry runs `scripts/lobe_hook.sh post-tool-use` on every tool call (timeout 5 s, fails open),
   so the memory records each successful call as a small `ok` line with no output in it.
 - A new hook entry on `Stop` runs `scripts/lobe_hook.sh stop`, which starts `tentaqles lobe-hook claude stop` to record

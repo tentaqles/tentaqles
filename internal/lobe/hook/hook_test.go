@@ -350,6 +350,27 @@ func TestLobeHookServesOnlyItsLogin(t *testing.T) {
 			t.Errorf("a lobe folder exists for %s", name)
 		}
 	}
+	// 011: an expired day file of acme. A session end under another client's login, or under none, must
+	// leave it in place (the sweep is the session-end step, and the client rule runs before it).
+	expired := filepath.Join(paths.LobeDir("acme"), "events", "events-20200101.jsonl")
+	mustWrite(t, expired, "")
+	end := sessionEndJSON(f.app("acme"))
+	t.Setenv("CLAUDE_CONFIG_DIR", paths.IdentityDir("globex", "claude"))
+	if out := runHook(t, "session-end", end); out != "" {
+		t.Errorf("claude session-end as globex: stdout %q, want nothing", out)
+	}
+	t.Setenv("CODEX_HOME", paths.IdentityDir("globex", "codex"))
+	if out := runCodexHook(t, "session-end", end); out != "" {
+		t.Errorf("codex session-end as globex: stdout %q, want nothing", out)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+	if out := runHook(t, "session-end", end); out != "" {
+		t.Errorf("session-end with no login: stdout %q, want nothing", out)
+	}
+	if !exists(expired) {
+		t.Errorf("a session end under another client's login or none deleted acme's expired day file")
+	}
 }
 
 func TestLobeHookLoginUnsetDoesNothing(t *testing.T) {

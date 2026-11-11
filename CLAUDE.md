@@ -32,7 +32,7 @@ section for every command; `test/integration` fails when one is missing.
 - `internal/guard/`: the drift check (`guard.Decide`) and the shell-text reading it needs.
 - `internal/guardplugin/`: whether a client's Claude config has the enabled plugin hook.
 - `internal/codexconfig/`: tentaqles' part of a client's Codex `config.toml`: the guard's two hooks, the memory's
-  `PostToolUse` hook (`lobeEvents`, `LobeHookTrust`), the trust of all three, and `developer_instructions`.
+  `PostToolUse` and `SessionEnd` hooks (`lobeEvents`, `LobeHookTrust`), the trust of all four, and `developer_instructions`.
 - `internal/providers/`: the catalog (`catalog/*.yaml`, embedded) and user provider files.
 - `internal/lobe/`: the memory ("the Vertical Lobe"), one package per part, imports only `internal/resolve`,
   `internal/paths`, `internal/registry` and `internal/manifest` from this repository (and other lobe packages), no `init` and no

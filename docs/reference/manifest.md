@@ -175,9 +175,9 @@ lobe:
 | `share` | `private`, `shared` | `private` | `private` | Read and shown; acts with sharing. |
 | `model` | `on`, `off` | `on` | `off` | Read and shown; acts with the model. |
 | `documents` | `on`, `off` | `off` | `off` | Read and shown; acts with documents. It needs `model` and `graph` on. |
-| `retention_days` | a whole number from 1 to 365 | `14` | `14` | Read and shown; acts with the sweep of old events. |
+| `retention_days` | a whole number from 1 to 365 | `14` | `14` | Acts at each session end: the sweep deletes the client's event day files (`events-YYYYMMDD.jsonl`, `drops-YYYYMMDD.jsonl`) older than this many days. |
 
-Only `capture` acts today. Each other key is read and shown by `tentaqles lobe settings`, and does what its column says once
+Only `capture` and `retention_days` act today. Each other key is read and shown by `tentaqles lobe settings`, and does what its column says once
 that feature ships. Until then, setting one changes nothing you can observe.
 
 With `capture` off no event is written. A `stop` that runs while capture is off moves the session's cursor to the end of

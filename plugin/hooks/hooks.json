@@ -55,6 +55,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/lobe_hook.sh\" session-end",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

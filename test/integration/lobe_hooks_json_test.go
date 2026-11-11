@@ -94,7 +94,8 @@ func TestLobeHookTimeoutsRegistered(t *testing.T) {
 }
 
 // TestLobeCodexHandlerTimeoutsRendered checks the timeouts of the handlers codexconfig renders into a
-// Codex config: the guard's two are 15 seconds, the memory's post-tool-use handler is 5.
+// Codex config: the guard's two are 15 seconds, the memory's post-tool-use handler is 5 and its
+// session-end handler is 3.
 func TestLobeCodexHandlerTimeoutsRendered(t *testing.T) {
 	type handler struct {
 		Command string `toml:"command"`
@@ -108,6 +109,7 @@ func TestLobeCodexHandlerTimeoutsRendered(t *testing.T) {
 			PreToolUse   []group `toml:"PreToolUse"`
 			SessionStart []group `toml:"SessionStart"`
 			PostToolUse  []group `toml:"PostToolUse"`
+			SessionEnd   []group `toml:"SessionEnd"`
 		} `toml:"hooks"`
 	}
 
@@ -133,6 +135,7 @@ func TestLobeCodexHandlerTimeoutsRendered(t *testing.T) {
 		{"PreToolUse", cfg.Hooks.PreToolUse, " codex-hook pre-tool-use", 15},
 		{"SessionStart", cfg.Hooks.SessionStart, " codex-hook session-start", 15},
 		{"PostToolUse", cfg.Hooks.PostToolUse, " lobe-hook codex post-tool-use; exit 0", 5},
+		{"SessionEnd", cfg.Hooks.SessionEnd, " lobe-hook codex session-end; exit 0", 3},
 	}
 	for _, tc := range cases {
 		var got []int64

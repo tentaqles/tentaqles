@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/doctor"
+	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
 	"github.com/tentaqles/tentaqles/internal/lobe/health"
 	"github.com/tentaqles/tentaqles/internal/lobe/store"
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -142,6 +143,15 @@ var lobeFixtures = []lobeFixture{
 			b.WriteString(`{"at":"` + now + `","host":"claude","event":"post-tool-use-failure","step":"S-07","class":"io"}` + "\n")
 		}
 		writeTB(t, filepath.Join(paths.LobeDir(name), "stats", "hook-errors.jsonl"), b.String())
+	}},
+	{health.CodeEventsDropped, "warn", "dropped", func(t *testing.T, base, name string) {
+		healthyClient(t, base, name)
+		now := time.Now().UTC()
+		var b strings.Builder
+		for i := 0; i < health.EventsDroppedMin; i++ {
+			b.WriteString(`{"at":"` + now.Format(time.RFC3339) + `","why":"full"}` + "\n")
+		}
+		writeTB(t, filepath.Join(paths.LobeDir(name), filepath.FromSlash(eventlog.DropsFileFor(now))), b.String())
 	}},
 }
 

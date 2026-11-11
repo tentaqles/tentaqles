@@ -318,3 +318,38 @@ func TestLobeCodexStopIsNoStep(t *testing.T) {
 		t.Fatalf("a lobe folder was created by a Codex stop")
 	}
 }
+
+// TestLobeCodexSessionEndSweeps: `tentaqles lobe-hook codex session-end` deletes an expired day file of the
+// client whose CODEX_HOME it is, and nothing of another client. With globex's CODEX_HOME in acme's folder
+// neither file goes; with acme's CODEX_HOME only acme's file goes. Nothing reaches stdout.
+func TestLobeCodexSessionEndSweeps(t *testing.T) {
+	f := newHome(t)
+	mustMkdir(t, paths.IdentityDir("acme", "codex"))
+	mustMkdir(t, paths.IdentityDir("globex", "codex"))
+	makeStore(t, "acme")
+	makeStore(t, "globex")
+	acmeOld := filepath.Join(eventsDir("acme"), expiredDay)
+	globexOld := filepath.Join(eventsDir("globex"), expiredDay)
+	mustWrite(t, acmeOld, "")
+	mustWrite(t, globexOld, "")
+	end := sessionEndJSON(f.app("acme"))
+
+	t.Setenv("CODEX_HOME", paths.IdentityDir("globex", "codex"))
+	if out := runCodexHook(t, "session-end", end); out != "" {
+		t.Fatalf("stdout %q, want nothing", out)
+	}
+	if !exists(acmeOld) || !exists(globexOld) {
+		t.Fatalf("globex's CODEX_HOME in acme's folder deleted a day file")
+	}
+
+	codexLogin(t, "acme")
+	if out := runCodexHook(t, "session-end", end); out != "" {
+		t.Fatalf("stdout %q, want nothing", out)
+	}
+	if exists(acmeOld) {
+		t.Errorf("acme's expired day file is still there after acme's session end")
+	}
+	if !exists(globexOld) {
+		t.Errorf("globex's expired day file was deleted by acme's session end")
+	}
+}

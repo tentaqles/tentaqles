@@ -40,7 +40,7 @@ client's manifest lives at `~/.tentaqles/identities/<client>/manifest.yaml` (`$T
 | [`tentaqles version`](#tentaqles-version) | Print the version and commit |
 | **The client's memory** | |
 | [`tentaqles lobe status`](#tentaqles-lobe-status) | Show the client's memory: store, settings, event counts and hook wiring |
-| [`tentaqles lobe events`](#tentaqles-lobe-events) | Print the newest 20 stored event lines |
+| [`tentaqles lobe events`](#tentaqles-lobe-events) | Print the newest 20 stored event lines (`purge`: delete the event and drops files, for a person) |
 | [`tentaqles lobe settings`](#tentaqles-lobe-settings) | Print the nine lobe settings and where each value comes from |
 | [`tentaqles lobe set`](#tentaqles-lobe-set) | Change one lobe setting, for a person only (`capture on` or `off` switches recording) |
 | **Test setup** | |
@@ -764,6 +764,7 @@ names the client:
 | `lobe-hooks-untrusted` | warn | The client has codex in its scope, and the memory's Codex hook in its `config.toml` is missing, disabled, untrusted or edited. The guard's Codex hooks are reported apart (`codex-guard-*`). | Run `tentaqles settings render <client>`. |
 | `lobe-setting-invalid` | warn | A value under `lobe` in the manifest is outside its list. One finding per client, however many keys are wrong. | Run `tentaqles lobe settings` to see the `(invalid)` keys, then `tentaqles lobe set <key> <value>` or `default`. |
 | `lobe-hook-failing` | warn | `stats/hook-errors.jsonl` in the client's memory folder holds 5 or more lines from the last 24 hours. | Read the lines in that file to find the failing step. |
+| `lobe-events-dropped` | warn | The client's `events/drops-YYYYMMDD.jsonl` files (today and yesterday, UTC) hold 5 or more lines from the last 24 hours. The message counts them per reason, for example `full 3, disk 2`. | Check the free disk space on the drive of the client's lobe folder and the size of today's file in its `events/` folder. To start the event log over, run `tentaqles lobe events purge` in your own terminal (it deletes every event and drops file of the client). |
 
 ### Flags
 
@@ -1168,6 +1169,23 @@ login, and refuses any other with exit 1.
 | 0 | The lines were printed, or the log is empty. |
 | 1 | No client, a refused store, a refused `--client`, or a login that is not the client's own. |
 
+### `purge`
+
+```
+tentaqles lobe events purge [--client <name>] [--yes]
+```
+
+`lobe events purge` deletes every `events-YYYYMMDD.jsonl` and `drops-YYYYMMDD.jsonl` day file of the client's event log,
+under the store lock. Nothing else is deleted: not `keep.txt`, nothing outside the `events` folder, nothing of another client.
+It says how many files go and asks for a typed yes; `--yes` (or `-y`) skips the question. Anything but `yes` deletes nothing.
+With no such file it prints a line and exits 0. It is for a person only: inside a Claude Code session it refuses, with exit 1,
+before it reads anything, and deletes nothing. It works on the current folder's client, or on `--client`.
+
+| Code | Meaning |
+|---|---|
+| 0 | The files were deleted, or there were none. |
+| 1 | A refusal (inside a Claude Code session, no client, a refused store, a link among the files), or the question was not confirmed. Nothing was deleted. |
+
 ---
 
 ## tentaqles lobe fingerprint
@@ -1383,6 +1401,12 @@ blocks a tool call.
 The seven events are `session-start`, `user-prompt-submit`, `pre-tool-use`, `post-tool-use`, `post-tool-use-failure`,
 `stop` and `session-end`.
 
+On `session-end`, which Claude Code sends when a session ends, the memory sweeps old event files: it deletes the client's
+`events-YYYYMMDD.jsonl` and `drops-YYYYMMDD.jsonl` files whose date is more than `retention_days` days before today (UTC),
+and, when they together hold more than 64 MiB, the oldest of the rest until they do not. At most 64 files go per run. It
+prints nothing and runs with `capture` off too, so switching capture off never keeps old events around. A session end
+under another client's login, or none, deletes nothing.
+
 On `post-tool-use-failure` the memory records the failed call of every tool: a shell command, a file edit, a web
 fetch, an MCP tool. It writes one line to the client's event log with the tool's name, its input and the error, with
 every secret replaced by a marker. Four rules leave the line out or change it:
@@ -1449,7 +1473,9 @@ problem, so it never blocks a tool call. It serves only the client whose folder 
 `CODEX_HOME` names that client's own Codex folder.
 
 The six events are `session-start`, `user-prompt-submit`, `pre-tool-use`, `post-tool-use`, `stop` and `session-end`.
-Only `post-tool-use` records anything in this version.
+Only `post-tool-use` records anything in this version. `session-end` sweeps the client's old event files, as `session-end`
+does for Claude Code (see there): it deletes the expired `events-` and `drops-` day files of `retention_days`, prints
+nothing and runs with `capture` off too.
 
 Codex sends no failure event and no exit code with a shell call. For `Bash`, the memory reads the exit code from Codex's
 own session file, the payload's `transcript_path`, and only when that path lies inside `<CODEX_HOME>/sessions/`; it

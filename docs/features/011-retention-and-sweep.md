@@ -1,6 +1,6 @@
 # 011: Old events expire
 
-**Status** not started · **Stage** Sense · **Entries** S-07 (the rest: line and file limits, the torn-line
+**Status** built, waiting for CI · **Stage** Sense · **Entries** S-07 (the rest: line and file limits, the torn-line
 repair, the drops file, the sweep, `lobe events purge`), F-06 (`retention_days` gets its reader), F-03 (the
 `SessionEnd` entry), F-02 (the `session-end` row), F-07 (`lobe-events-dropped`) · **Needs** 005 ·
 **Feeds** 012, 013, 018
@@ -45,9 +45,10 @@ The hook prints only `exit=0`, and the file dated 2020 is no longer listed.
 
 **Out**
 
-- The `Stop` entry, `hook.Detach`, `internal/lobe/pass` and `tentaqles lobe consolidate` (018). The
-  requirements run the sweep twice: at session end, and as the first step of the detached pass that `Stop`
-  starts. Only the first is built here. 018 calls `eventlog.Sweep` as its pass's first step and changes
+- The detached pass on the `Stop` entry, `hook.Detach`, `internal/lobe/pass` and `tentaqles lobe
+  consolidate` (018). The `Stop` entry itself exists already (it reads the transcript for rejected calls);
+  018 adds the pass to it. The requirements run the sweep twice: at session end, and as the first step of
+  the detached pass that `Stop` starts. Only the first is built here. 018 calls `eventlog.Sweep` as its pass's first step and changes
   nothing in it. Until 018, a session that ends without a `SessionEnd` event (a crash) leaves expired files
   in place until the next session of that client ends.
 - The trim of `stats/hook-errors.jsonl` to its newest 1,000 lines, which the detached pass does (018).
@@ -62,22 +63,26 @@ The hook prints only `exit=0`, and the file dated 2020 is no longer listed.
 - **003**: `hook.Main` with its seven known event names and cutoffs, the client rule, `store.Open`,
   `store.Lock`, `store.Append`, `eventlog.Append`, `sense.Outcome`, `plugin/scripts/lobe_hook.sh` (which
   already accepts `session-end`), the plugin test's list of lobe events, `stats/hook-errors.jsonl`.
-- **004**: the `ok` line of a grep that found nothing. It is the one `ok` event this feature can count on
-  from its stated needs; when 008 is built, every success writes one.
+- **004**: the `ok` line of a grep that found nothing. Since 008, every success writes an `ok` line too;
+  check 8 keeps the grep rule.
 - **005**: `settings.From` (it already reads `retention_days` and gives 14 for a wrong value),
   `eventlog.Scan` and `Tail` with the reader rule, `tentaqles lobe events`, `internal/lobe/health`, the
   command rules, `internal/cmd/lobe.go`.
-- **007, 008, 009, 010**, when they are built before this one, as their numbers say: the limits below apply
-  to their lines too, and 010's drop reason `no-exit` (S-02) is written through the drops file of this
-  feature. If 010 left that reason uncounted because no drops file existed, wire it here.
+- **006 to 010**, all built: the limits below apply to their lines too. 010 created the drops file:
+  `internal/lobe/eventlog/drops.go` with `DropsFileFor(at)`, `AppendDrop(ctx, s, why, at)` (it waits up to
+  `LockWait` for the lock and appends without it when busy, refuses an unknown reason, and stops at 64 KiB),
+  and the reason `no-exit`, already counted. This feature adds the reasons `full`, `big` and `disk` to it.
+  `sense.Outcome.State` already has `dropped`.
+- **010's Codex pattern**: `lobeEvents` and `LobeHookTrust` in `internal/codexconfig`, the handler
+  `<program> lobe-hook codex <event>; exit 0`, and `stepsFor(host, event)` in `internal/lobe/hook/steps.go`.
 
 ## What it leaves for later features
 
 | Name | What it is | Used by |
 |---|---|---|
 | `eventlog.Sweep(dir, retentionDays, now)` | deletes expired day files, bounded | 018 (first step of the pass) |
-| `eventlog` drops | `drops-YYYYMMDD.jsonl`, lines `{"at":"...","why":"<reason>"}`; reasons `full`, `big`, `disk`, `no-exit` | 010 (`no-exit`), 058 (error counters) |
-| `Outcome.State` `dropped` | no line was written; `Kind` is still set | 023 (E-02 judges it the same way) |
+| `eventlog` drops | `drops-YYYYMMDD.jsonl`, lines `{"at":"...","why":"<reason>"}`; reasons `full`, `big`, `disk`, `no-exit` (the file and `no-exit` came with 010) | 058 (error counters) |
+| `Outcome.State` `dropped` | no line was written; `Kind` is still set (the state exists already; this feature writes its drops line) | 023 (E-02 judges it the same way) |
 | The `session-end` step list | one step today | later features add nothing: the event only sweeps |
 | `tentaqles lobe events purge` | deletes every events and drops file of the client | the owner; 013 does not use it |
 | `lobe-events-dropped` | the alarm for a log that refuses lines | 010, 012 |
@@ -113,12 +118,13 @@ The hook prints only `exit=0`, and the file dated 2020 is no longer listed.
    break goes first. Only the torn line is lost; 005's readers skip and count it.
 9. **A drop** (S-07 step 6). `Record` returns an outcome with the state `dropped`, the hook exits 0 and
    prints nothing. One line, `{"at":"<time>","why":"<reason>"}`, is added to `events/drops-YYYYMMDD.jsonl`
-   when that write works. A write error on the event itself is the reason `disk`. The drops file holds a
+   when that write works, through 010's `AppendDrop`. A write error on the event itself is the reason
+   `disk`. The drops file holds a
    count of events that could not be written, never their content: exactly those two keys. It stops growing
    at 64 KiB (proposed).
 10. **`tentaqles lobe events purge`** deletes every `events-*.jsonl` and `drops-*.jsonl` of the client
-    under the store lock, and nothing else. It answers only to a person: the check sits in
-    `internal/cmd/lobe_events.go`, it refuses inside an agent session and changes nothing, and it asks
+    under the store lock, and nothing else. It answers only to a person: the check sits in a new file
+    `internal/cmd/lobe_events.go` (`lobe events` itself stays in `internal/cmd/lobe_read.go`), it refuses inside an agent session and changes nothing, and it asks
     before it deletes, as the other person-only commands do. It follows the command rules of 005.
 11. **`lobe-events-dropped`** is a warning with the client's name when the drops files hold 5 or more lines
     from the last 24 hours (proposed), shown with the count per reason. `internal/lobe/health` gains it.
@@ -145,11 +151,13 @@ Tasks 2, 3 and 4 can run side by side. Task 5 needs task 2; task 6 needs task 3.
 
 1. **Check this brief against the code as it stands**: which of 006 to 010 are built, what an `ok` line
    looks like now, whether 010 wrote a `no-exit` drop anywhere, the names in `eventlog` and `hook`. List
-   what no longer fits; the owner approves changes to this file first.
+   what no longer fits; the owner approves changes to this file first. Done 2026-11-10; the owner approved
+   the changes.
 2. **The sweep.** File: `internal/lobe/eventlog/sweep.go`. Tests: `TestLobeLogSweep`,
    `TestLobeLogSweepBounds` (name proposed here).
-3. **Limits, repair and drops.** Files: `internal/lobe/eventlog/append.go`, `drops.go`;
-   `internal/lobe/sense/sense.go` for the state `dropped`. Tests: `TestLobeLogCaps`, `TestLobeLogBigLine`,
+3. **Limits, repair and drops.** Files: `internal/lobe/eventlog/append.go`, `drops.go` (010's file: the
+   reasons `full`, `big` and `disk` join `no-exit`); `internal/lobe/sense/sense.go` only where a drop must
+   write its drops line (the state `dropped` exists). Tests: `TestLobeLogCaps`, `TestLobeLogBigLine`,
    `TestLobeLogTornLineRepair`, `TestLobeLogDropsFile` (three names proposed here), and `TestLobeLogDiskFull`
    from 003 with one more line: the drop is counted with the reason `disk` when the drops file can be
    written.
@@ -159,9 +167,15 @@ Tasks 2, 3 and 4 can run side by side. Task 5 needs task 2; task 6 needs task 3.
    `TestLobeSessionEndSweeps` (name proposed here), and `TestLobeHookServesOnlyItsLogin` with an expired
    file added to its fixture.
 6. **The Codex handler.** File: `internal/codexconfig/codexconfig.go`: the `SessionEnd` row in `lobeEvents`
-   with timeout 3, rendered and trusted as 010 did for `PostToolUse`; the guard's trust is untouched.
-   Tests: `TestLobeCodexSessionEndHandler` (name proposed here), and 010's
-   `TestLobeCodexHooksNeverChangeGuardTrust` unedited.
+   (table `SessionEnd`, label `session_end`, event `session-end`), handler
+   `<program> lobe-hook codex session-end; exit 0`, timeout 3, rendered and trusted as 010 did for
+   `PostToolUse`; the guard's trust is untouched. Its golden hash, read with `hooks/list` from Codex 0.167.1
+   on 2026-11-10 (the same run gave the guard's two hashes and 010's `PostToolUse` hash unchanged):
+   `sha256:9069bd4b1850d629b0f36bfcd48ab9fa4c3baf0829e2c759bb60c1fa4fe4a550`. `LobeHookTrust` reports
+   `missing` when either lobe handler is gone. In `internal/lobe/hook/steps.go`, Codex's `session-end` gets
+   the same sweep step as Claude Code's. Tests: `TestLobeCodexSessionEndHandler` (name proposed here),
+   `TestLobeHookTrustGoldenHashes` with the new hash, 010's `TestLobeCodexHandlerTimeoutsRendered` with the
+   `SessionEnd` row at 3, and 010's `TestLobeCodexHooksNeverChangeGuardTrust` unedited.
 7. **`purge` and the finding.** Files: `internal/cmd/lobe_events.go`, `internal/lobe/cli/events.go`,
    `internal/lobe/health/health.go`. Tests: `TestLobeEventsPurge` (name proposed here),
    `TestLobePersonVerbsRefuseInAgent`, `TestLobeCommandTable`, `TestLobeDoctorCodes`.
@@ -313,14 +327,36 @@ date changes during the run, start again.
 - [ ] Every test under "Tests that stay in the repository" is in the repository and green in CI on three
   systems: `go vet ./...`, `go test ./... -count=1`, `go build ./...`, and the plugin suite
   (`PYTHONPATH=plugin python -m pytest plugin/tests -q`).
-- [ ] The tester brief passes, 11 of 11.
-- [ ] The house rules hold: `TestLobeHookAlwaysExitsZero`, `TestLobeHookCutoffsUnderRegisteredTimeout`,
+- [x] The tester brief passes, 11 of 11.
+- [x] The house rules hold: `TestLobeHookAlwaysExitsZero`, `TestLobeHookCutoffsUnderRegisteredTimeout`,
   `TestLobeHookServesOnlyItsLogin` (with the expired file in its fixture), `TestLobeLogDropsFile`,
   `TestLobeGuardNeverImportsLobe`, `TestLobeImportsOnlyTheFour`, and the guard's tests unedited.
-- [ ] The guard's two entries in `plugin/hooks/hooks.json` are byte-identical before and after.
-- [ ] `docs/reference/commands.md`, `docs/reference/manifest.md`, `CHANGELOG.md`, `plugin/CHANGELOG.md` and
+- [x] The guard's two entries in `plugin/hooks/hooks.json` are byte-identical before and after.
+- [x] `docs/reference/commands.md`, `docs/reference/manifest.md`, `CHANGELOG.md`, `plugin/CHANGELOG.md` and
   `plugin/CLAUDE.md` are updated.
-- [ ] The owner has seen an old file disappear when a real session ended (Person check 2).
+- [x] The owner has seen an old file disappear when a real session ended (Person check 2).
+
+## Result, 2026-11-11
+
+- Tester brief: 11 of 11 on Windows 11 in Git Bash against a program built from the working tree.
+- Review (Sonnet): no blocking finding. Fixed: a sweep no longer stops at a file it cannot delete; a
+  session end opens the store read-only, so a client without a store gets no folder; `purge` checks every
+  name before the first delete. The doctor's fix line for `lobe-events-dropped` points at disk space and
+  the day file's size first.
+- Changed in the build, against this brief: the halving of `input` and `error` is a safety net only, since
+  the scrub already cuts both to about 4,000 characters; a line over 32 KiB comes only from an uncut field
+  and is dropped as `big`. `TestLobeLogDiskFull` is unchanged, because its fixture leaves no drops file to
+  write; the `disk` count is `TestLobeLogDiskDropCounted`. `purge` has `--yes`, as `lobe set` does.
+- Person check 1: after `purge`, `events/` held only `keep.txt`. On a fresh tester folder `purge` listed
+  the four files, asked for `yes`, and deleted nothing when declined.
+- Person check 2, in the tqx playground with the checkout's plugin through `claude --plugin-dir`: after
+  `/exit`, `events-20200101.jsonl` was gone and today's file stayed. After a closed terminal window the
+  planted file was also gone, so `SessionEnd` fired on that path on Claude Code 2.1.322 (the owner's paste
+  does not show the plant step of that run). The plugin's `lobe_hook.sh` runs `tq`, so a person check
+  needs the build first on `PATH` as `tq` as well as `tentaqles`; the first attempt copied only
+  `tentaqles.exe` and the released `tq` answered.
+- Not run on this machine: the link refusals of `purge` and `Store.Remove` (no symlink privilege); they
+  run on Linux and macOS in CI.
 
 ## Risks and unknowns
 
@@ -331,14 +367,15 @@ date changes during the run, start again.
 - **Which fields a `SessionEnd` payload carries** comes from the phase 0 result of 003. This feature needs
   only `cwd`. If the payload has no `cwd`, the hook falls back to the process folder, as the guard does.
 - **Codex.** The Codex `SessionEnd` handler was added to this feature after the brief was written, so the
-  build team takes the details from 010's pattern (`lobeEvents`, the render, the trust record). That
-  Codex cuts a session-end hook at 3 seconds is a web fact; 010's capture result should show it.
+  build team takes the details from 010's pattern (`lobeEvents`, the render, the trust record). Codex cuts
+  a session-end hook at its timeout: 010's capture saw a SessionEnd hook that slept 5 s under a timeout of 3
+  cut before its late marker (`docs/prd/spikes/phase0-q2-codex-hooks.md`).
 - **The sizes are estimates** (S-07 risks): 32 KiB per line, 8 and 16 MiB per day file, 64 MiB in all, 64
   files per run, 64 KiB of drops. 012 measures what a large file costs the append.
 - **The fill levels need the lock.** A hook that could not get the lock in 50 ms appends without the size
   check, so a file can pass 16 MiB under heavy contention. Accepted by S-07 step 3.
-- **An `ok` line exists only through the grep rule** when this feature is built on its stated needs alone.
-  Check 8 uses that rule. If 004's grep rule changed, check 8 and `TestLobeLogCaps` need another `ok` event.
+- **Check 8 uses the grep rule** for its `ok` event. Since 008 any success would do; if 004's grep rule
+  changed, check 8 and `TestLobeLogCaps` need another `ok` event.
 - **A plugin change ships by release** (`TestRootMarketplacePin`). Until the pin moves, only the checkout's
   plugin has the `SessionEnd` entry.
 - **The trim of `stats/hook-errors.jsonl`** belongs to the detached pass. Until 018 the file only grows, by

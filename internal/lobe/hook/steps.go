@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/tentaqles/tentaqles/internal/lobe/eventlog"
 	"github.com/tentaqles/tentaqles/internal/lobe/sense"
+	"github.com/tentaqles/tentaqles/internal/lobe/settings"
 )
 
 // step is one step of an event. A step that returns an error ends the run.
@@ -20,6 +22,7 @@ type step struct {
 const (
 	evPostToolUseFailure = "post-tool-use-failure"
 	evPostToolUse        = "post-tool-use"
+	evSessionEnd         = "session-end"
 )
 
 // knownEvent reports whether event is one of the events of host's hook contract: Claude Code's seven, or
@@ -61,6 +64,9 @@ func stepsFor(host, event string) []step {
 		if event == evPostToolUse {
 			out = append(out, step{id: "S-02", run: recordCodexPost})
 		}
+		if event == evSessionEnd {
+			out = append(out, step{id: "S-07", run: sweepEvents})
+		}
 		if extraSteps != nil {
 			out = append(out, extraSteps(event)...)
 		}
@@ -73,11 +79,25 @@ func stepsFor(host, event string) []step {
 		out = append(out, step{id: "S-03", run: recordSuccess})
 	case evStop:
 		out = append(out, step{id: "S-01R", run: recordRejected})
+	case evSessionEnd:
+		out = append(out, step{id: "S-07", run: sweepEvents})
 	}
 	if extraSteps != nil {
 		out = append(out, extraSteps(event)...)
 	}
 	return out
+}
+
+// sweepEvents (S-07) deletes the client's expired day files, with the client's retention_days, at the run's
+// time. It runs on session-end under either host, and with capture off too (F-06 step 1). A sweep error is
+// the step's error: the run writes its error line and nothing else.
+func sweepEvents(ctx context.Context, r *run) error {
+	days := 0 // a value Sweep does not accept is read as its default, 14
+	if s, ok := settings.From(r.ws).Get(settings.RetentionDays); ok {
+		days, _ = strconv.Atoi(s.Value)
+	}
+	_, err := eventlog.Sweep(ctx, r.st, days, r.now)
+	return err
 }
 
 // callOf is the sense.Call of the run's payload and folder.

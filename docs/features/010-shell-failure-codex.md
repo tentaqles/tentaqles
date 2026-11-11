@@ -1,6 +1,6 @@
 # 010: A failed shell command in Codex is logged
 
-**Status** built, waiting for CI · **Stage** Sense · **Entries** S-02; F-03 (the Codex half: step 1 for Codex, steps 4 to
+**Status** done: CI green on Linux, macOS and Windows for `6d72fb5e` on 2026-11-11 · **Stage** Sense · **Entries** S-02; F-03 (the Codex half: step 1 for Codex, steps 4 to
 6, one handler); F-02 (the host `codex` and its login rule); S-07 (the drops file, one reason); D-11; phase 0
 question 2 for Codex · **Needs** 009 · **Feeds** 014, 036
 

@@ -95,5 +95,6 @@ It works on the client of the current folder, or on --client, under the same rul
 		},
 	}
 	c.Flags().StringVar(&client, "client", "", "the client to read (default: the client of the current folder)")
+	c.AddCommand(newLobeEventsPurgeCmd())
 	return c
 }
