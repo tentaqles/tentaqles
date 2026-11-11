@@ -56,8 +56,10 @@ type eventsDoc struct {
 // event counts, and whether the plugin this client's Claude Code loads has the lobe's hooks. hooksJSON is
 // the bytes of that plugin's hooks/hooks.json and hooksFound says whether a plugin is installed at all
 // (internal/cmd finds it with guardplugin.PluginRoot; this package cannot import guardplugin). A refused
-// store is an error, so the command exits 1 with the line that names the file at fault.
-func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound bool, out io.Writer) error {
+// store is an error, so the command exits 1 with the line that names the file at fault. codexHooks is the
+// state of the lobe's Codex handler ("trusted", "modified", ...), computed by internal/cmd; "" means the
+// client has no codex in its scope, and then the output has no codex entry.
+func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound bool, codexHooks string, out io.Writer) error {
 	ws, err := Target(d, clientFlag)
 	if err != nil {
 		return err
@@ -75,6 +77,10 @@ func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound
 	}
 	set := settings.From(ws)
 	hooks := hooksState(hooksJSON, hooksFound)
+	hookStates := map[string]string{"claude": hooks}
+	if codexHooks != "" {
+		hookStates["codex"] = codexHooks
+	}
 
 	if asJSON {
 		doc := statusDoc{
@@ -85,7 +91,7 @@ func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound
 				Total: counts.Total, Fail: counts.Fail, OK: counts.OK, HiddenFail: counts.HiddenFail,
 				Days: counts.Days, Skipped: counts.Skipped, Fingerprints: counts.Fingerprints,
 			},
-			Hooks: map[string]string{"claude": hooks},
+			Hooks: hookStates,
 		}
 		return json.NewEncoder(out).Encode(doc)
 	}
@@ -100,6 +106,9 @@ func Status(d Deps, clientFlag string, asJSON bool, hooksJSON []byte, hooksFound
 	fmt.Fprintf(&b, "events: total %d (fail %d, ok %d, hidden_fail %d), %d day file(s), skipped %d, %d fingerprint(s)\n",
 		counts.Total, counts.Fail, counts.OK, counts.HiddenFail, counts.Days, counts.Skipped, counts.Fingerprints)
 	fmt.Fprintf(&b, "hooks: claude %s\n", hooks)
+	if codexHooks != "" {
+		fmt.Fprintf(&b, "hooks: codex %s\n", codexHooks)
+	}
 	if line := loginLine(d, ws.Name); line != "" {
 		fmt.Fprintln(&b, line)
 	}

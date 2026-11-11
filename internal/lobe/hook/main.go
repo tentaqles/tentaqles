@@ -20,6 +20,7 @@ import (
 
 const (
 	hostClaude = "claude"
+	hostCodex  = "codex"
 	noHooksVar = "TQ_LOBE_NO_HOOKS"
 )
 
@@ -71,10 +72,10 @@ func Main(args []string, stdin io.Reader, stdout io.Writer) (handled bool, code 
 	if os.Getenv(noHooksVar) == "1" {
 		return true, 0
 	}
-	if host != hostClaude || !knownEvent(event) {
+	if !knownEvent(host, event) {
 		return true, 0
 	}
-	steps := stepsFor(event)
+	steps := stepsFor(host, event)
 	if len(steps) == 0 {
 		return true, 0
 	}
@@ -159,7 +160,7 @@ func (r *run) work(stdin io.Reader, steps []step) {
 	// capture (F-06, S-01 step 2): while it is off, no event reads or writes anything, so this comes
 	// before the transcript read, the failure skip and store.Open.
 	if !captureOn(r.ws) {
-		if r.event == evStop {
+		if r.host == hostClaude && r.event == evStop {
 			// Nothing from the off period is recovered later: the session's cursor moves to the end of
 			// the transcript, so the first stop after capture is on again starts there.
 			r.skipToEnd()
@@ -175,17 +176,20 @@ func (r *run) work(stdin io.Reader, steps []step) {
 	}
 	// A success (S-03) is skipped for the memory's own tools, and a background start writes nothing: both
 	// are decided here, before the store is opened, so the skipped call leaves no store folder either.
+	// The background check is Claude Code's (its result says a command moved to the background); Codex has
+	// no such result, so it is not applied to a Codex call.
 	if r.event == evPostToolUse {
 		if _, skip := sense.Skip(successCall(r)); skip {
 			return
 		}
-		if sense.BackgroundStart(r.pl.tool, r.pl.toolResponse) {
+		if r.host == hostClaude && sense.BackgroundStart(r.pl.tool, r.pl.toolResponse) {
 			return
 		}
 	}
 	// The stop event reads the transcript first, through a read-only store. With no store and nothing
-	// to record, the run stops here, so no store folder is created.
-	if r.event == evStop {
+	// to record, the run stops here, so no store folder is created. Only Claude Code's stop reads a
+	// transcript; Codex's stop has no step that would.
+	if r.host == hostClaude && r.event == evStop {
 		ro, ok := r.readRejected()
 		if !ok {
 			return

@@ -79,7 +79,7 @@ func pluginWithoutLobe(t *testing.T, name string) {
 		`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash x/tq_hook.sh pre-tool-use","timeout":15}]}]}}`+"\n")
 }
 
-// lobeFixtures holds one fixture per code of F-07 step 5 that this package reports.
+// lobeFixtures holds one fixture per code this package reports (F-07 step 5, and lobe-hooks-untrusted).
 var lobeFixtures = []lobeFixture{
 	{health.CodeStoreLinked, "error", "linked", func(t *testing.T, base, name string) {
 		healthyClient(t, base, name)
@@ -117,6 +117,22 @@ var lobeFixtures = []lobeFixture{
 		if _, err := store.Open(name, store.ReadWrite); err != nil {
 			t.Fatal(err)
 		}
+	}},
+	{health.CodeHooksUntrusted, "warn", "codex", func(t *testing.T, base, name string) {
+		writeClient(t, base, name, "git:\n    email: dev@"+name+".test\nidentities:\n    codex: {}\n")
+		if _, err := store.Open(name, store.ReadWrite); err != nil {
+			t.Fatal(err)
+		}
+		renderCodexFixture(t, name)
+		// A changed lobe handler (its timeout is hashed, its command still owned): Codex's trust is Modified.
+		editCodex(t, name, func(root map[string]any) {
+			hooks := root["hooks"].(map[string]any)
+			for _, g := range asList(hooks["PostToolUse"]) {
+				for _, h := range asList(g.(map[string]any)["hooks"]) {
+					h.(map[string]any)["timeout"] = int64(6)
+				}
+			}
+		})
 	}},
 	{health.CodeHookFailing, "warn", "failing", func(t *testing.T, base, name string) {
 		healthyClient(t, base, name)

@@ -2,6 +2,7 @@ package hook
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -21,12 +22,21 @@ const (
 	evPostToolUse        = "post-tool-use"
 )
 
-// knownEvent reports whether event is one of the seven events of the hook contract.
-func knownEvent(event string) bool {
-	switch event {
-	case "session-start", "user-prompt-submit", "pre-tool-use", "post-tool-use", evPostToolUseFailure,
-		"stop", "session-end":
-		return true
+// knownEvent reports whether event is one of the events of host's hook contract: Claude Code's seven, or
+// Codex's six (no post-tool-use-failure). A host that is neither has no events.
+func knownEvent(host, event string) bool {
+	switch host {
+	case hostClaude:
+		switch event {
+		case "session-start", "user-prompt-submit", "pre-tool-use", "post-tool-use", evPostToolUseFailure,
+			"stop", "session-end":
+			return true
+		}
+	case hostCodex:
+		switch event {
+		case "session-start", "user-prompt-submit", "pre-tool-use", "post-tool-use", "stop", "session-end":
+			return true
+		}
 	}
 	return false
 }
@@ -42,9 +52,20 @@ func cutoffFor(event string) time.Duration {
 	return captureCutoff
 }
 
-// stepsFor is the steps of an event: its real steps, then the test seam's steps.
-func stepsFor(event string) []step {
+// stepsFor is the steps of an event of host: its real steps, then the test seam's steps. Codex has one
+// step, on post-tool-use (S-02); its other events have none, so the stop step (recordRejected, which reads
+// Claude Code's transcript) never runs for Codex.
+func stepsFor(host, event string) []step {
 	var out []step
+	if host == hostCodex {
+		if event == evPostToolUse {
+			out = append(out, step{id: "S-02", run: recordCodexPost})
+		}
+		if extraSteps != nil {
+			out = append(out, extraSteps(event)...)
+		}
+		return out
+	}
 	switch event {
 	case evPostToolUseFailure:
 		out = append(out, step{id: "S-01", run: recordFailure})
@@ -94,6 +115,36 @@ func recordFailure(ctx context.Context, r *run) error {
 	}
 	place := sense.Locate(r.ws.Root, r.cwd)
 	ev := sense.FromClaudeFailure(call, place, r.now, tail, tailOK)
+	_, err := sense.Record(ctx, r.st, ev, call)
+	return err
+}
+
+// recordCodexPost (S-02) records a finished call in Codex. The skip rules are the memory's own tools only
+// (the work has already applied them before the store opened). For the shell tool the exit code is read
+// from Codex's session file, through the login the run accepted (CODEX_HOME); any other tool, and a shell
+// call with no code found, has none. sense.FromCodexPostTool decides what is written. A call with no code
+// that writes nothing counts one no-exit drop. The response is dropped after use.
+func recordCodexPost(ctx context.Context, r *run) error {
+	call := successCall(r)
+	if _, skip := sense.Skip(call); skip {
+		return nil
+	}
+	code, have := 0, false
+	if sense.ShellTool(r.pl.tool) {
+		code, have = codexExit(os.Getenv("CODEX_HOME"), r.pl.transcript, r.pl.toolUseID)
+	}
+	tail, tailOK := r.todayTail()
+	place := sense.Locate(r.ws.Root, r.cwd)
+	ev, write, noExit := sense.FromCodexPostTool(call, r.pl.toolResponse, code, have, place, r.now, tail, tailOK)
+	// The response is dropped here: no later step of this run reads it.
+	r.pl.toolResponse = nil
+	if noExit {
+		// A lost drop costs one count, so its error is ignored.
+		_ = eventlog.AppendDrop(ctx, r.st, eventlog.DropNoExit, r.now)
+	}
+	if !write {
+		return nil
+	}
 	_, err := sense.Record(ctx, r.st, ev, call)
 	return err
 }

@@ -31,8 +31,8 @@ section for every command; `test/integration` fails when one is missing.
 - `internal/shell/`, `internal/hooks/`: the shell activation templates and the profile blocks.
 - `internal/guard/`: the drift check (`guard.Decide`) and the shell-text reading it needs.
 - `internal/guardplugin/`: whether a client's Claude config has the enabled plugin hook.
-- `internal/codexconfig/`: tentaqles' part of a client's Codex `config.toml`: the two hooks, their trust, and
-  `developer_instructions`.
+- `internal/codexconfig/`: tentaqles' part of a client's Codex `config.toml`: the guard's two hooks, the memory's
+  `PostToolUse` hook (`lobeEvents`, `LobeHookTrust`), the trust of all three, and `developer_instructions`.
 - `internal/providers/`: the catalog (`catalog/*.yaml`, embedded) and user provider files.
 - `internal/lobe/`: the memory ("the Vertical Lobe"), one package per part, imports only `internal/resolve`,
   `internal/paths`, `internal/registry` and `internal/manifest` from this repository (and other lobe packages), no `init` and no
@@ -75,6 +75,8 @@ Each line names the tests that keep it. Weakening, skipping or removing one need
 - No Codex session starts in a client's folder without tentaqles' enabled, trusted hooks, and a hook error is a deny:
   `TestRunCodex_RefusesWithoutTheHooks`, `TestRunCodex_RefusesHooksOffOptions`, `TestCodexPreToolUse_PanicDenies`,
   `TestCodexPreToolUse_WatchdogDenies`, `TestCodexHookProgram`.
+- The lobe's Codex handlers never change the guard's Codex trust and never stop a session:
+  `TestLobeCodexHooksNeverChangeGuardTrust`.
 - A Claude session runs only its own folder's client: `TestRunOtherClient_RefusedForAgents`,
   `TestRunOtherClient_NeutralFolderRefused`, `TestRunOtherClient_InheritedEnvIgnored`,
   `TestRunOtherClient_HumanAllowed`.

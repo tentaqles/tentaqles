@@ -3,20 +3,23 @@
 // trusts the tentaqles hooks.
 //
 // Ownership:
-//   - A hook handler is tentaqles' when its type is "command" and its command is
-//     "<program> codex-hook pre-tool-use" or "<program> codex-hook session-start".
+//   - A hook handler is tentaqles' when its type is "command" and its command is one of:
+//     "<program> codex-hook pre-tool-use" or "<program> codex-hook session-start" (the
+//     guard's), or "<program> lobe-hook codex post-tool-use; exit 0" (the memory's).
 //     Render removes every such handler and appends one group per event after the
-//     user's groups, so the group indexes Codex keys trust on stay stable.
+//     user's groups: the guard's group, then the memory's. The group indexes Codex keys
+//     trust on stay stable.
 //   - developer_instructions is written when it is absent, or when its value equals
 //     the value tentaqles last wrote. That value is recorded in tentaqles-owned.json
 //     next to config.toml. A value the user wrote is never replaced or removed.
 //
 // Trust: Codex stores trust as [hooks.state."<key>"] trusted_hash = "sha256:...",
 // where the key is "<config path>:<event label>:<group index>:<handler index>" and
-// the hash is over the normalized hook (see hookHash). HookTrust only reads trust;
-// the user accepts the hooks once in Codex's /hooks screen. The rules were taken
-// from codex-rs at rust-v0.154.0 and checked against Codex 0.154.0 (see the golden
-// tests).
+// the hash is over the normalized hook (see hookHash). Render writes trusted_hash and
+// enabled = true for every handler tentaqles owns, the guard's and the memory's (owner
+// decision D-11), so the person accepts nothing in Codex's /hooks screen. HookTrust and
+// LobeHookTrust only read trust. The rules were taken from codex-rs at rust-v0.154.0
+// and checked against Codex 0.154.0 (see the golden tests).
 package codexconfig
 
 import (
@@ -39,12 +42,13 @@ import (
 )
 
 const (
-	configFile       = "config.toml"
-	ownedFile        = "tentaqles-owned.json"
-	devInstrKey      = "developer_instructions"
-	hookTimeoutSec   = 15
-	codexHookTimeout = 600  // Codex's timeout for a command hook without one
-	codexContextLim  = 2500 // Codex's additionalContext token limit; the default is not hashed
+	configFile         = "config.toml"
+	ownedFile          = "tentaqles-owned.json"
+	devInstrKey        = "developer_instructions"
+	hookTimeoutSec     = 15
+	lobeHookTimeoutSec = 5
+	codexHookTimeout   = 600  // Codex's timeout for a command hook without one
+	codexContextLim    = 2500 // Codex's additionalContext token limit; the default is not hashed
 )
 
 // Managed is what tentaqles owns in config.toml.
@@ -93,6 +97,24 @@ var hookEvents = []hookEvent{
 	{table: "PreToolUse", label: "pre_tool_use", sub: "pre-tool-use", matcher: "^Bash$"},
 	{table: "SessionStart", label: "session_start", sub: "session-start"},
 }
+
+// lobeEvents are the events the memory (the Vertical Lobe) writes its handler to. It is plain
+// data: this package imports no lobe package, because the guard imports this one.
+var lobeEvents = []hookEvent{
+	{table: "PostToolUse", label: "post_tool_use", sub: "post-tool-use"},
+}
+
+// family is one of the two kinds of handler tentaqles writes: the guard's (hookEvents, run as
+// "codex-hook <sub>") and the memory's (lobeEvents, run as "lobe-hook codex <sub>; exit 0").
+type family struct {
+	events []hookEvent
+	tail   func(sub string) string // the command text after the program
+}
+
+var (
+	guardFamily = family{events: hookEvents, tail: func(sub string) string { return " codex-hook " + sub }}
+	lobeFamily  = family{events: lobeEvents, tail: func(sub string) string { return " lobe-hook codex " + sub + "; exit 0" }}
+)
 
 // ownedRecord is what tentaqles-owned.json holds.
 type ownedRecord struct {
@@ -186,7 +208,7 @@ func trustHooks(codexHome string) (bool, error) {
 	}
 	var stateErr error
 	owned := 0
-	err = ownedHandlers(root, keyPath, func(ev hookEvent, key string, g, h map[string]any) {
+	err = ownedHandlers(root, keyPath, []family{guardFamily, lobeFamily}, func(ev hookEvent, key string, g, h map[string]any) {
 		owned++
 		if stateErr != nil {
 			return
@@ -227,12 +249,25 @@ func trustHooks(codexHome string) (bool, error) {
 	return true, nil
 }
 
-// HookTrust reports the state of the tentaqles hooks in codexHome/config.toml. Both the
-// PreToolUse and the SessionStart hook must be trusted for Trusted; when they differ, the
-// worst wins, in the order Missing, Disabled, Untrusted, Modified, Trusted. A hook is Disabled
-// when its state entry has enabled = false, or when [features] sets hooks or codex_hooks to
-// false, which turns off every hook in the file.
+// HookTrust reports the state of the guard's hooks (PreToolUse and SessionStart) in
+// codexHome/config.toml. Both must be trusted for Trusted; when they differ, the worst wins, in
+// the order Missing, Disabled, Untrusted, Modified, Trusted. A hook is Disabled when its state
+// entry has enabled = false, or when [features] sets hooks or codex_hooks to false, which turns
+// off every hook in the file.
 func HookTrust(codexHome string) (Trust, error) {
+	return familyTrust(codexHome, guardFamily)
+}
+
+// LobeHookTrust reports the state of the memory's hook (PostToolUse) in codexHome/config.toml,
+// with the same five states and rules as HookTrust. Missing when the handler is not in the file.
+// Nothing stops a session on it: CheckGuard never reads it.
+func LobeHookTrust(codexHome string) (Trust, error) {
+	return familyTrust(codexHome, lobeFamily)
+}
+
+// familyTrust is HookTrust for the handlers of one family: the worst state among them, Missing
+// when one of the family's events has no handler.
+func familyTrust(codexHome string, fam family) (Trust, error) {
 	path := filepath.Join(codexHome, configFile)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -254,7 +289,7 @@ func HookTrust(codexHome string) (Trust, error) {
 
 	worst := Trusted
 	found := map[string]bool{}
-	err = ownedHandlers(root, keyPath, func(ev hookEvent, key string, g, h map[string]any) {
+	err = ownedHandlers(root, keyPath, []family{fam}, func(ev hookEvent, key string, g, h map[string]any) {
 		found[ev.label] = true
 		t := trustOf(state, key, hookHash(ev.label, g, h))
 		if off || entryDisabled(state, key) {
@@ -267,7 +302,7 @@ func HookTrust(codexHome string) (Trust, error) {
 	if err != nil {
 		return Missing, fmt.Errorf("codexconfig: %s: %w", path, err)
 	}
-	for _, ev := range hookEvents {
+	for _, ev := range fam.events {
 		if !found[ev.label] {
 			return Missing, nil
 		}
@@ -275,9 +310,10 @@ func HookTrust(codexHome string) (Trust, error) {
 	return worst, nil
 }
 
-// ownedHandlers calls visit for every handler tentaqles owns, with its event, its Codex hook key
-// (keyPath, label, group index, handler index), and its group and handler tables.
-func ownedHandlers(root map[string]any, keyPath string, visit func(ev hookEvent, key string, g, h map[string]any)) error {
+// ownedHandlers calls visit for every handler of the given families that tentaqles owns, with its
+// event, its Codex hook key (keyPath, label, group index, handler index), and its group and handler
+// tables. A handler is visited only for the family whose command it is.
+func ownedHandlers(root map[string]any, keyPath string, fams []family, visit func(ev hookEvent, key string, g, h map[string]any)) error {
 	raw, ok := root["hooks"]
 	if !ok {
 		return nil
@@ -286,19 +322,27 @@ func ownedHandlers(root map[string]any, keyPath string, visit func(ev hookEvent,
 	if !ok {
 		return errors.New(`"hooks" is not a table`)
 	}
-	for _, ev := range hookEvents {
-		groups, err := groupsOf(hooks[ev.table])
-		if err != nil {
-			return fmt.Errorf("hooks.%s: %w", ev.table, err)
-		}
-		for gi, g := range groups {
-			handlers, err := handlersOf(g)
+	for _, fam := range fams {
+		for _, ev := range fam.events {
+			groups, err := groupsOf(hooks[ev.table])
 			if err != nil {
+				if !guardTable(ev.table) {
+					continue // a malformed table only the memory uses holds no handler of ours
+				}
 				return fmt.Errorf("hooks.%s: %w", ev.table, err)
 			}
-			for hi, h := range handlers {
-				if isOwnedHandler(h) {
-					visit(ev, hookKey(keyPath, ev.label, gi, hi), g, h)
+			for gi, g := range groups {
+				handlers, err := handlersOf(g)
+				if err != nil {
+					if !guardTable(ev.table) {
+						break
+					}
+					return fmt.Errorf("hooks.%s: %w", ev.table, err)
+				}
+				for hi, h := range handlers {
+					if fam.owns(h) {
+						visit(ev, hookKey(keyPath, ev.label, gi, hi), g, h)
+					}
 				}
 			}
 		}
@@ -350,41 +394,112 @@ func featuresOff(root map[string]any) bool {
 	return false
 }
 
-// renderHooks replaces tentaqles' handlers in hooks.PreToolUse and hooks.SessionStart
-// and appends one group per event after the user's groups.
+// renderHooks replaces tentaqles' handlers in every event table it writes and appends the
+// tables' groups after the user's groups: in each table, the guard's group, then the memory's.
+// One pass per table removes the owned handlers of both families, so a table that holds
+// both is rendered whole.
 func renderHooks(root map[string]any, command string) error {
 	hooks, err := hooksTable(root)
 	if err != nil {
 		return err
 	}
-	for _, ev := range hookEvents {
-		groups, err := groupsOf(hooks[ev.table])
+	for _, table := range renderedTables() {
+		kept, err := keptGroups(hooks[table])
 		if err != nil {
-			return fmt.Errorf("hooks.%s: %w", ev.table, err)
-		}
-		kept := make([]map[string]any, 0, len(groups)+1)
-		for _, g := range groups {
-			ng, err := withoutOwned(g)
-			if err != nil {
-				return fmt.Errorf("hooks.%s: %w", ev.table, err)
+			if !guardTable(table) {
+				// A malformed table that only the memory writes is left as the person wrote it, and the
+				// memory's handler is not written there: it must never stop the guard's render.
+				continue
 			}
-			if ng != nil {
-				kept = append(kept, ng)
+			return fmt.Errorf("hooks.%s: %w", table, err)
+		}
+		for _, ev := range hookEvents {
+			if ev.table == table {
+				kept = append(kept, guardGroup(ev, command))
 			}
 		}
-		ours := map[string]any{
-			"hooks": []map[string]any{{
-				"type":    "command",
-				"command": command + " codex-hook " + ev.sub,
-				"timeout": int64(hookTimeoutSec),
-			}},
+		for _, ev := range lobeEvents {
+			if ev.table == table {
+				kept = append(kept, lobeGroup(ev, command))
+			}
 		}
-		if ev.matcher != "" {
-			ours["matcher"] = ev.matcher
-		}
-		hooks[ev.table] = append(kept, ours)
+		hooks[table] = kept
 	}
 	return nil
+}
+
+// keptGroups returns the groups of one event table with tentaqles' handlers removed, with room for
+// the groups Render appends.
+func keptGroups(v any) ([]map[string]any, error) {
+	groups, err := groupsOf(v)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]map[string]any, 0, len(groups)+2)
+	for _, g := range groups {
+		ng, err := withoutOwned(g)
+		if err != nil {
+			return nil, err
+		}
+		if ng != nil {
+			kept = append(kept, ng)
+		}
+	}
+	return kept, nil
+}
+
+// guardTable reports whether table holds one of the guard's events. An error in such a table stops a
+// render or a trust read, as it always did; an error in a table only the memory uses does not.
+func guardTable(table string) bool {
+	for _, ev := range hookEvents {
+		if ev.table == table {
+			return true
+		}
+	}
+	return false
+}
+
+// renderedTables returns the event tables tentaqles writes, each once, in the order the
+// guard's events and then the memory's name them.
+func renderedTables() []string {
+	var tables []string
+	seen := map[string]bool{}
+	for _, evs := range [][]hookEvent{hookEvents, lobeEvents} {
+		for _, ev := range evs {
+			if !seen[ev.table] {
+				seen[ev.table] = true
+				tables = append(tables, ev.table)
+			}
+		}
+	}
+	return tables
+}
+
+// guardGroup is the group Render appends for a guard event: "<program> codex-hook <sub>".
+func guardGroup(ev hookEvent, command string) map[string]any {
+	ours := map[string]any{
+		"hooks": []map[string]any{{
+			"type":    "command",
+			"command": command + guardFamily.tail(ev.sub),
+			"timeout": int64(hookTimeoutSec),
+		}},
+	}
+	if ev.matcher != "" {
+		ours["matcher"] = ev.matcher
+	}
+	return ours
+}
+
+// lobeGroup is the group Render appends for a lobe event: "<program> lobe-hook codex <sub>; exit 0".
+// The tail ends in "; exit 0", so the handler exits 0 under PowerShell and a POSIX shell alike.
+func lobeGroup(ev hookEvent, command string) map[string]any {
+	return map[string]any{
+		"hooks": []map[string]any{{
+			"type":    "command",
+			"command": command + lobeFamily.tail(ev.sub),
+			"timeout": int64(lobeHookTimeoutSec),
+		}},
+	}
 }
 
 // withoutOwned returns the group with tentaqles' handlers removed, as a group whose
@@ -433,20 +548,26 @@ func renderDeveloperInstructions(root map[string]any, prev ownedRecord, want str
 	}
 }
 
-// isOwnedHandler reports whether a hook handler is one tentaqles writes.
+// isOwnedHandler reports whether a hook handler is one tentaqles writes, of either family.
 func isOwnedHandler(h map[string]any) bool {
-	t, _ := h["type"].(string)
-	cmd, ok := h["command"].(string)
-	return ok && t == "command" && ownedCommand(cmd)
+	return guardFamily.owns(h) || lobeFamily.owns(h)
 }
 
-// ownedCommand reports whether cmd is "<program> codex-hook <pre-tool-use|session-start>"
-// with a non-empty program. The program may be quoted, as it is written on POSIX systems when its path has
-// spaces ("C:\Program Files\tentaqles\tentaqles.exe" codex-hook pre-tool-use); the quotes are not
-// part of the program.
-func ownedCommand(cmd string) bool {
-	for _, ev := range hookEvents {
-		suffix := " codex-hook " + ev.sub
+// owns reports whether h is a command handler of this family that tentaqles writes.
+func (f family) owns(h map[string]any) bool {
+	t, _ := h["type"].(string)
+	cmd, ok := h["command"].(string)
+	return ok && t == "command" && f.ownedCommand(cmd)
+}
+
+// ownedCommand reports whether cmd is "<program>" followed by this family's tail for one of its
+// events, with a non-empty program. The guard's tails are " codex-hook <pre-tool-use|session-start>",
+// the memory's " lobe-hook codex post-tool-use; exit 0". The program may be quoted, as it is written
+// when its path has spaces ("C:\Program Files\tentaqles\tentaqles.exe" codex-hook pre-tool-use); the
+// quotes are not part of the program.
+func (f family) ownedCommand(cmd string) bool {
+	for _, ev := range f.events {
+		suffix := f.tail(ev.sub)
 		if !strings.HasSuffix(cmd, suffix) {
 			continue
 		}
@@ -462,6 +583,11 @@ func ownedCommand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// ownedCommand reports whether cmd is a command tentaqles writes, of either family.
+func ownedCommand(cmd string) bool {
+	return guardFamily.ownedCommand(cmd) || lobeFamily.ownedCommand(cmd)
 }
 
 // trustOf compares the trusted_hash Codex has stored for key with the current hash.

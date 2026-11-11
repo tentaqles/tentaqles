@@ -216,13 +216,20 @@ failed Codex command as a success, and C-01 would pair a failure with a "fix" th
    line that is exactly `Output:` (no such line, no header) and the body is what follows it. In the header,
    `Process running with session ID N` means still running; `Process exited with code N` or `Exit code: N` gives
    the code.
+   *Changed by the owner on 2026-11-10, after the phase 0 capture
+   ([phase0-q2-codex-hooks.md](spikes/phase0-q2-codex-hooks.md)):* in Codex 0.154.0 the `Bash` text is the
+   output alone, with no header and no JSON form, so the code is read from Codex's session file instead: the
+   `item_completed` line whose `CommandExecution` item has the call's `tool_use_id` as its `id`, in the
+   payload's `transcript_path`, which must lie inside the login folder's `sessions` folder. The text is the
+   body as it is. Feature 010 has the details.
 4. Code not 0: a `fail` event with `host` `codex`, `exit` N and the body as `error`. Code 0: the body goes to
    S-04 and then S-03. Still running: nothing is written.
 5. No code named: S-04's text rules run on the whole text. If none fires, no event is written and one `no-exit`
    line goes to the drops file (S-07; core page 5.3), so a change in Codex's header format shows up as a count.
 6. Other Codex tools (`apply_patch`, MCP tools): only S-04's error flag rule applies. With no flag, nothing is
    written, neither `fail` nor `ok`. Non-shell Codex failures stay unrecorded until the phase 0 capture says
-   what arrives; an `ok` without evidence would feed wrong pairs to C-01.
+   what arrives; an `ok` without evidence would feed wrong pairs to C-01. *The capture (2026-11-10): a failed
+   `apply_patch` and an MCP error never reach PostToolUse in Codex 0.154.0.*
 7. An event written here leaves the same line and the same outcome as S-01 or S-03 would, so the steps after
    Sense (E-02's verdict, C-08, R-04, G-08) run on Codex's one post-tool event for both kinds of result.
 

@@ -20,7 +20,8 @@ import (
 	"github.com/tentaqles/tentaqles/internal/resolve"
 )
 
-// The eight codes of F-07 step 5 that this package reports. Level is "error" or "warn", as the table gives.
+// The codes of F-07 step 5 that this package reports, and lobe-hooks-untrusted (feature 010, the Codex
+// handler). Level is "error" or "warn", as the table gives.
 const (
 	CodeStoreLinked     = "lobe-store-linked"
 	CodeStoreForeign    = "lobe-store-foreign"
@@ -30,6 +31,7 @@ const (
 	CodeHooksMissing    = "lobe-hooks-missing"
 	CodeSettingInvalid  = "lobe-setting-invalid"
 	CodeHookFailing     = "lobe-hook-failing"
+	CodeHooksUntrusted  = "lobe-hooks-untrusted"
 )
 
 // HookFailWindow and HookFailMin are the thresholds of lobe-hook-failing: 5 or more lines of
@@ -65,6 +67,10 @@ type Client struct {
 	// guardplugin.PluginRoot, which this package may not import.
 	PluginFound bool
 	HooksJSON   []byte
+	// CodexHooks is the state of the lobe's Codex handler in the client's Codex config, as
+	// codexconfig.Trust.String gives it ("trusted", "untrusted", "modified", "disabled", "missing"). It is ""
+	// when the client has no codex in its scope. internal/cmd computes it (codexconfig may not be imported here).
+	CodexHooks string
 }
 
 // Findings returns the lobe findings of the clients, in the order of the clients. now is the time the
@@ -86,6 +92,15 @@ func Findings(clients []Client, now time.Time) []Finding {
 			if f, ok := settingFinding(c); ok {
 				out = append(out, f)
 			}
+		}
+		if c.CodexHooks != "" && c.CodexHooks != "trusted" {
+			out = append(out, Finding{
+				Level:  "warn",
+				Code:   CodeHooksUntrusted,
+				Client: c.Name,
+				Msg:    "the lobe's Codex hook in this client's Codex config is " + c.CodexHooks,
+				Fix:    "tentaqles settings render " + c.Name,
+			})
 		}
 	}
 	return out

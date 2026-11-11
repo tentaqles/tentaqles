@@ -19,7 +19,7 @@ func TestLobeStatusJSON(t *testing.T) {
 	writeDay(t, "20261109", `{"v":1,"kind":"fail"}`, `{"v":1,"kind":"fail"}`, `{"v":1,"kind":"fail"}`)
 
 	var buf bytes.Buffer
-	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf); err != nil {
+	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -61,7 +61,7 @@ func TestLobeStatusJSON(t *testing.T) {
 	mustWrite(t, filepath.Join(paths.LobeDir("acme"), "store.json"),
 		`{"v":1,"client":"globex","created":"2026-01-01T00:00:00Z"}`+"\n")
 	buf.Reset()
-	err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf)
+	err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, "", &buf)
 	if err == nil {
 		t.Fatal("a foreign store.json was not refused")
 	}
@@ -84,7 +84,7 @@ func TestLobeStatusCounts(t *testing.T) {
 		`{"v":1,"kind":"fail"}`,
 		`{"v":`)
 	var buf bytes.Buffer
-	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf); err != nil {
+	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -125,7 +125,7 @@ func TestLobeStatusLoginLine(t *testing.T) {
 	cwd := f.client("acme")
 
 	var unset bytes.Buffer
-	if err := Status(deps(false, nil, cwd), "", false, nil, false, &unset); err != nil {
+	if err := Status(deps(false, nil, cwd), "", false, nil, false, "", &unset); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(unset.String(), "CLAUDE_CONFIG_DIR is unset") {
@@ -134,7 +134,7 @@ func TestLobeStatusLoginLine(t *testing.T) {
 
 	own := map[string]string{"CLAUDE_CONFIG_DIR": paths.IdentityDir("acme", "claude")}
 	var owned bytes.Buffer
-	if err := Status(deps(false, own, cwd), "", false, nil, false, &owned); err != nil {
+	if err := Status(deps(false, own, cwd), "", false, nil, false, "", &owned); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(owned.String(), "CLAUDE_CONFIG_DIR") {
@@ -154,7 +154,7 @@ func TestLobeStatusRefusesOtherLoginInsideAgent(t *testing.T) {
 	openAcme(t)
 	env := map[string]string{"CLAUDE_CONFIG_DIR": paths.IdentityDir("globex", "claude")}
 	var buf bytes.Buffer
-	if err := Status(deps(true, env, f.client("acme")), "", false, nil, false, &buf); err == nil {
+	if err := Status(deps(true, env, f.client("acme")), "", false, nil, false, "", &buf); err == nil {
 		t.Fatal("status under another login was not refused")
 	}
 	if buf.Len() != 0 {
@@ -176,7 +176,7 @@ func TestLobeStatusCountsFingerprints(t *testing.T) {
 		`{"v":1,"kind":"ok"}`,
 		`{"v":`)
 	var buf bytes.Buffer
-	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf); err != nil {
+	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"fingerprints":2}`) {
@@ -188,10 +188,42 @@ func TestLobeStatusCountsFingerprints(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf.Reset()
-	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, &buf); err != nil {
+	if err := Status(deps(false, nil, f.client("acme")), "", true, nil, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"fingerprints":0}`) {
 		t.Fatalf("an empty log must count 0 fingerprints: %s", buf.String())
+	}
+}
+
+// TestLobeStatusCodexHook: the codex entry of the hooks object is there only when the client has codex in its
+// scope (codexHooks is not ""), in the JSON and in the text form.
+func TestLobeStatusCodexHook(t *testing.T) {
+	f := newHome(t)
+	openAcme(t)
+	cwd := f.client("acme")
+
+	var withCodex bytes.Buffer
+	if err := Status(deps(false, nil, cwd), "", true, nil, false, "modified", &withCodex); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(withCodex.String(), `"hooks":{"claude":"none","codex":"modified"}`) {
+		t.Fatalf("the codex state is missing from the hooks object: %s", withCodex.String())
+	}
+
+	var without bytes.Buffer
+	if err := Status(deps(false, nil, cwd), "", true, nil, false, "", &without); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(without.String(), "codex") || !strings.Contains(without.String(), `"hooks":{"claude":"none"}`) {
+		t.Fatalf("a client without codex has a codex entry: %s", without.String())
+	}
+
+	var text bytes.Buffer
+	if err := Status(deps(false, nil, cwd), "", false, nil, false, "trusted", &text); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text.String(), "hooks: codex trusted\n") {
+		t.Fatalf("text status has no codex line:\n%s", text.String())
 	}
 }

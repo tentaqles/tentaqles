@@ -503,6 +503,10 @@ trust state in Codex or the tests that pin them, which is the anti-goal "the ide
    `SessionEnd` handler gets timeout 3, the most Codex's page allows for that event (web). Codex starts a hook
    through cmd on Windows and a POSIX shell elsewhere (`internal/cmd/settings.go` L183 to L187), and
    `|| exit 0` reads the same in both.
+   *Corrected on 2026-11-10 (feature 010, owner's yes):* Codex 0.154.0 starts a hook in the session's shell,
+   which on Windows is PowerShell (`powershell.exe -NoProfile -Command`), and `|| exit 0` does not parse in
+   Windows PowerShell 5.1. The tail is `; exit 0`, which exits 0 in PowerShell and in a POSIX shell
+   ([phase0-q2-codex-hooks.md](spikes/phase0-q2-codex-hooks.md)).
 5. Timeouts. The registered timeout is 5 s everywhere, except the Codex session-end handler at 3 s, as core page
    5.2 says. The lobe's own cutoffs sit well inside both: 1 s for `stop` and `session-end`, 1.5 s for every other
    event (F-02). The guard's 15 s registration and 6 s deadline do not change.

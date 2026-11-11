@@ -21,7 +21,7 @@ func newLobeCmd() *cobra.Command {
 func newLobeHookCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "lobe-hook",
-		Short: "The entry point of the memory's hooks (started by the Claude Code plugin)",
+		Short: "The entry point of the memory's hooks (started by the Claude Code plugin and by Codex)",
 	}
 	c.AddCommand(&cobra.Command{
 		Use:   "claude <event>",
@@ -37,6 +37,23 @@ TQ_LOBE_NO_HOOKS=1 switches the hooks off. A person never needs to run this comm
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			_, _ = hook.Main([]string{"lobe-hook", "claude", args[0]}, c.InOrStdin(), c.OutOrStdout())
+			return nil
+		},
+	})
+	c.AddCommand(&cobra.Command{
+		Use:   "codex <event>",
+		Short: "Record a Codex hook event in the client's memory",
+		Long: `tentaqles settings render registers tentaqles lobe-hook codex post-tool-use; exit 0 in the client's
+Codex config, and Codex starts it with the hook's JSON on stdin. It prints nothing and exits 0 on any
+problem, so it never blocks a tool call.
+
+The six event names are session-start, user-prompt-submit, pre-tool-use, post-tool-use, stop and
+session-end. Only post-tool-use records anything.
+
+TQ_LOBE_NO_HOOKS=1 switches the hooks off. A person never needs to run this command.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			_, _ = hook.Main([]string{"lobe-hook", "codex", args[0]}, c.InOrStdin(), c.OutOrStdout())
 			return nil
 		},
 	})

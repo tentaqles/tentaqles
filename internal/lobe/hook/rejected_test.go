@@ -299,6 +299,71 @@ func TestLobeTranscriptOnlyUnderLogin(t *testing.T) {
 			}
 		})
 	}
+
+	// Codex rows: codexExit reads a session file only inside the login's sessions folder. Each refused
+	// path leads to a file that holds the call's line with exit_code 1, and gives no code. The positive
+	// row shows the same line gives 1 where it is allowed.
+	codexCases := []struct {
+		name  string
+		place func(t *testing.T, f fixture) string
+		code  int
+		ok    bool
+	}{
+		{"codex: another client's codex folder", func(t *testing.T, f fixture) string {
+			p := codexSessionPath(paths.IdentityDir("globex", "codex"))
+			appendText(t, p, codexExitLine(t, codexCallID, 1))
+			return p
+		}, 0, false},
+		{"codex: under the login folder but outside sessions", func(t *testing.T, f fixture) string {
+			p := filepath.Join(paths.IdentityDir("acme", "codex"), "other", "x.jsonl")
+			appendText(t, p, codexExitLine(t, codexCallID, 1))
+			return p
+		}, 0, false},
+		{"codex: sibling folder sessionsX", func(t *testing.T, f fixture) string {
+			p := filepath.Join(paths.IdentityDir("acme", "codex"), "sessionsX", "2026", "x.jsonl")
+			appendText(t, p, codexExitLine(t, codexCallID, 1))
+			return p
+		}, 0, false},
+		{"codex: a link to a session file outside", func(t *testing.T, f fixture) string {
+			outside := filepath.Join(f.tmp, "outside-codex.jsonl")
+			appendText(t, outside, codexExitLine(t, codexCallID, 1))
+			link := codexSessionPath(paths.IdentityDir("acme", "codex"))
+			mustMkdir(t, filepath.Dir(link))
+			if err := os.Symlink(outside, link); err != nil {
+				t.Skipf("symlinks are not available here: %v", err)
+			}
+			return link
+		}, 0, false},
+		{"codex: a junction sessions\\2026 to a folder outside", func(t *testing.T, f fixture) string {
+			requireWindows(t)
+			outside := filepath.Join(f.tmp, "outside-2026")
+			appendText(t, filepath.Join(outside, "11", "10", "rollout-x.jsonl"), codexExitLine(t, codexCallID, 1))
+			login := paths.IdentityDir("acme", "codex")
+			mkJunction(t, filepath.Join(login, "sessions", "2026"), outside)
+			return codexSessionPath(login)
+		}, 0, false},
+		{"codex: a folder in place of the session file", func(t *testing.T, f fixture) string {
+			dir := codexSessionPath(paths.IdentityDir("acme", "codex"))
+			appendText(t, filepath.Join(dir, "inner.jsonl"), codexExitLine(t, codexCallID, 1))
+			return dir
+		}, 0, false},
+		{"codex: the right place gives code 1", func(t *testing.T, f fixture) string {
+			p := codexSessionPath(paths.IdentityDir("acme", "codex"))
+			appendText(t, p, codexExitLine(t, codexCallID, 1))
+			return p
+		}, 1, true},
+	}
+	for _, c := range codexCases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newHome(t)
+			login := paths.IdentityDir("acme", "codex")
+			p := c.place(t, f)
+			got, ok := codexExit(login, p, codexCallID)
+			if got != c.code || ok != c.ok {
+				t.Errorf("codexExit(%s) = (%d, %v), want (%d, %v)", p, got, ok, c.code, c.ok)
+			}
+		})
+	}
 }
 
 func TestLobeRejectedNoEmptyStore(t *testing.T) {

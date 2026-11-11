@@ -59,28 +59,29 @@ type cursorState struct {
 }
 
 // transcriptAllowed checks the path of a transcript and returns the Lstat of the file when the path
-// may be read. p must lie strictly inside login's projects folder (made absolute and clean; the
-// comparison is case-insensitive on Windows, as loginMatches compares). Every component from the
-// login folder down is checked with Lstat: the login folder and the projects folder and each folder
-// below them must be a directory that is neither a symlink nor ModeIrregular (Go reports a Windows
-// junction as irregular), and the last component must be a regular file. No link is followed here,
-// and readChunk checks that the file it opens is this one.
-func transcriptAllowed(login, p string) (os.FileInfo, bool) {
-	if login == "" || p == "" {
+// may be read. sub is the folder under login that holds the transcripts: "projects" for a Claude
+// transcript, "sessions" for a Codex session file. p must lie strictly inside login's sub folder (made
+// absolute and clean; the comparison is case-insensitive on Windows, as loginMatches compares). Every
+// component from the login folder down is checked with Lstat: the login folder and the sub folder and
+// each folder below them must be a directory that is neither a symlink nor ModeIrregular (Go reports a
+// Windows junction as irregular), and the last component must be a regular file. No link is followed
+// here, and readChunk (or codexExit) checks that the file it opens is this one.
+func transcriptAllowed(login, sub, p string) (os.FileInfo, bool) {
+	if login == "" || sub == "" || p == "" {
 		return nil, false
 	}
 	root := pathcmp.AbsPath(login)
-	projects := filepath.Join(root, "projects")
+	subDir := filepath.Join(root, sub)
 	t := pathcmp.AbsPath(p)
-	if !within(projects, t) {
+	if !within(subDir, t) {
 		return nil, false
 	}
-	rel, err := filepath.Rel(projects, t)
+	rel, err := filepath.Rel(subDir, t)
 	if err != nil {
 		return nil, false
 	}
-	chain := []string{root, projects}
-	cur := projects
+	chain := []string{root, subDir}
+	cur := subDir
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		cur = filepath.Join(cur, part)
 		chain = append(chain, cur)
@@ -264,7 +265,7 @@ const skipTail = 1 << 20
 // error, it does nothing; it never creates a store.
 func (r *run) skipToEnd() {
 	login := os.Getenv("CLAUDE_CONFIG_DIR")
-	want, ok := transcriptAllowed(login, r.pl.transcript)
+	want, ok := transcriptAllowed(login, "projects", r.pl.transcript)
 	if !ok {
 		return
 	}
@@ -353,7 +354,7 @@ func lineStart(f *os.File, from, size int64) (start int64, found bool, err error
 // there is no store, and ok false when the run must stop with nothing written.
 func (r *run) readRejected() (ro *store.Store, ok bool) {
 	login := os.Getenv("CLAUDE_CONFIG_DIR")
-	want, allowed := transcriptAllowed(login, r.pl.transcript)
+	want, allowed := transcriptAllowed(login, "projects", r.pl.transcript)
 	if !allowed {
 		return nil, false
 	}

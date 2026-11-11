@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tentaqles/tentaqles/internal/codexconfig"
 	"github.com/tentaqles/tentaqles/internal/doctor"
+	"github.com/tentaqles/tentaqles/internal/envplan"
 	"github.com/tentaqles/tentaqles/internal/gitcfg"
 	"github.com/tentaqles/tentaqles/internal/lobe/health"
 	"github.com/tentaqles/tentaqles/internal/paths"
@@ -72,13 +75,34 @@ func lobeFindings(cfg *registry.Config, now time.Time) []doctor.Finding {
 	for i := range wss {
 		ws := &wss[i]
 		data, found := pluginHooks(paths.IdentityDir(ws.Name, "claude"))
-		clients = append(clients, health.Client{Name: ws.Name, WS: ws, PluginFound: found, HooksJSON: data})
+		clients = append(clients, health.Client{Name: ws.Name, WS: ws, PluginFound: found, HooksJSON: data,
+			CodexHooks: codexHooksState(ws)})
 	}
 	var out []doctor.Finding
 	for _, f := range health.Findings(clients, now) {
 		out = append(out, doctor.Finding{Level: f.Level, Code: f.Code, Workspace: f.Client, Msg: f.Msg, Fix: f.Fix})
 	}
 	return out
+}
+
+// codexHooksState is the state of the lobe's Codex handler in a client's Codex config: the String of
+// codexconfig.LobeHookTrust for the client's CODEX_HOME, "missing" when that config cannot be read, and ""
+// when the client has no codex in its scope (then there is no Codex config for the lobe). Shared by
+// tentaqles doctor and tentaqles lobe status.
+func codexHooksState(ws *resolve.Workspace) string {
+	if ws == nil || ws.Manifest == nil || !slices.Contains(ws.Manifest.Scope(), "codex") {
+		return ""
+	}
+	home := envplan.Desired(ws)["CODEX_HOME"]
+	if home == "" {
+		// With no Codex folder there is no config to read; an empty path would read ./config.toml.
+		return codexconfig.Missing.String()
+	}
+	t, err := codexconfig.LobeHookTrust(home)
+	if err != nil {
+		return codexconfig.Missing.String()
+	}
+	return t.String()
 }
 
 // withLobe appends the lobe's findings to doctor's list. doctor ends an all-clear list with its "all checks

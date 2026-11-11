@@ -92,7 +92,7 @@ func TestLobeSenseHiddenFailEvent(t *testing.T) {
 		Getenv:  os.Getenv,
 		Getwd:   func() (string, error) { return cwd, nil },
 	}
-	if err := cli.Status(d, "", true, nil, false, &buf); err != nil {
+	if err := cli.Status(d, "", true, nil, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	var doc struct {

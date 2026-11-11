@@ -37,6 +37,16 @@ EVENT_NAME = re.compile(r"[A-Za-z0-9_\-]{1,40}")
 EXIT_LINE = re.compile(r"Exit code [0-9]+")
 OWN_MCP = "mcp__capture__"
 MARKERS = ("CAPTURE-FAIL-MARKER", "CAPTURE-OK")
+OWN_TOOL = re.compile(r"[A-Za-z0-9_.:/\-]{1,60}")
+# Feature 010: the header forms of a Codex shell result (Trail-code src/trace/codex-exec.ts).
+CODEX_FORMS = (
+    ("Process exited with code N", re.compile(r"(?m)^Process exited with code -?[0-9]+")),
+    ("Exit code: N", re.compile(r"(?m)^Exit code: -?[0-9]+")),
+    ("Process running with session ID N", re.compile(r"(?m)^Process running with session ID [0-9]+")),
+    ("a line that is exactly Output:", re.compile(r"(?m)^Output:\r?$")),
+    ("Wall time line", re.compile(r"(?m)^Wall time: ")),
+    ("Chunk ID line", re.compile(r"(?m)^Chunk ID: ")),
+)
 
 
 def _safe_text(value):
@@ -60,8 +70,9 @@ def safe_value(key, value):
     if key == TOOL_KEY:
         if not isinstance(value, str):
             return "<other>"
-        # The made-up server of mcp_fail_server.py is ours, so its tool names may print.
-        if value.startswith(OWN_MCP) and SAFE_TEXT.fullmatch(value):
+        # The made-up server of mcp_fail_server.py is ours, so its tool names may print, in
+        # whatever form the host writes them (Claude Code: mcp__capture__<tool>).
+        if "capture" in value and OWN_TOOL.fullmatch(value):
             return value
         if value.startswith("mcp__"):
             return "mcp__*"
@@ -180,8 +191,35 @@ def extra_lines(payloads):
             if isinstance(r, dict) and isinstance(r.get("backgroundTaskId"), str) and r["backgroundTaskId"].strip()
         )
         lines.append(f"- tool_response has a non-empty backgroundTaskId: {task} of {len(responses)}")
+    # Feature 010: how a Codex shell result states its exit. Counts only, never text.
+    texts = [response_text_any(p["tool_response"]) for p in payloads if "tool_response" in p]
+    texts = [t for t in texts if t]
+    if texts:
+        for label, pattern in CODEX_FORMS:
+            hits = sum(1 for t in texts if pattern.search(t))
+            if hits:
+                lines.append(f"- tool_response text has {label}: {hits} of {len(texts)}")
+        js = 0
+        for t in texts:
+            if t.lstrip().startswith("{"):
+                try:
+                    obj = json.loads(t)
+                except (ValueError, RecursionError):
+                    continue
+                meta = obj.get("metadata") if isinstance(obj, dict) else None
+                if isinstance(meta, dict) and isinstance(meta.get("exit_code"), int):
+                    js += 1
+        if js:
+            lines.append(f"- tool_response text is JSON with a whole-number metadata.exit_code: {js} of {len(texts)}")
+    exit_fields = sum(
+        1 for p in payloads
+        if isinstance(p.get("tool_response"), dict)
+        and any(k in p["tool_response"] for k in ("exit_code", "exitCode", "exit"))
+    )
+    if exit_fields:
+        lines.append(f"- tool_response object has an exit_code, exitCode or exit field: {exit_fields}")
     # Feature 009: where an MCP tool's error lands. Counts only, never text.
-    own = [p for p in payloads if str(p.get(TOOL_KEY, "")).startswith(OWN_MCP)]
+    own = [p for p in payloads if "capture" in str(p.get(TOOL_KEY, ""))]
     if own:
         flagged = sum(
             1 for p in own
@@ -202,13 +240,83 @@ def extra_lines(payloads):
     return lines
 
 
+def response_text_any(r):
+    """The text of a tool_response: itself when text, the text values of a list of parts, or an
+    object's content, output or stdout read the same way. Used for counts only."""
+    if isinstance(r, str):
+        return r
+    if isinstance(r, list):
+        return "\n".join(x["text"] for x in r if isinstance(x, dict) and isinstance(x.get("text"), str))
+    if isinstance(r, dict):
+        for key in ("content", "output", "stdout"):
+            if key in r:
+                return response_text_any(r[key])
+    return ""
+
+
+def codex_lines(capture_dir):
+    """Counts from the files codex_capture.py writes besides the payloads. Names, never values."""
+    lines = []
+    names = set()
+    env = os.path.join(capture_dir, "env-names.txt")
+    if os.path.isfile(env):
+        with open(env, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                names.update(n for n in line.split() if SAFE_KEY.fullmatch(n))
+        lines.append("- environment variable names with CODEX seen by the hooks: " + (", ".join(sorted(names)) or "none"))
+    files = os.listdir(capture_dir)
+    probes = sum(1 for f in files if f.startswith("probe-child-"))
+    lines.append(f"- PROBE_SLOW child marker files (the child outlived its hook): {probes}")
+    late = os.path.isfile(os.path.join(capture_dir, "SessionEnd-late.txt"))
+    lines.append(f"- SessionEnd-late.txt exists (the hook ran past its 3 s timeout): {'yes' if late else 'no'}")
+    lines += link_lines(os.path.join(capture_dir, "link.jsonl"))
+    return lines
+
+
+PLACE = re.compile(r"[A-Za-z0-9_./:\[\]-]{1,120}")
+
+
+def link_lines(path):
+    """Feature 010: the session-file lookup from codex_capture.py's link probe. Counts and key paths only."""
+    if not os.path.isfile(path):
+        return []
+    records = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict):
+                records.append(r)
+    n = len(records)
+    lines = [f"- link probe: {n} Bash PostToolUse calls"]
+    for key, label in (("has_id", "had a tool_use_id"), ("has_transcript", "had a transcript_path that exists"),
+                       ("under_codex_home", "had the transcript under CODEX_HOME")):
+        lines.append(f"  - {label}: {sum(1 for r in records if r.get(key) is True)} of {n}")
+    for when in ("at_once", "after_500ms"):
+        scans = [r[when] for r in records if isinstance(r.get(when), dict)]
+        if not scans:
+            continue
+        found = sum(1 for s in scans if s.get("command_item") is True)
+        lines.append(f"  - {when}: a CommandExecution item with this id and an exit_code: {found} of {len(scans)}")
+        exits = Counter(str(s.get("exit")) for s in scans if s.get("command_item") is True)
+        if exits:
+            lines.append(f"  - {when}: its exit_code: " + ", ".join(f"{k} x{v}" for k, v in sorted(exits.items())))
+        places = Counter(
+            p for s in scans for p in s.get("places", []) if isinstance(p, str) and PLACE.fullmatch(p))
+        for p, c in sorted(places.items()):
+            lines.append(f"  - {when}: the id appears at {p}: {c}")
+    return lines
+
+
 def load_events(capture_dir):
     """Return (number of files read, {event label: {"payloads": [...], "unparsed": n}})."""
     events = {}
     files = 0
     for name in sorted(os.listdir(capture_dir)):
         path = os.path.join(capture_dir, name)
-        if not name.endswith(".jsonl") or not os.path.isfile(path):
+        if not name.endswith(".jsonl") or name == "link.jsonl" or not os.path.isfile(path):
             continue
         stem = name[: -len(".jsonl")]
         event = stem if EVENT_NAME.fullmatch(stem) else "<other>"
@@ -288,6 +396,8 @@ def main(argv):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stdout.write(render(files, events))
+    if os.path.isfile(os.path.join(capture_dir, "env-names.txt")):
+        sys.stdout.write("\n## Codex probes\n\n" + "\n".join(codex_lines(capture_dir)) + "\n")
     return 0
 
 

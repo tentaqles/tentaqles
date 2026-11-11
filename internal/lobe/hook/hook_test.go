@@ -332,7 +332,16 @@ func TestLobeHookServesOnlyItsLogin(t *testing.T) {
 		}
 		served++
 	}
-	t.Logf("%d of %d events answered without writing", served, len(allEvents()))
+	// Codex's six events, with CODEX_HOME at globex's Codex folder: the same payload, not acme's login.
+	t.Setenv("CODEX_HOME", paths.IdentityDir("globex", "codex"))
+	for _, ev := range codexEvents() {
+		if out := runCodexHook(t, ev, failureJSON(f)); out != "" {
+			t.Errorf("codex %s: stdout %q, want nothing", ev, out)
+			continue
+		}
+		served++
+	}
+	t.Logf("%d of %d events answered without writing", served, len(allEvents())+len(codexEvents()))
 	if after := identityTrees(t, f); after != before {
 		t.Errorf("an identity folder changed:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
@@ -374,6 +383,22 @@ func TestLobeHookLoginUnsetDoesNothing(t *testing.T) {
 			}
 		})
 	}
+	// Codex reads CODEX_HOME and never CLAUDE_CONFIG_DIR: with the Claude login right and CODEX_HOME unset,
+	// a Codex post-tool-use writes nothing.
+	t.Run("codex: CLAUDE_CONFIG_DIR right, CODEX_HOME unset", func(t *testing.T) {
+		f := newHome(t)
+		setLogin(t, f, "acme")
+		before := identityTrees(t, f)
+		if out := runCodexHook(t, evPostToolUse, failureJSON(f)); out != "" {
+			t.Errorf("stdout %q, want nothing", out)
+		}
+		if after := identityTrees(t, f); after != before {
+			t.Errorf("an identity folder changed")
+		}
+		if exists(paths.LobeDir("acme")) {
+			t.Errorf("a store was created")
+		}
+	})
 }
 
 // loginForm is the login path spelled one of the ways the test names.
@@ -431,6 +456,19 @@ func TestLobeNoHooksSwitch(t *testing.T) {
 	}
 	if exists(paths.LobeDir("acme")) {
 		t.Errorf("a lobe folder was written with TQ_LOBE_NO_HOOKS=1")
+	}
+	// Codex's events and a failed shell call under CODEX_HOME with the switch on: nothing, as for Claude.
+	codexLogin(t, "acme")
+	for _, ev := range codexEvents() {
+		if out := runCodexHook(t, ev, failureJSON(f)); out != "" {
+			t.Errorf("codex %s: stdout %q, want nothing", ev, out)
+		}
+	}
+	if n := len(lines(t, "acme")); n != 0 {
+		t.Errorf("codex wrote %d lines with TQ_LOBE_NO_HOOKS=1, want 0", n)
+	}
+	if exists(paths.LobeDir("acme")) {
+		t.Errorf("a lobe folder was written by codex with TQ_LOBE_NO_HOOKS=1")
 	}
 }
 
@@ -508,6 +546,67 @@ func TestLobeHookAlwaysExitsZero(t *testing.T) {
 			pr, pw := io.Pipe()
 			t.Cleanup(func() { pw.Close() })
 			return pr, "claude", evPost
+		}},
+		// Codex rows: the same stdin shapes and failures, under host codex and CODEX_HOME.
+		{"codex empty stdin", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			return strings.NewReader(""), "codex", evPostToolUse
+		}},
+		{"codex not json", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			return strings.NewReader("not json"), "codex", evPostToolUse
+		}},
+		{"codex object over 1 MiB", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			return strings.NewReader(`{"` + strings.Repeat("a", 1100*1024) + `":1}`), "codex", evPostToolUse
+		}},
+		{"codex unknown event", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			return strings.NewReader(failureJSON(f)), "codex", "post-tool-use-failure"
+		}},
+		{"codex stop", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			return strings.NewReader(failureJSON(f)), "codex", "stop"
+		}},
+		{"codex login unset", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			setLogin(t, f, "acme")
+			return strings.NewReader(failureJSON(f)), "codex", evPostToolUse
+		}},
+		{"codex panicking step", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			setSteps(t, func(string) []step {
+				return []step{{id: "T-PANIC", run: func(context.Context, *run) error { panic("boom") }}}
+			})
+			return strings.NewReader(failureJSON(f)), "codex", evPostToolUse
+		}},
+		{"codex step that ignores its context", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			setSteps(t, func(string) []step {
+				return []step{{id: "T-SLEEP", run: func(context.Context, *run) error {
+					time.Sleep(10 * time.Second)
+					return nil
+				}}}
+			})
+			return strings.NewReader(failureJSON(f)), "codex", evPostToolUse
+		}},
+		{"codex store lock held", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			st, err := store.Open("acme", store.ReadWrite)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := st.Lock(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(unlock)
+			return strings.NewReader(failureJSON(f)), "codex", evPostToolUse
+		}},
+		{"codex stdin that never closes", func(t *testing.T, f fixture) (io.Reader, string, string) {
+			codexLogin(t, "acme")
+			pr, pw := io.Pipe()
+			t.Cleanup(func() { pw.Close() })
+			return pr, "codex", evPostToolUse
 		}},
 	}
 	for _, c := range cases {

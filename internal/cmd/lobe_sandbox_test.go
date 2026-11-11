@@ -262,7 +262,7 @@ func TestLobeCommandTable(t *testing.T) {
 	// The rows built so far (F-07 step 1, "lobe <verb>" or "lobe-hook <verb>").
 	rows := []string{
 		"lobe sandbox", "lobe selftest", "lobe status", "lobe events", "lobe settings", "lobe set",
-		"lobe fingerprint", "lobe-hook claude",
+		"lobe fingerprint", "lobe-hook claude", "lobe-hook codex",
 	}
 	// The rows marked "yes" in F-07 step 1: they answer only to a person.
 	person := map[string]bool{"lobe set": true}
@@ -303,7 +303,7 @@ func TestLobeCommandTable(t *testing.T) {
 			args = append(args, "capture", "off", "--yes")
 		case "lobe sandbox":
 			args = append(args, filepath.Join(t.TempDir(), "sandbox"))
-		case "lobe-hook claude":
+		case "lobe-hook claude", "lobe-hook codex":
 			args = append(args, "session-start")
 		}
 		var out bytes.Buffer

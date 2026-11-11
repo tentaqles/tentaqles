@@ -129,3 +129,41 @@ func TestRecentHookErrors_ReadsOnlyTheLastMiB(t *testing.T) {
 		t.Errorf("counted %d lines at the end of the file, want 5", n)
 	}
 }
+
+// The Codex handler's state gives one lobe-hooks-untrusted warning unless it is "" (no codex in the scope) or
+// "trusted". The fix line is tentaqles settings render <client>. Other findings of the client are not counted.
+func TestCodexHooksFinding(t *testing.T) {
+	cases := []struct {
+		state string
+		want  bool
+	}{{"", false}, {"trusted", false}, {"untrusted", true}}
+	for _, c := range cases {
+		t.Run("state "+c.state, func(t *testing.T) {
+			var got []Finding
+			for _, f := range Findings([]Client{{Name: "acme", CodexHooks: c.state}}, time.Now()) {
+				if f.Code == CodeHooksUntrusted {
+					got = append(got, f)
+				}
+			}
+			if !c.want {
+				if len(got) != 0 {
+					t.Fatalf("state %q gives %+v, want no finding", c.state, got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("state %q gives %d findings, want 1: %+v", c.state, len(got), got)
+			}
+			f := got[0]
+			if f.Level != "warn" || f.Client != "acme" {
+				t.Errorf("level %q client %q, want warn acme", f.Level, f.Client)
+			}
+			if !strings.Contains(f.Msg, c.state) {
+				t.Errorf("msg %q does not name the state %q", f.Msg, c.state)
+			}
+			if f.Fix != "tentaqles settings render acme" {
+				t.Errorf("fix = %q", f.Fix)
+			}
+		})
+	}
+}

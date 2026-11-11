@@ -689,7 +689,8 @@ For each client it writes:
   Only what tentaqles wrote earlier is ever removed; anything added by hand stays. tentaqles records what it wrote in
   `.tq-settings-state.json` beside the settings;
 - **its Codex `config.toml`**, when codex is in the client's scope: the PreToolUse and SessionStart hooks that run
-  `tentaqles codex-hook` (the command is the absolute path of tentaqles, quoted), trusted and enabled, and the
+  `tentaqles codex-hook` (the command is the absolute path of tentaqles, quoted), the memory's PostToolUse hook that
+  runs `tentaqles lobe-hook codex post-tool-use; exit 0` (timeout 5 seconds), all three trusted and enabled, and the
   client's language line as `developer_instructions`. Every other key and state entry stays. Nothing is written for a
   client without codex, and nothing is removed. `--dry-run` says it did not check the Codex config. The hooks are
   trusted here because opting the client into codex is the consent;
@@ -760,6 +761,7 @@ names the client:
 | `lobe-store-unreadable` | warn | `store.json` does not parse. | Move that `store.json` aside. The next render or `tentaqles lobe` command creates a new one. |
 | `lobe-store-version` | warn | `store.json` has a version newer than this tentaqles. | Upgrade tentaqles. |
 | `lobe-hooks-missing` | warn | The tentaqles plugin is installed without the memory's hook entries. | Update or reinstall the tentaqles plugin. |
+| `lobe-hooks-untrusted` | warn | The client has codex in its scope, and the memory's Codex hook in its `config.toml` is missing, disabled, untrusted or edited. The guard's Codex hooks are reported apart (`codex-guard-*`). | Run `tentaqles settings render <client>`. |
 | `lobe-setting-invalid` | warn | A value under `lobe` in the manifest is outside its list. One finding per client, however many keys are wrong. | Run `tentaqles lobe settings` to see the `(invalid)` keys, then `tentaqles lobe set <key> <value>` or `default`. |
 | `lobe-hook-failing` | warn | `stats/hook-errors.jsonl` in the client's memory folder holds 5 or more lines from the last 24 hours. | Read the lines in that file to find the failing step. |
 
@@ -1425,6 +1427,44 @@ rejected while capture was off is not read later. Two cases are not covered: a c
 after capture is already back on, and a client with no store yet (not rendered since this version).
 
 Setting `TQ_LOBE_NO_HOOKS=1` switches the hooks off. A person never needs to run this command.
+
+---
+
+## tentaqles lobe-hook codex
+
+The entry point of the memory's hook in Codex. Codex starts it; you don't.
+
+### Synopsis
+
+```
+tentaqles lobe-hook codex <event>
+```
+
+### Description
+
+[`tentaqles settings render`](#tentaqles-settings-render) registers `tentaqles lobe-hook codex post-tool-use; exit 0`
+in the client's Codex `config.toml`, trusted, so Codex runs it after every tool call with the call's JSON on stdin. The
+`; exit 0` keeps the hook's exit code at 0 in every shell Codex may start it in. It prints nothing and exits 0 on any
+problem, so it never blocks a tool call. It serves only the client whose folder the session runs in, and only when
+`CODEX_HOME` names that client's own Codex folder.
+
+The six events are `session-start`, `user-prompt-submit`, `pre-tool-use`, `post-tool-use`, `stop` and `session-end`.
+Only `post-tool-use` records anything in this version.
+
+Codex sends no failure event and no exit code with a shell call. For `Bash`, the memory reads the exit code from Codex's
+own session file, the payload's `transcript_path`, and only when that path lies inside `<CODEX_HOME>/sessions/`; it
+reads at most the last 1 MiB, and only the line of that call. Then:
+
+- a code other than 0 writes a `fail` line with the code in `exit` and the command's output, with every secret
+  replaced by a marker, as `error`;
+- code 0 writes an `ok` line, or `hidden-fail` when the output shows a failure, as for Claude Code;
+- no code found writes nothing, unless the output shows a failure, and adds one line `{"at":...,"why":"no-exit"}` to
+  `events/drops-YYYYMMDD.jsonl` (it stops growing at 64 KiB). A climbing count there means Codex changed its session
+  file.
+
+Other tools are recorded only as `hidden-fail` when their result carries an error flag. Codex 0.154 sends no hook for
+a failed `apply_patch` or a failed MCP call, so those are not recorded. The memory's own commands and `capture off` are
+skipped as for Claude Code, and `TQ_LOBE_NO_HOOKS=1` switches the hook off.
 
 ---
 

@@ -7,6 +7,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/tentaqles/tentaqles/internal/codexconfig"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // lobeHook and lobeGroup are the parts of plugin/hooks/hooks.json this test reads.
@@ -85,6 +89,62 @@ func TestLobeHookTimeoutsRegistered(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestLobeCodexHandlerTimeoutsRendered checks the timeouts of the handlers codexconfig renders into a
+// Codex config: the guard's two are 15 seconds, the memory's post-tool-use handler is 5.
+func TestLobeCodexHandlerTimeoutsRendered(t *testing.T) {
+	type handler struct {
+		Command string `toml:"command"`
+		Timeout int64  `toml:"timeout"`
+	}
+	type group struct {
+		Hooks []handler `toml:"hooks"`
+	}
+	type config struct {
+		Hooks struct {
+			PreToolUse   []group `toml:"PreToolUse"`
+			SessionStart []group `toml:"SessionStart"`
+			PostToolUse  []group `toml:"PostToolUse"`
+		} `toml:"hooks"`
+	}
+
+	home := t.TempDir() // a temp CODEX_HOME: Render never sees the real one
+	if _, err := codexconfig.Render(home, codexconfig.Managed{Command: "tentaqles"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(codexconfig.ConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg config
+	if err := toml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("rendered config.toml is not valid TOML: %v", err)
+	}
+
+	cases := []struct {
+		table   string
+		groups  []group
+		suffix  string // the end of the handler's command
+		timeout int64
+	}{
+		{"PreToolUse", cfg.Hooks.PreToolUse, " codex-hook pre-tool-use", 15},
+		{"SessionStart", cfg.Hooks.SessionStart, " codex-hook session-start", 15},
+		{"PostToolUse", cfg.Hooks.PostToolUse, " lobe-hook codex post-tool-use; exit 0", 5},
+	}
+	for _, tc := range cases {
+		var got []int64
+		for _, g := range tc.groups {
+			for _, h := range g.Hooks {
+				if strings.HasSuffix(h.Command, tc.suffix) {
+					got = append(got, h.Timeout)
+				}
+			}
+		}
+		if len(got) != 1 || got[0] != tc.timeout {
+			t.Errorf("hooks.%s: timeouts of the handler ending %q = %v, want [%d]", tc.table, tc.suffix, got, tc.timeout)
 		}
 	}
 }

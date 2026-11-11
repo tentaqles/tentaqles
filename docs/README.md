@@ -46,6 +46,7 @@ A draft for review. Nothing on these pages is built yet.
 - [Enforce](prd/lobe-enforce.md): the rule ladder, silent trials, blocking and the check before a commit.
 - [Benchmarks](prd/lobe-benchmarks.md): how every claim is measured.
 - [Phase 0, question 2: which hook events and fields really arrive](prd/spikes/phase0-q2-claude-code-hooks.md): what two real runs confirmed, and what still rests on the hooks page.
+- [Phase 0, question 2, for Codex: what Codex's hooks receive](prd/spikes/phase0-q2-codex-hooks.md): two real Codex runs, the exit code in the session file, the hook shell, the handler's hash.
 - [Phase 0, question 3: do parallel appends tear a line?](prd/spikes/phase0-q3-log-append.md): the measured answer, from feature 003.
 
 ## Planned: the Vertical Lobe, feature by feature

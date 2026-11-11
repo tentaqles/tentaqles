@@ -5,6 +5,8 @@ Notable changes to the `tentaqles` CLI and the docs of this repository. The Clau
 
 ## [Unreleased]
 
+- **A failed shell command in Codex is logged.** `tentaqles settings render` now also writes the memory's Codex hook, `tentaqles lobe-hook codex post-tool-use; exit 0`, trusted, into a client's Codex `config.toml`; the guard's two Codex hooks and their trust are unchanged. Codex sends no exit code with a shell call, so the memory reads it from Codex's own session file under the client's `CODEX_HOME` and writes the same `fail`, `ok` and `hidden-fail` lines as for Claude Code, with `host` `codex`; one error has one `fp` on both. A call whose code is not found is counted in `events/drops-YYYYMMDD.jsonl`. `tentaqles doctor` reports `lobe-hooks-untrusted` until the hook is rendered and trusted, and `tentaqles lobe status` shows its state.
+
 - **A success that shows a failure is stored as `hidden-fail`.** A successful call whose result has an error flag, a test runner's failing summary in shell output, or a failing line behind a pipe that hides the exit code is written to the memory's event log as `hidden-fail`, with its full input, the failing part of the output as `error` and an `fp`. Commands that only read (`cat`, `git log` and the like) are never judged by their output text.
 
 - **A successful call is recorded too, minimally.** After a tool call succeeds, the memory's event log gets one `ok` line

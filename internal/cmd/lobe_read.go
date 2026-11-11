@@ -21,6 +21,16 @@ func lobeHooks(d cli.Deps, client string) (data []byte, found bool, err error) {
 	return data, found, nil
 }
 
+// lobeCodexHooks is the state of the lobe's Codex handler for the client (codexHooksState), "" when the
+// client has no codex in its scope. client is resolved as lobeHooks resolves it.
+func lobeCodexHooks(d cli.Deps, client string) (string, error) {
+	ws, err := cli.Target(d, client)
+	if err != nil {
+		return "", err
+	}
+	return codexHooksState(ws), nil
+}
+
 // pluginHooks reads the hooks/hooks.json of the tentaqles plugin that the Claude config dir claudeDir
 // loads. found is false when no plugin is installed; a plugin without a readable hooks file is found with
 // nil data, which has no lobe entries.
@@ -58,7 +68,11 @@ store.json or the linked folder, and the command exits 1.
 			if err != nil {
 				return err
 			}
-			return cli.Status(d, client, asJSON, data, found, c.OutOrStdout())
+			codex, err := lobeCodexHooks(d, client)
+			if err != nil {
+				return err
+			}
+			return cli.Status(d, client, asJSON, data, found, codex, c.OutOrStdout())
 		},
 	}
 	c.Flags().StringVar(&client, "client", "", "the client to read (default: the client of the current folder)")
